@@ -478,8 +478,17 @@ async function route(request, method, path) {
       const filter = status ? { status } : {};
       const items = await db.collection('payments').find(filter).sort({ createdAt: -1 }).limit(100).toArray();
       const uids = [...new Set(items.map((p) => p.userId))];
-      const users = await db.collection('users').find({ id: { $in: uids } }).toArray();
-      const businesses = await db.collection('businesses').find({ id: { $in: items.map((p) => p.businessId) } }).toArray();
+      const users = await db
+        .collection('users')
+        .find({ id: { $in: uids } }, { projection: { id: 1, email: 1, plan: 1 } })
+        .toArray();
+      const businesses = await db
+        .collection('businesses')
+        .find(
+          { id: { $in: items.map((p) => p.businessId) } },
+          { projection: { id: 1, name: 1 } }
+        )
+        .toArray();
       const um = Object.fromEntries(users.map((u) => [u.id, { id: u.id, email: u.email, plan: u.plan }]));
       const bm = Object.fromEntries(businesses.map((b) => [b.id, { id: b.id, name: b.name }]));
       const enriched = items.map((p) => ({ ...p, user: um[p.userId] || null, business: bm[p.businessId] || null }));
@@ -512,11 +521,21 @@ async function route(request, method, path) {
     }
 
     if (path[1] === 'users' && method === 'GET') {
-      const users = await db.collection('users').find({}).sort({ createdAt: -1 }).limit(200).toArray();
-      const out = users.map(({ password, ...u }) => u);
-      const bizs = await db.collection('businesses').find({ id: { $in: out.map((u) => u.businessId) } }).toArray();
+      const users = await db
+        .collection('users')
+        .find({}, { projection: { password: 0 } })
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .toArray();
+      const bizs = await db
+        .collection('businesses')
+        .find(
+          { id: { $in: users.map((u) => u.businessId) } },
+          { projection: { id: 1, name: 1 } }
+        )
+        .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
-      return json({ users: out.map((u) => ({ ...u, business: bm[u.businessId] || null })) });
+      return json({ users: users.map((u) => ({ ...u, business: bm[u.businessId] || null })) });
     }
 
     if (path[1] === 'users' && path[2] && method === 'PUT') {
@@ -537,7 +556,12 @@ async function route(request, method, path) {
 
     if (path[1] === 'products' && method === 'GET') {
       const items = await db.collection('products').find({}).sort({ createdAt: -1 }).limit(200).toArray();
-      const bizs = await db.collection('businesses').find({}).toArray();
+      const bizIds = [...new Set(items.map((p) => p.businessId))];
+      const bizs = await db
+        .collection('businesses')
+        .find({ id: { $in: bizIds } }, { projection: { id: 1, name: 1 } })
+        .limit(200)
+        .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
       return json({ products: items.map((p) => ({ ...p, business: bm[p.businessId] || null })) });
     }

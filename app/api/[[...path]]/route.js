@@ -393,26 +393,26 @@ async function route(request, method, path) {
 
     const products = [
       // Sabores de La Habana - comida
-      { biz: 0, name: 'Ropa Vieja Tradicional', price: 8, image: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=600&q=80', category: 'comida', description: 'Plato típico cubano con ternera deshebrada en salsa criolla', stock: 20, featured: true },
-      { biz: 0, name: 'Moros y Cristianos', price: 5, image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&q=80', category: 'comida', description: 'Arroz con frijoles negros, sabor de Cuba', stock: 30 },
-      { biz: 0, name: 'Mojito Cubano', price: 4, image: 'https://images.unsplash.com/photo-1551538827-9c037cb4f32a?w=600&q=80', category: 'comida', description: 'El mojito original, con hierbabuena fresca', stock: 100, featured: true },
-      { biz: 0, name: 'Lechón Asado', price: 12, image: 'https://images.unsplash.com/photo-1529692236671-f1f6cf9683ba?w=600&q=80', category: 'comida', description: 'Lechón asado al estilo cubano para 4 personas', stock: 5 },
+      { biz: 0, name: 'Ropa Vieja Tradicional', price: 2500, image: 'https://images.unsplash.com/photo-1544025162-d76694265947?w=600&q=80', category: 'comida', description: 'Plato típico cubano con ternera deshebrada en salsa criolla', stock: 20, featured: true },
+      { biz: 0, name: 'Moros y Cristianos', price: 1500, image: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&q=80', category: 'comida', description: 'Arroz con frijoles negros, sabor de Cuba', stock: 30 },
+      { biz: 0, name: 'Mojito Cubano', price: 1200, image: 'https://images.unsplash.com/photo-1551538827-9c037cb4f32a?w=600&q=80', category: 'comida', description: 'El mojito original, con hierbabuena fresca', stock: 100, featured: true },
+      { biz: 0, name: 'Lechón Asado', price: 3600, image: 'https://images.unsplash.com/photo-1529692236671-f1f6cf9683ba?w=600&q=80', category: 'comida', description: 'Lechón asado al estilo cubano para 4 personas', stock: 5 },
       // Artesanía
-      { biz: 1, name: 'Sombrero de Yarey', price: 25, image: 'https://images.unsplash.com/photo-1521369909029-2afed882baee?w=600&q=80', category: 'artesania', description: 'Sombrero tejido a mano con yarey natural', stock: 15, featured: true },
-      { biz: 1, name: 'Bolso de Henequén', price: 35, image: 'https://images.unsplash.com/photo-1591561954557-26941169b49e?w=600&q=80', category: 'artesania', description: 'Bolso artesanal hecho con fibra de henequén', stock: 10 },
-      { biz: 1, name: 'Tabaco Cubano (Caja)', price: 80, image: 'https://images.unsplash.com/photo-1574870111867-089730e5a72b?w=600&q=80', category: 'artesania', description: 'Caja de 10 puros premium cubanos', stock: 8 },
+      { biz: 1, name: 'Sombrero de Yarey', price: 7500, image: 'https://images.unsplash.com/photo-1521369909029-2afed882baee?w=600&q=80', category: 'artesania', description: 'Sombrero tejido a mano con yarey natural', stock: 15, featured: true },
+      { biz: 1, name: 'Bolso de Henequén', price: 10500, image: 'https://images.unsplash.com/photo-1591561954557-26941169b49e?w=600&q=80', category: 'artesania', description: 'Bolso artesanal hecho con fibra de henequén', stock: 10 },
+      { biz: 1, name: 'Tabaco Cubano (Caja)', price: 24000, image: 'https://images.unsplash.com/photo-1574870111867-089730e5a72b?w=600&q=80', category: 'artesania', description: 'Caja de 10 puros premium cubanos', stock: 8 },
       // Moda
-      { biz: 2, name: 'Guayabera Clásica', price: 45, image: 'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?w=600&q=80', category: 'moda', description: 'Guayabera de lino, ideal para cualquier ocasión', stock: 25, featured: true },
-      { biz: 2, name: 'Vestido Tropical', price: 38, image: 'https://images.unsplash.com/photo-1496747611176-843222e1e57c?w=600&q=80', category: 'moda', description: 'Vestido fresco con estampado caribeño', stock: 18 },
-      { biz: 2, name: 'Sandalias de Cuero', price: 28, image: 'https://images.unsplash.com/photo-1603487742131-4160ec999306?w=600&q=80', category: 'moda', description: 'Sandalias hechas a mano en cuero genuino', stock: 22 },
+      { biz: 2, name: 'Guayabera Clásica', price: 13500, image: 'https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?w=600&q=80', category: 'moda', description: 'Guayabera de lino, ideal para cualquier ocasión', stock: 25, featured: true },
+      { biz: 2, name: 'Vestido Tropical', price: 11400, image: 'https://images.unsplash.com/photo-1496747611176-843222e1e57c?w=600&q=80', category: 'moda', description: 'Vestido fresco con estampado caribeño', stock: 18 },
+      { biz: 2, name: 'Sandalias de Cuero', price: 8400, image: 'https://images.unsplash.com/photo-1603487742131-4160ec999306?w=600&q=80', category: 'moda', description: 'Sandalias hechas a mano en cuero genuino', stock: 22 },
       // Tecnología
-      { biz: 3, name: 'Cargador Inalámbrico', price: 22, image: 'https://images.unsplash.com/photo-1583394838336-acd977736f90?w=600&q=80', category: 'tecnologia', description: 'Cargador rápido 15W compatible con todos los móviles', stock: 40 },
-      { biz: 3, name: 'Auriculares Bluetooth', price: 35, image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&q=80', category: 'tecnologia', description: 'Sonido envolvente, batería 24h', stock: 30, featured: true },
-      { biz: 3, name: 'Reparación de Móviles', price: 15, image: 'https://images.unsplash.com/photo-1512054502232-10a0a035d672?w=600&q=80', category: 'servicios', description: 'Servicio profesional de reparación', stock: 99 },
+      { biz: 3, name: 'Cargador Inalámbrico', price: 6600, image: 'https://images.unsplash.com/photo-1583394838336-acd977736f90?w=600&q=80', category: 'tecnologia', description: 'Cargador rápido 15W compatible con todos los móviles', stock: 40 },
+      { biz: 3, name: 'Auriculares Bluetooth', price: 10500, image: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=600&q=80', category: 'tecnologia', description: 'Sonido envolvente, batería 24h', stock: 30, featured: true },
+      { biz: 3, name: 'Reparación de Móviles', price: 4500, image: 'https://images.unsplash.com/photo-1512054502232-10a0a035d672?w=600&q=80', category: 'servicios', description: 'Servicio profesional de reparación', stock: 99 },
       // Belleza
-      { biz: 4, name: 'Aceite de Coco Natural', price: 12, image: 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?w=600&q=80', category: 'belleza', description: 'Aceite 100% natural para piel y cabello', stock: 50 },
-      { biz: 4, name: 'Jabón Artesanal', price: 5, image: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?w=600&q=80', category: 'belleza', description: 'Jabón natural con miel y leche de cabra', stock: 80 },
-      { biz: 4, name: 'Mascarilla Facial', price: 8, image: 'https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=600&q=80', category: 'belleza', description: 'Mascarilla hidratante con aloe y vitamina E', stock: 60, featured: true },
+      { biz: 4, name: 'Aceite de Coco Natural', price: 3600, image: 'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?w=600&q=80', category: 'belleza', description: 'Aceite 100% natural para piel y cabello', stock: 50 },
+      { biz: 4, name: 'Jabón Artesanal', price: 1500, image: 'https://images.unsplash.com/photo-1556228720-195a672e8a03?w=600&q=80', category: 'belleza', description: 'Jabón natural con miel y leche de cabra', stock: 80 },
+      { biz: 4, name: 'Mascarilla Facial', price: 2400, image: 'https://images.unsplash.com/photo-1556228453-efd6c1ff04f6?w=600&q=80', category: 'belleza', description: 'Mascarilla hidratante con aloe y vitamina E', stock: 60, featured: true },
     ].map((p) => ({
       id: uuidv4(),
       businessId: businessesSeed[p.biz].id,

@@ -47,8 +47,10 @@ import { toast } from 'sonner';
 
 const API = '/api';
 
-const formatPrice = (n) =>
-  new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'USD' }).format(Number(n || 0));
+const formatPrice = (n) => {
+  const num = Number(n || 0);
+  return `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(num)} CUP`;
+};
 
 function api(path, { method = 'GET', body, token } = {}) {
   const headers = { 'Content-Type': 'application/json' };
@@ -775,13 +777,14 @@ const App = () => {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <Label>Precio USD *</Label>
+                <Label>Precio CUP *</Label>
                 <Input
                   type="number"
-                  step="0.01"
+                  step="1"
                   value={productForm.price}
                   onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
                   required
+                  placeholder="Ej: 2500"
                   className="bg-white/5 border-white/10"
                 />
               </div>

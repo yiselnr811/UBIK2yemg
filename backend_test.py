@@ -1,905 +1,728 @@
 #!/usr/bin/env python3
 """
-Backend API Test Suite for UBIK2 YEMG Marketplace
-Tests all backend endpoints according to the review request
+Backend API Tests for UBIK2 YEMG - Phase B+C
+Tests public settings, forgot/reset password, my payments, and admin endpoints
 """
+
 import requests
 import json
-import uuid
-from pymongo import MongoClient
+from uuid import uuid4
 
-# Configuration
 BASE_URL = "https://mipyme-hub.preview.emergentagent.com/api"
-MONGO_URL = "mongodb://localhost:27017"
-DB_NAME = "ubik2_yemg"
 
-# Test data storage
-test_data = {
-    'token': None,
-    'user': None,
-    'business': None,
-    'product_id': None,
-    'second_user_token': None,
-    'second_user_business_id': None,
-}
-
-def print_test(name):
-    print(f"\n{'='*80}")
-    print(f"TEST: {name}")
-    print('='*80)
-
-def print_result(success, message):
-    status = "✅ PASS" if success else "❌ FAIL"
-    print(f"{status}: {message}")
-    return success
-
-def test_health():
-    """Test 1: Health & basics - GET /api/"""
-    print_test("Health endpoint")
+def test_public_settings():
+    """Test GET /api/settings (no auth required)"""
+    print("\n=== TEST: Public Settings ===")
     try:
-        # Test both /api and /api/ (empty path)
-        r = requests.get(f"{BASE_URL}/", timeout=10)
-        data = r.json()
+        response = requests.get(f"{BASE_URL}/settings")
+        print(f"Status: {response.status_code}")
         
-        if r.status_code == 200 and data.get('ok') == True and 'UBIK2 YEMG API' in data.get('app', ''):
-            return print_result(True, f"Health check passed: {data}")
-        else:
-            return print_result(False, f"Unexpected response: {r.status_code} - {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_categories():
-    """Test 1: Categories - GET /api/categories"""
-    print_test("Categories endpoint")
-    try:
-        r = requests.get(f"{BASE_URL}/categories", timeout=10)
-        data = r.json()
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
         
-        if r.status_code == 200:
-            categories = data.get('categories', [])
-            if len(categories) == 8:
-                # Check structure
-                first = categories[0]
-                if 'id' in first and 'name' in first and 'icon' in first:
-                    return print_result(True, f"Got 8 categories with correct structure")
-                else:
-                    return print_result(False, f"Categories missing required fields: {first}")
-            else:
-                return print_result(False, f"Expected 8 categories, got {len(categories)}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_stats():
-    """Test 1: Stats - GET /api/stats"""
-    print_test("Stats endpoint")
-    try:
-        r = requests.get(f"{BASE_URL}/stats", timeout=10)
-        data = r.json()
+        data = response.json()
+        required_fields = ['usdcWallet', 'usdcNetwork', 'transfermovilNumber', 'transfermovilName', 'premiumPriceUSD']
         
-        if r.status_code == 200:
-            required = ['productsCount', 'businessesCount', 'usersCount']
-            if all(k in data for k in required):
-                if all(isinstance(data[k], int) for k in required):
-                    return print_result(True, f"Stats: {data}")
-                else:
-                    return print_result(False, f"Stats values not all integers: {data}")
-            else:
-                return print_result(False, f"Missing required fields: {data}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_seed():
-    """Test 2: Seed - POST /api/seed (idempotent)"""
-    print_test("Seed endpoint (idempotent)")
-    try:
-        r = requests.post(f"{BASE_URL}/seed", timeout=10)
-        data = r.json()
+        for field in required_fields:
+            if field not in data:
+                print(f"❌ FAILED: Missing field '{field}' in response")
+                return False
         
-        if r.status_code == 200:
-            message = data.get('message', '')
-            # Should return "Ya hay datos cargados" since seed data already exists
-            if 'Ya hay datos cargados' in message or 'count' in data:
-                return print_result(True, f"Seed is idempotent: {message}")
-            elif 'Datos cargados' in message:
-                return print_result(True, f"Seed loaded data: {data}")
-            else:
-                return print_result(False, f"Unexpected message: {data}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
+        print(f"✅ PASSED: All required fields present")
+        print(f"Settings: {json.dumps(data, indent=2)}")
+        return True
     except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
+        print(f"❌ FAILED: Exception - {str(e)}")
+        return False
 
-def test_auth_register():
-    """Test 3: Auth register - POST /api/auth/register"""
-    print_test("Auth register with unique email")
+
+def test_forgot_reset_password():
+    """Test forgot/reset password flow"""
+    print("\n=== TEST: Forgot/Reset Password Flow ===")
+    
+    # Step 1: Register a fresh user with UUID email
+    print("\n1. Registering fresh user...")
+    user_email = f"test-{uuid4()}@example.com"
+    user_password = "oldPassword123"
+    
     try:
-        unique_email = f"test-{uuid.uuid4()}@example.com"
-        payload = {
-            "email": unique_email,
-            "password": "SecurePass123!",
-            "businessName": "Test Business",
-            "whatsapp": "+5355555000",
-            "location": "La Habana, Cuba",
-            "description": "Test business description"
+        register_data = {
+            "email": user_email,
+            "password": user_password,
+            "businessName": f"Test Business {uuid4().hex[:8]}",
+            "whatsapp": "+5355512345"
         }
+        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
         
-        r = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=10)
-        data = r.json()
+        if response.status_code != 200:
+            print(f"❌ FAILED: Registration failed with {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
         
-        if r.status_code == 200:
-            if 'token' in data and 'user' in data and 'business' in data:
-                test_data['token'] = data['token']
-                test_data['user'] = data['user']
-                test_data['business'] = data['business']
-                return print_result(True, f"Registration successful, got token and user data")
-            else:
-                return print_result(False, f"Missing required fields in response: {data.keys()}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
+        print(f"✅ User registered: {user_email}")
+        
+        # Step 2: Request password reset with valid email
+        print("\n2. Requesting password reset with valid email...")
+        response = requests.post(f"{BASE_URL}/auth/forgot", json={"email": user_email})
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        if 'resetToken' not in data or 'expiresAt' not in data:
+            print(f"❌ FAILED: Missing resetToken or expiresAt in response")
+            print(f"Response: {json.dumps(data, indent=2)}")
+            return False
+        
+        reset_token = data['resetToken']
+        if len(reset_token) != 24:
+            print(f"❌ FAILED: resetToken should be 24 chars, got {len(reset_token)}")
+            return False
+        
+        print(f"✅ Reset token received: {reset_token}")
+        
+        # Step 3: Request password reset with invalid email
+        print("\n3. Requesting password reset with invalid email...")
+        response = requests.post(f"{BASE_URL}/auth/forgot", json={"email": "nope@nope.com"})
+        
+        if response.status_code != 404:
+            print(f"❌ FAILED: Expected 404, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        print(f"✅ Invalid email correctly rejected with 404")
+        
+        # Step 4: Reset password with valid token
+        print("\n4. Resetting password with valid token...")
+        new_password = "newPass123"
+        response = requests.post(f"{BASE_URL}/auth/reset", json={
+            "token": reset_token,
+            "newPassword": new_password
+        })
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        print(f"✅ Password reset successful")
+        
+        # Step 5: Try login with old password (should fail)
+        print("\n5. Attempting login with old password...")
+        response = requests.post(f"{BASE_URL}/auth/login", json={
+            "email": user_email,
+            "password": user_password
+        })
+        
+        if response.status_code != 401:
+            print(f"❌ FAILED: Expected 401, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        print(f"✅ Old password correctly rejected with 401")
+        
+        # Step 6: Login with new password (should succeed)
+        print("\n6. Attempting login with new password...")
+        response = requests.post(f"{BASE_URL}/auth/login", json={
+            "email": user_email,
+            "password": new_password
+        })
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        if 'token' not in data:
+            print(f"❌ FAILED: No token in login response")
+            return False
+        
+        print(f"✅ Login with new password successful")
+        
+        # Step 7: Try reset with invalid token
+        print("\n7. Attempting reset with invalid token...")
+        response = requests.post(f"{BASE_URL}/auth/reset", json={
+            "token": "invalidtoken123456789012",
+            "newPassword": "anotherPass123"
+        })
+        
+        if response.status_code != 400:
+            print(f"❌ FAILED: Expected 400, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        print(f"✅ Invalid token correctly rejected with 400")
+        
+        print("\n✅ ALL FORGOT/RESET PASSWORD TESTS PASSED")
+        return True
+        
     except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
+        print(f"❌ FAILED: Exception - {str(e)}")
+        return False
 
-def test_auth_register_duplicate():
-    """Test 3: Auth register duplicate - should fail"""
-    print_test("Auth register with duplicate email")
+
+def test_subscription_with_screenshot():
+    """Test subscription endpoint with screenshot field"""
+    print("\n=== TEST: Subscription with Screenshot ===")
+    
+    # Register a user first
+    print("\n1. Registering user...")
+    user_email = f"test-{uuid4()}@example.com"
+    
     try:
-        if not test_data['user']:
-            return print_result(False, "No user from previous test")
-        
-        payload = {
-            "email": test_data['user']['email'],
-            "password": "AnotherPass123!",
-            "businessName": "Another Business",
-            "whatsapp": "+5355555001",
-            "location": "La Habana, Cuba"
+        register_data = {
+            "email": user_email,
+            "password": "testPass123",
+            "businessName": f"Test Business {uuid4().hex[:8]}",
+            "whatsapp": "+5355512345"
         }
+        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
         
-        r = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=10)
-        data = r.json()
+        if response.status_code != 200:
+            print(f"❌ FAILED: Registration failed")
+            return False
         
-        if r.status_code == 400:
-            error = data.get('error', '')
-            if 'ya está registrado' in error.lower():
-                return print_result(True, f"Correctly rejected duplicate: {error}")
-            else:
-                return print_result(False, f"Wrong error message: {error}")
-        else:
-            return print_result(False, f"Expected 400, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_auth_login():
-    """Test 3: Auth login - POST /api/auth/login"""
-    print_test("Auth login with correct credentials")
-    try:
-        if not test_data['user']:
-            return print_result(False, "No user from previous test")
+        token = response.json()['token']
+        print(f"✅ User registered and logged in")
         
-        payload = {
-            "email": test_data['user']['email'],
-            "password": "SecurePass123!"
-        }
-        
-        r = requests.post(f"{BASE_URL}/auth/login", json=payload, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            if 'token' in data:
-                return print_result(True, f"Login successful, got token")
-            else:
-                return print_result(False, f"Missing token in response")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_auth_login_wrong_password():
-    """Test 3: Auth login with wrong password - should fail"""
-    print_test("Auth login with wrong password")
-    try:
-        if not test_data['user']:
-            return print_result(False, "No user from previous test")
-        
-        payload = {
-            "email": test_data['user']['email'],
-            "password": "WrongPassword123!"
-        }
-        
-        r = requests.post(f"{BASE_URL}/auth/login", json=payload, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 401:
-            return print_result(True, f"Correctly rejected wrong password: {data.get('error')}")
-        else:
-            return print_result(False, f"Expected 401, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_auth_me():
-    """Test 3: Auth me - GET /api/auth/me with token"""
-    print_test("Auth me with Bearer token")
-    try:
-        if not test_data['token']:
-            return print_result(False, "No token from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        r = requests.get(f"{BASE_URL}/auth/me", headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            if 'user' in data and 'business' in data:
-                return print_result(True, f"Got user and business data")
-            else:
-                return print_result(False, f"Missing user or business in response")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_auth_me_no_token():
-    """Test 3: Auth me without token - should fail"""
-    print_test("Auth me without token")
-    try:
-        r = requests.get(f"{BASE_URL}/auth/me", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 401:
-            return print_result(True, f"Correctly rejected no token: {data.get('error')}")
-        else:
-            return print_result(False, f"Expected 401, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_products_list():
-    """Test 4: Products listing - GET /api/products"""
-    print_test("Products listing with business attached")
-    try:
-        r = requests.get(f"{BASE_URL}/products", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            products = data.get('products', [])
-            if len(products) > 0:
-                first = products[0]
-                if 'business' in first and first['business'] is not None:
-                    return print_result(True, f"Got {len(products)} products with business attached")
-                else:
-                    return print_result(False, f"Product missing business object: {first.keys()}")
-            else:
-                return print_result(False, f"No products returned")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_products_search():
-    """Test 4: Products search - GET /api/products?q=mojito"""
-    print_test("Products search for 'mojito'")
-    try:
-        r = requests.get(f"{BASE_URL}/products?q=mojito", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            products = data.get('products', [])
-            # Check if any product contains "Mojito"
-            mojito_found = any('mojito' in p.get('name', '').lower() for p in products)
-            if mojito_found:
-                return print_result(True, f"Found Mojito in search results")
-            else:
-                return print_result(False, f"Mojito not found in {len(products)} results")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_products_category():
-    """Test 4: Products by category - GET /api/products?category=comida"""
-    print_test("Products filtered by category 'comida'")
-    try:
-        r = requests.get(f"{BASE_URL}/products?category=comida", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            products = data.get('products', [])
-            if len(products) > 0:
-                all_comida = all(p.get('category') == 'comida' for p in products)
-                if all_comida:
-                    return print_result(True, f"All {len(products)} products are category 'comida'")
-                else:
-                    return print_result(False, f"Some products not in 'comida' category")
-            else:
-                return print_result(False, f"No products in 'comida' category")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_products_featured():
-    """Test 4: Featured products - GET /api/products?featured=true"""
-    print_test("Products filtered by featured=true")
-    try:
-        r = requests.get(f"{BASE_URL}/products?featured=true", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            products = data.get('products', [])
-            if len(products) > 0:
-                all_featured = all(p.get('featured') == True for p in products)
-                if all_featured:
-                    return print_result(True, f"All {len(products)} products are featured")
-                else:
-                    return print_result(False, f"Some products not featured")
-            else:
-                return print_result(False, f"No featured products found")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_product_detail():
-    """Test 5: Product detail - GET /api/products/:id"""
-    print_test("Product detail by ID")
-    try:
-        # First get a product ID
-        r = requests.get(f"{BASE_URL}/products", timeout=10)
-        products = r.json().get('products', [])
-        if not products:
-            return print_result(False, "No products to test with")
-        
-        product_id = products[0]['id']
-        r = requests.get(f"{BASE_URL}/products/{product_id}", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            product = data.get('product', {})
-            if 'business' in product and product['business'] is not None:
-                return print_result(True, f"Got product detail with business attached")
-            else:
-                return print_result(False, f"Product missing business object")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_product_detail_invalid():
-    """Test 5: Product detail with invalid ID - should 404"""
-    print_test("Product detail with invalid ID")
-    try:
-        r = requests.get(f"{BASE_URL}/products/invalid-id-12345", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 404:
-            return print_result(True, f"Correctly returned 404 for invalid ID")
-        else:
-            return print_result(False, f"Expected 404, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_product_create_no_auth():
-    """Test 6: Create product without auth - should fail"""
-    print_test("Create product without auth")
-    try:
-        payload = {
-            "name": "Test Product",
-            "price": 10,
-            "category": "comida",
-            "description": "Test description",
-            "stock": 5
-        }
-        
-        r = requests.post(f"{BASE_URL}/products", json=payload, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 401:
-            return print_result(True, f"Correctly rejected no auth: {data.get('error')}")
-        else:
-            return print_result(False, f"Expected 401, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_product_create():
-    """Test 6: Create product with auth"""
-    print_test("Create product with auth")
-    try:
-        if not test_data['token']:
-            return print_result(False, "No token from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        payload = {
-            "name": "Test Product Created",
-            "price": 15.50,
-            "category": "comida",
-            "description": "Test product description",
-            "stock": 10,
-            "image": "https://example.com/image.jpg"
-        }
-        
-        r = requests.post(f"{BASE_URL}/products", json=payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            product = data.get('product', {})
-            if 'id' in product and 'businessId' in product:
-                test_data['product_id'] = product['id']
-                return print_result(True, f"Product created with ID: {product['id']}")
-            else:
-                return print_result(False, f"Missing id or businessId in response")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_product_update():
-    """Test 6: Update product"""
-    print_test("Update product price")
-    try:
-        if not test_data['token'] or not test_data['product_id']:
-            return print_result(False, "No token or product_id from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        payload = {"price": 20.00}
-        
-        r = requests.put(f"{BASE_URL}/products/{test_data['product_id']}", 
-                        json=payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            product = data.get('product', {})
-            if product.get('price') == 20.00:
-                return print_result(True, f"Product price updated to 20.00")
-            else:
-                return print_result(False, f"Price not updated correctly: {product.get('price')}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_product_update_not_owner():
-    """Test 6: Update product not owned - should fail"""
-    print_test("Update product not owned by user")
-    try:
-        # First create a second user
-        unique_email = f"test2-{uuid.uuid4()}@example.com"
-        payload = {
-            "email": unique_email,
-            "password": "SecurePass123!",
-            "businessName": "Second Test Business",
-            "whatsapp": "+5355555001",
-            "location": "La Habana, Cuba"
-        }
-        
-        r = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=10)
-        second_user_data = r.json()
-        
-        if r.status_code != 200:
-            return print_result(False, f"Failed to create second user: {second_user_data}")
-        
-        second_token = second_user_data['token']
-        
-        # Try to update first user's product with second user's token
-        headers = {"Authorization": f"Bearer {second_token}"}
-        payload = {"price": 99.99}
-        
-        r = requests.put(f"{BASE_URL}/products/{test_data['product_id']}", 
-                        json=payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 403:
-            test_data['second_user_token'] = second_token
-            test_data['second_user_business_id'] = second_user_data['business']['id']
-            return print_result(True, f"Correctly rejected unauthorized update: {data.get('error')}")
-        else:
-            return print_result(False, f"Expected 403, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_product_delete():
-    """Test 6: Delete product"""
-    print_test("Delete product")
-    try:
-        if not test_data['token'] or not test_data['product_id']:
-            return print_result(False, "No token or product_id from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        
-        r = requests.delete(f"{BASE_URL}/products/{test_data['product_id']}", 
-                           headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200 and data.get('ok') == True:
-            return print_result(True, f"Product deleted successfully")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_plan_limit():
-    """Test 7: Plan limit - create 10 products with basico plan"""
-    print_test("Plan limit - create 10 products (basico plan)")
-    try:
-        # Create a fresh user
-        unique_email = f"test-limit-{uuid.uuid4()}@example.com"
-        payload = {
-            "email": unique_email,
-            "password": "SecurePass123!",
-            "businessName": "Limit Test Business",
-            "whatsapp": "+5355555002",
-            "location": "La Habana, Cuba"
-        }
-        
-        r = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=10)
-        limit_user_data = r.json()
-        
-        if r.status_code != 200:
-            return print_result(False, f"Failed to create limit test user: {limit_user_data}")
-        
-        limit_token = limit_user_data['token']
-        headers = {"Authorization": f"Bearer {limit_token}"}
-        
-        # Create 10 products
-        created_count = 0
-        for i in range(10):
-            product_payload = {
-                "name": f"Limit Test Product {i+1}",
-                "price": 10 + i,
-                "category": "comida",
-                "description": f"Test product {i+1}",
-                "stock": 5
-            }
-            r = requests.post(f"{BASE_URL}/products", json=product_payload, headers=headers, timeout=10)
-            if r.status_code == 200:
-                created_count += 1
-        
-        if created_count == 10:
-            return print_result(True, f"Successfully created 10 products with basico plan")
-        else:
-            return print_result(False, f"Only created {created_count} products, expected 10")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_plan_limit_11th():
-    """Test 7: Plan limit - 11th product should fail"""
-    print_test("Plan limit - 11th product should fail (basico plan)")
-    try:
-        # Use the same user from previous test
-        # Create another fresh user for this test
-        unique_email = f"test-limit2-{uuid.uuid4()}@example.com"
-        payload = {
-            "email": unique_email,
-            "password": "SecurePass123!",
-            "businessName": "Limit Test Business 2",
-            "whatsapp": "+5355555003",
-            "location": "La Habana, Cuba"
-        }
-        
-        r = requests.post(f"{BASE_URL}/auth/register", json=payload, timeout=10)
-        limit_user_data = r.json()
-        
-        if r.status_code != 200:
-            return print_result(False, f"Failed to create limit test user: {limit_user_data}")
-        
-        limit_token = limit_user_data['token']
-        limit_user_id = limit_user_data['user']['id']
-        headers = {"Authorization": f"Bearer {limit_token}"}
-        
-        # Create 10 products
-        for i in range(10):
-            product_payload = {
-                "name": f"Limit Test Product {i+1}",
-                "price": 10 + i,
-                "category": "comida",
-                "description": f"Test product {i+1}",
-                "stock": 5
-            }
-            requests.post(f"{BASE_URL}/products", json=product_payload, headers=headers, timeout=10)
-        
-        # Try 11th product
-        product_payload = {
-            "name": "11th Product Should Fail",
-            "price": 100,
-            "category": "comida",
-            "description": "This should fail",
-            "stock": 5
-        }
-        r = requests.post(f"{BASE_URL}/products", json=product_payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 403:
-            error = data.get('error', '')
-            if 'plan' in error.lower() or 'límite' in error.lower() or 'limite' in error.lower():
-                # Store user ID for premium upgrade test
-                test_data['limit_user_id'] = limit_user_id
-                test_data['limit_user_token'] = limit_token
-                return print_result(True, f"Correctly rejected 11th product: {error}")
-            else:
-                return print_result(False, f"Wrong error message: {error}")
-        else:
-            return print_result(False, f"Expected 403, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_plan_featured_basico():
-    """Test 7: Featured with basico plan should be set to false"""
-    print_test("Featured=true with basico plan should be forced to false")
-    try:
-        if not test_data.get('limit_user_token'):
-            return print_result(False, "No limit_user_token from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['limit_user_token']}"}
-        
-        # Delete one product to make room
-        r = requests.get(f"{BASE_URL}/my/products", headers=headers, timeout=10)
-        my_products = r.json().get('products', [])
-        if my_products:
-            requests.delete(f"{BASE_URL}/products/{my_products[0]['id']}", headers=headers, timeout=10)
-        
-        # Create product with featured=true
-        product_payload = {
-            "name": "Featured Test Product",
-            "price": 50,
-            "category": "comida",
-            "description": "Should not be featured",
-            "stock": 5,
-            "featured": True
-        }
-        r = requests.post(f"{BASE_URL}/products", json=product_payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            product = data.get('product', {})
-            if product.get('featured') == False:
-                return print_result(True, f"Featured correctly set to false for basico plan")
-            else:
-                return print_result(False, f"Featured should be false but is: {product.get('featured')}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_plan_premium_featured():
-    """Test 7: Upgrade to premium and test featured=true"""
-    print_test("Upgrade to premium and create featured product")
-    try:
-        if not test_data.get('limit_user_id'):
-            return print_result(False, "No limit_user_id from previous test")
-        
-        # Manually update user to premium in MongoDB
-        client = MongoClient(MONGO_URL)
-        db = client[DB_NAME]
-        result = db.users.update_one(
-            {"id": test_data['limit_user_id']},
-            {"$set": {"plan": "premium"}}
-        )
-        
-        if result.modified_count == 0:
-            return print_result(False, "Failed to update user to premium plan")
-        
-        # Now create product with featured=true
-        headers = {"Authorization": f"Bearer {test_data['limit_user_token']}"}
-        product_payload = {
-            "name": "Premium Featured Product",
-            "price": 100,
-            "category": "tecnologia",
-            "description": "Should be featured",
-            "stock": 10,
-            "featured": True
-        }
-        r = requests.post(f"{BASE_URL}/products", json=product_payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            product = data.get('product', {})
-            if product.get('featured') == True:
-                return print_result(True, f"Featured correctly set to true for premium plan")
-            else:
-                return print_result(False, f"Featured should be true but is: {product.get('featured')}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_my_products():
-    """Test 8: My products - GET /api/my/products"""
-    print_test("My products (auth required)")
-    try:
-        if not test_data['token']:
-            return print_result(False, "No token from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        r = requests.get(f"{BASE_URL}/my/products", headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            products = data.get('products', [])
-            # Should only return products from this user's business
-            if isinstance(products, list):
-                return print_result(True, f"Got {len(products)} products for current user")
-            else:
-                return print_result(False, f"Products is not a list")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_business_detail():
-    """Test 8: Business detail - GET /api/businesses/:id"""
-    print_test("Business detail with products")
-    try:
-        # Get a business ID from seed data
-        r = requests.get(f"{BASE_URL}/products", timeout=10)
-        products = r.json().get('products', [])
-        if not products:
-            return print_result(False, "No products to get business from")
-        
-        business_id = products[0]['businessId']
-        r = requests.get(f"{BASE_URL}/businesses/{business_id}", timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            if 'business' in data and 'products' in data:
-                return print_result(True, f"Got business with {len(data['products'])} products")
-            else:
-                return print_result(False, f"Missing business or products in response")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_business_update_own():
-    """Test 8: Update own business"""
-    print_test("Update own business")
-    try:
-        if not test_data['token'] or not test_data['business']:
-            return print_result(False, "No token or business from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        business_id = test_data['business']['id']
-        payload = {"description": "Updated business description"}
-        
-        r = requests.put(f"{BASE_URL}/businesses/{business_id}", 
-                        json=payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 200:
-            business = data.get('business', {})
-            if business.get('description') == "Updated business description":
-                return print_result(True, f"Business description updated")
-            else:
-                return print_result(False, f"Description not updated correctly")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_business_update_other():
-    """Test 8: Update other business - should fail"""
-    print_test("Update other business (should fail)")
-    try:
-        if not test_data['token'] or not test_data.get('second_user_business_id'):
-            return print_result(False, "No token or second_user_business_id from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        payload = {"description": "Trying to update someone else's business"}
-        
-        r = requests.put(f"{BASE_URL}/businesses/{test_data['second_user_business_id']}", 
-                        json=payload, headers=headers, timeout=10)
-        data = r.json()
-        
-        if r.status_code == 403:
-            return print_result(True, f"Correctly rejected unauthorized business update: {data.get('error')}")
-        else:
-            return print_result(False, f"Expected 403, got {r.status_code}: {data}")
-    except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
-
-def test_subscription():
-    """Test 9: Subscription - POST /api/subscription"""
-    print_test("Create subscription request")
-    try:
-        if not test_data['token']:
-            return print_result(False, "No token from previous test")
-        
-        headers = {"Authorization": f"Bearer {test_data['token']}"}
-        payload = {
+        # Create subscription with screenshot
+        print("\n2. Creating subscription with screenshot...")
+        subscription_data = {
             "plan": "premium",
             "paymentMethod": "usdc",
-            "reference": "tx123456789"
+            "reference": "tx-hash-123",
+            "screenshot": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg"
         }
         
-        r = requests.post(f"{BASE_URL}/subscription", json=payload, headers=headers, timeout=10)
-        data = r.json()
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.post(f"{BASE_URL}/subscription", json=subscription_data, headers=headers)
         
-        if r.status_code == 200:
-            payment = data.get('payment', {})
-            if payment.get('status') == 'pending':
-                return print_result(True, f"Subscription request created with status pending")
-            else:
-                return print_result(False, f"Payment status should be pending but is: {payment.get('status')}")
-        else:
-            return print_result(False, f"Status {r.status_code}: {data}")
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        
+        # Verify payment object is returned
+        if 'payment' not in data:
+            print(f"❌ FAILED: No payment object in response")
+            return False
+        
+        payment = data['payment']
+        
+        # Verify screenshot is NOT in response
+        if 'screenshot' in payment:
+            print(f"❌ FAILED: Screenshot field should NOT be in response")
+            print(f"Payment: {json.dumps(payment, indent=2)}")
+            return False
+        
+        print(f"✅ Subscription created, screenshot correctly excluded from response")
+        
+        # Verify via /api/my/payments
+        print("\n3. Verifying payment via /api/my/payments...")
+        response = requests.get(f"{BASE_URL}/my/payments", headers=headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        payments = data.get('payments', [])
+        
+        if len(payments) == 0:
+            print(f"❌ FAILED: No payments found")
+            return False
+        
+        # Check that none of the payments have screenshot field
+        for p in payments:
+            if 'screenshot' in p:
+                print(f"❌ FAILED: Screenshot field found in payment from /api/my/payments")
+                return False
+        
+        print(f"✅ Payments list verified, no screenshot fields present")
+        
+        print("\n✅ ALL SUBSCRIPTION TESTS PASSED")
+        return True
+        
     except Exception as e:
-        return print_result(False, f"Exception: {str(e)}")
+        print(f"❌ FAILED: Exception - {str(e)}")
+        return False
+
+
+def test_my_payments():
+    """Test GET /api/my/payments endpoint"""
+    print("\n=== TEST: My Payments ===")
+    
+    # Register a user and create a payment
+    print("\n1. Setting up user and payment...")
+    user_email = f"test-{uuid4()}@example.com"
+    
+    try:
+        register_data = {
+            "email": user_email,
+            "password": "testPass123",
+            "businessName": f"Test Business {uuid4().hex[:8]}",
+            "whatsapp": "+5355512345"
+        }
+        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Registration failed")
+            return False
+        
+        token = response.json()['token']
+        
+        # Create a payment
+        subscription_data = {
+            "plan": "premium",
+            "paymentMethod": "transfermovil",
+            "reference": "ref-123",
+            "screenshot": "base64screenshot"
+        }
+        
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.post(f"{BASE_URL}/subscription", json=subscription_data, headers=headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Subscription creation failed")
+            return False
+        
+        print(f"✅ User and payment created")
+        
+        # Get my payments
+        print("\n2. Fetching my payments...")
+        response = requests.get(f"{BASE_URL}/my/payments", headers=headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        
+        if 'payments' not in data:
+            print(f"❌ FAILED: No payments array in response")
+            return False
+        
+        payments = data['payments']
+        
+        if not isinstance(payments, list):
+            print(f"❌ FAILED: payments should be an array")
+            return False
+        
+        # Verify no screenshot field in any payment
+        for payment in payments:
+            if 'screenshot' in payment:
+                print(f"❌ FAILED: Screenshot field should not be in response")
+                return False
+        
+        print(f"✅ Payments retrieved successfully, {len(payments)} payment(s) found")
+        print(f"✅ No screenshot fields in response")
+        
+        print("\n✅ ALL MY PAYMENTS TESTS PASSED")
+        return True
+        
+    except Exception as e:
+        print(f"❌ FAILED: Exception - {str(e)}")
+        return False
+
+
+def test_admin_endpoints():
+    """Test all admin endpoints"""
+    print("\n=== TEST: Admin Endpoints ===")
+    
+    try:
+        # Step 1: Login as admin
+        print("\n1. Logging in as admin...")
+        response = requests.post(f"{BASE_URL}/auth/login", json={
+            "email": "admin@ubik2.com",
+            "password": "admin123"
+        })
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Admin login failed with {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        admin_token = response.json()['token']
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        print(f"✅ Admin logged in successfully")
+        
+        # Step 2: Test GET /api/admin/stats
+        print("\n2. Testing GET /api/admin/stats...")
+        response = requests.get(f"{BASE_URL}/admin/stats", headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        stats = response.json()
+        required_stats = ['products', 'businesses', 'users', 'pendingPayments', 'approvedPayments']
+        
+        for field in required_stats:
+            if field not in stats:
+                print(f"❌ FAILED: Missing field '{field}' in stats")
+                return False
+        
+        print(f"✅ Stats retrieved: {json.dumps(stats, indent=2)}")
+        
+        # Step 3: Test GET /api/admin/settings
+        print("\n3. Testing GET /api/admin/settings...")
+        response = requests.get(f"{BASE_URL}/admin/settings", headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        if 'settings' not in data:
+            print(f"❌ FAILED: No settings object in response")
+            return False
+        
+        print(f"✅ Settings retrieved")
+        
+        # Step 4: Test PUT /api/admin/settings
+        print("\n4. Testing PUT /api/admin/settings...")
+        new_wallet = f"NewWallet{uuid4().hex[:8]}"
+        new_price = 15.50
+        
+        response = requests.put(f"{BASE_URL}/admin/settings", json={
+            "usdcWallet": new_wallet,
+            "premiumPriceUSD": new_price
+        }, headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        # Verify update
+        response = requests.get(f"{BASE_URL}/admin/settings", headers=admin_headers)
+        settings = response.json()['settings']
+        
+        if settings['usdcWallet'] != new_wallet or settings['premiumPriceUSD'] != new_price:
+            print(f"❌ FAILED: Settings not updated correctly")
+            return False
+        
+        print(f"✅ Settings updated successfully")
+        
+        # Step 5: Test GET /api/admin/payments
+        print("\n5. Testing GET /api/admin/payments...")
+        response = requests.get(f"{BASE_URL}/admin/payments", headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        payments = data.get('payments', [])
+        
+        # Check that user and business are attached, and no password leaked
+        for payment in payments:
+            if payment.get('user'):
+                if 'password' in payment['user']:
+                    print(f"❌ FAILED: Password leaked in user object")
+                    return False
+        
+        print(f"✅ Payments retrieved with user/business attached, no password leak")
+        
+        # Step 6: Test GET /api/admin/payments?status=pending
+        print("\n6. Testing GET /api/admin/payments?status=pending...")
+        response = requests.get(f"{BASE_URL}/admin/payments?status=pending", headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        payments = data.get('payments', [])
+        
+        # Verify all are pending
+        for payment in payments:
+            if payment.get('status') != 'pending':
+                print(f"❌ FAILED: Non-pending payment in filtered results")
+                return False
+        
+        print(f"✅ Pending payments filter working, {len(payments)} pending payment(s)")
+        
+        # Step 7: Create a payment and approve it
+        print("\n7. Creating payment and testing approve...")
+        
+        # Register a regular user
+        user_email = f"test-{uuid4()}@example.com"
+        register_data = {
+            "email": user_email,
+            "password": "testPass123",
+            "businessName": f"Test Business {uuid4().hex[:8]}",
+            "whatsapp": "+5355512345"
+        }
+        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
+        user_token = response.json()['token']
+        user_id = response.json()['user']['id']
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+        
+        # Create payment
+        subscription_data = {
+            "plan": "premium",
+            "paymentMethod": "usdc",
+            "reference": "approve-test-ref"
+        }
+        response = requests.post(f"{BASE_URL}/subscription", json=subscription_data, headers=user_headers)
+        payment_id = response.json()['payment']['id']
+        
+        # Approve payment
+        response = requests.post(f"{BASE_URL}/admin/payments/{payment_id}/approve", headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Approve failed with {response.status_code}")
+            return False
+        
+        # Verify user plan updated
+        response = requests.get(f"{BASE_URL}/auth/me", headers=user_headers)
+        user_data = response.json()['user']
+        
+        if user_data['plan'] != 'premium':
+            print(f"❌ FAILED: User plan not updated to premium")
+            return False
+        
+        if not user_data.get('planExpiresAt'):
+            print(f"❌ FAILED: planExpiresAt not set")
+            return False
+        
+        print(f"✅ Payment approved, user plan updated to premium with expiry date")
+        
+        # Step 8: Create another payment and reject it
+        print("\n8. Creating payment and testing reject...")
+        
+        # Create another payment
+        subscription_data = {
+            "plan": "premium",
+            "paymentMethod": "transfermovil",
+            "reference": "reject-test-ref"
+        }
+        response = requests.post(f"{BASE_URL}/subscription", json=subscription_data, headers=user_headers)
+        payment_id = response.json()['payment']['id']
+        
+        # Reject payment
+        reject_reason = "Bad screenshot"
+        response = requests.post(f"{BASE_URL}/admin/payments/{payment_id}/reject", json={
+            "reason": reject_reason
+        }, headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Reject failed with {response.status_code}")
+            return False
+        
+        # Verify payment status
+        response = requests.get(f"{BASE_URL}/admin/payments", headers=admin_headers)
+        payments = response.json()['payments']
+        rejected_payment = next((p for p in payments if p['id'] == payment_id), None)
+        
+        if not rejected_payment:
+            print(f"❌ FAILED: Rejected payment not found")
+            return False
+        
+        if rejected_payment['status'] != 'rejected':
+            print(f"❌ FAILED: Payment status not updated to rejected")
+            return False
+        
+        if rejected_payment.get('rejectReason') != reject_reason:
+            print(f"❌ FAILED: Reject reason not set correctly")
+            return False
+        
+        print(f"✅ Payment rejected with reason")
+        
+        # Step 9: Test GET /api/admin/users
+        print("\n9. Testing GET /api/admin/users...")
+        response = requests.get(f"{BASE_URL}/admin/users", headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        users = data.get('users', [])
+        
+        # Verify no password field
+        for user in users:
+            if 'password' in user:
+                print(f"❌ FAILED: Password field present in user object")
+                return False
+        
+        print(f"✅ Users retrieved, no password fields present")
+        
+        # Step 10: Test PUT /api/admin/users/:id (update plan)
+        print("\n10. Testing PUT /api/admin/users/:id (update plan)...")
+        
+        # Create a new user to update
+        new_user_email = f"test-{uuid4()}@example.com"
+        register_data = {
+            "email": new_user_email,
+            "password": "testPass123",
+            "businessName": f"Test Business {uuid4().hex[:8]}",
+            "whatsapp": "+5355512345"
+        }
+        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
+        new_user_id = response.json()['user']['id']
+        
+        # Update to premium
+        response = requests.put(f"{BASE_URL}/admin/users/{new_user_id}", json={
+            "plan": "premium"
+        }, headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        updated_user = response.json()['user']
+        
+        if updated_user['plan'] != 'premium':
+            print(f"❌ FAILED: User plan not updated")
+            return False
+        
+        print(f"✅ User plan updated to premium")
+        
+        # Step 11: Test PUT /api/admin/users/:id (suspend user)
+        print("\n11. Testing PUT /api/admin/users/:id (suspend user)...")
+        
+        response = requests.put(f"{BASE_URL}/admin/users/{new_user_id}", json={
+            "suspended": True
+        }, headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        updated_user = response.json()['user']
+        
+        if updated_user.get('suspended') != True:
+            print(f"❌ FAILED: User not suspended")
+            return False
+        
+        print(f"✅ User suspended successfully")
+        
+        # Step 12: Test GET /api/admin/products
+        print("\n12. Testing GET /api/admin/products...")
+        response = requests.get(f"{BASE_URL}/admin/products", headers=admin_headers)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            return False
+        
+        data = response.json()
+        products = data.get('products', [])
+        
+        # Verify business is attached
+        if len(products) > 0:
+            if 'business' not in products[0]:
+                print(f"❌ FAILED: Business not attached to products")
+                return False
+        
+        print(f"✅ Products retrieved with business attached, {len(products)} product(s)")
+        
+        # Step 13: Test DELETE /api/admin/products/:id
+        print("\n13. Testing DELETE /api/admin/products/:id...")
+        
+        if len(products) == 0:
+            print(f"⚠️  SKIPPED: No products to delete")
+        else:
+            product_id = products[0]['id']
+            response = requests.delete(f"{BASE_URL}/admin/products/{product_id}", headers=admin_headers)
+            
+            if response.status_code != 200:
+                print(f"❌ FAILED: Expected 200, got {response.status_code}")
+                return False
+            
+            # Verify deletion
+            response = requests.get(f"{BASE_URL}/admin/products", headers=admin_headers)
+            updated_products = response.json()['products']
+            
+            if any(p['id'] == product_id for p in updated_products):
+                print(f"❌ FAILED: Product not deleted")
+                return False
+            
+            print(f"✅ Product deleted successfully")
+        
+        # Step 14: Test admin endpoints with non-admin user
+        print("\n14. Testing admin endpoints with non-admin user (should get 403)...")
+        
+        # Create regular user
+        regular_user_email = f"test-{uuid4()}@example.com"
+        register_data = {
+            "email": regular_user_email,
+            "password": "testPass123",
+            "businessName": f"Test Business {uuid4().hex[:8]}",
+            "whatsapp": "+5355512345"
+        }
+        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
+        regular_token = response.json()['token']
+        regular_headers = {"Authorization": f"Bearer {regular_token}"}
+        
+        # Try to access admin endpoint
+        response = requests.get(f"{BASE_URL}/admin/stats", headers=regular_headers)
+        
+        if response.status_code != 403:
+            print(f"❌ FAILED: Expected 403, got {response.status_code}")
+            return False
+        
+        print(f"✅ Non-admin user correctly rejected with 403")
+        
+        # Step 15: Test admin endpoints without token
+        print("\n15. Testing admin endpoints without token (should get 401)...")
+        
+        response = requests.get(f"{BASE_URL}/admin/stats")
+        
+        if response.status_code != 401:
+            print(f"❌ FAILED: Expected 401, got {response.status_code}")
+            return False
+        
+        print(f"✅ No token correctly rejected with 401")
+        
+        print("\n✅ ALL ADMIN ENDPOINT TESTS PASSED")
+        return True
+        
+    except Exception as e:
+        print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
 
 def main():
     """Run all tests"""
-    print("\n" + "="*80)
-    print("UBIK2 YEMG BACKEND API TEST SUITE")
-    print("="*80)
+    print("=" * 80)
+    print("UBIK2 YEMG - Phase B+C Backend API Tests")
+    print("=" * 80)
     
-    results = []
+    results = {
+        "Public Settings": test_public_settings(),
+        "Forgot/Reset Password": test_forgot_reset_password(),
+        "Subscription with Screenshot": test_subscription_with_screenshot(),
+        "My Payments": test_my_payments(),
+        "Admin Endpoints": test_admin_endpoints()
+    }
     
-    # Test 1: Health & basics
-    results.append(("Health endpoint", test_health()))
-    results.append(("Categories endpoint", test_categories()))
-    results.append(("Stats endpoint", test_stats()))
-    
-    # Test 2: Seed
-    results.append(("Seed endpoint", test_seed()))
-    
-    # Test 3: Auth flow
-    results.append(("Auth register", test_auth_register()))
-    results.append(("Auth register duplicate", test_auth_register_duplicate()))
-    results.append(("Auth login", test_auth_login()))
-    results.append(("Auth login wrong password", test_auth_login_wrong_password()))
-    results.append(("Auth me with token", test_auth_me()))
-    results.append(("Auth me without token", test_auth_me_no_token()))
-    
-    # Test 4: Products listing
-    results.append(("Products listing", test_products_list()))
-    results.append(("Products search", test_products_search()))
-    results.append(("Products by category", test_products_category()))
-    results.append(("Products featured", test_products_featured()))
-    
-    # Test 5: Product detail
-    results.append(("Product detail", test_product_detail()))
-    results.append(("Product detail invalid", test_product_detail_invalid()))
-    
-    # Test 6: Products CRUD
-    results.append(("Product create no auth", test_product_create_no_auth()))
-    results.append(("Product create", test_product_create()))
-    results.append(("Product update", test_product_update()))
-    results.append(("Product update not owner", test_product_update_not_owner()))
-    results.append(("Product delete", test_product_delete()))
-    
-    # Test 7: Plan limits
-    results.append(("Plan limit 10 products", test_plan_limit()))
-    results.append(("Plan limit 11th product", test_plan_limit_11th()))
-    results.append(("Featured with basico plan", test_plan_featured_basico()))
-    results.append(("Featured with premium plan", test_plan_premium_featured()))
-    
-    # Test 8: My products & Business
-    results.append(("My products", test_my_products()))
-    results.append(("Business detail", test_business_detail()))
-    results.append(("Business update own", test_business_update_own()))
-    results.append(("Business update other", test_business_update_other()))
-    
-    # Test 9: Subscription
-    results.append(("Subscription request", test_subscription()))
-    
-    # Summary
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("TEST SUMMARY")
-    print("="*80)
+    print("=" * 80)
     
-    passed = sum(1 for _, result in results if result)
+    passed = sum(1 for v in results.values() if v)
     total = len(results)
     
+    for test_name, result in results.items():
+        status = "✅ PASSED" if result else "❌ FAILED"
+        print(f"{test_name}: {status}")
+    
     print(f"\nTotal: {passed}/{total} tests passed")
-    print("\nFailed tests:")
-    for name, result in results:
-        if not result:
-            print(f"  ❌ {name}")
+    print("=" * 80)
     
-    print("\nPassed tests:")
-    for name, result in results:
-        if result:
-            print(f"  ✅ {name}")
-    
-    return passed == total
+    return all(results.values())
+
 
 if __name__ == "__main__":
     success = main()

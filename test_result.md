@@ -213,6 +213,70 @@ backend:
       - working: true
         agent: "testing"
         comment: "✅ Subscription endpoint working correctly. POST /api/subscription with auth creates payment record with status='pending', plan='premium', paymentMethod='usdc', and reference. Returns payment object and confirmation message."
+      - working: true
+        agent: "testing"
+        comment: "✅ Subscription with screenshot field working correctly. POST /api/subscription accepts screenshot field but correctly excludes it from response. Payment object returned without screenshot field. Verified via /api/my/payments that screenshot is not included in response."
+
+  - task: "Public settings (USDC/Transfermóvil wallet)"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/settings returns wallet/Transfermóvil/premiumPriceUSD config (no auth)."
+      - working: true
+        agent: "testing"
+        comment: "✅ GET /api/settings working correctly. Returns all required fields: usdcWallet, usdcNetwork, transfermovilNumber, transfermovilName, premiumPriceUSD. No authentication required."
+
+  - task: "Forgot/Reset password flow"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "POST /api/auth/forgot generates resetToken (returned in response for MVP). POST /api/auth/reset validates and updates password."
+      - working: true
+        agent: "testing"
+        comment: "✅ Complete forgot/reset password flow working correctly. POST /api/auth/forgot with valid email returns resetToken (24 chars) and expiresAt. Invalid email correctly returns 404. POST /api/auth/reset with valid token successfully updates password. Old password correctly rejected (401) after reset. New password works for login. Invalid token correctly rejected with 400."
+
+  - task: "My payments list"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /api/my/payments returns current user's payments (screenshot stripped)."
+      - working: true
+        agent: "testing"
+        comment: "✅ GET /api/my/payments working correctly. Returns array of payments belonging to authenticated user. Screenshot field correctly excluded from all payment objects in response."
+
+  - task: "Admin endpoints (stats, payments approve/reject, users, products, settings)"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Admin user auto-created by seed (admin@ubik2.com / admin123). All /api/admin/* require role=admin. Approve activates plan + planExpiresAt +30d. Settings PUT updates global settings."
+      - working: true
+        agent: "testing"
+        comment: "✅ ALL ADMIN ENDPOINTS WORKING CORRECTLY. Tested 15 scenarios: (1) Admin login successful with admin@ubik2.com/admin123. (2) GET /api/admin/stats returns products, businesses, users, pendingPayments, approvedPayments counts. (3) GET /api/admin/settings returns settings object. (4) PUT /api/admin/settings successfully updates usdcWallet and premiumPriceUSD. (5) GET /api/admin/payments returns payments with user and business attached, no password leaked. (6) GET /api/admin/payments?status=pending filters correctly. (7) POST /api/admin/payments/:id/approve successfully approves payment and updates user plan to premium with planExpiresAt ~30 days in future. (8) POST /api/admin/payments/:id/reject successfully rejects payment with reason. (9) GET /api/admin/users returns users array with no password field. (10) PUT /api/admin/users/:id successfully updates user plan to premium. (11) PUT /api/admin/users/:id successfully suspends user. (12) GET /api/admin/products returns products with business attached. (13) DELETE /api/admin/products/:id successfully deletes product. (14) Non-admin user correctly rejected with 403. (15) No token correctly rejected with 401."
+
 
 frontend:
   - task: "Marketplace home (hero, categories, featured, products grid)"
@@ -266,7 +330,7 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
@@ -286,6 +350,35 @@ agent_communication:
       - Para probar `featured` con plan básico, el campo debe forzarse a false.
       - WhatsApp link es solo frontend (no testear).
       - DB: ubik2_yemg en MongoDB local. Base URL: usar NEXT_PUBLIC_BASE_URL + /api.
+  - agent: "main"
+    message: |
+      FASE B+C agregada. Nuevos endpoints a probar:
+      1) PUBLIC SETTINGS:
+         - GET /api/settings → debe devolver usdcWallet, usdcNetwork, transfermovilNumber, transfermovilName, premiumPriceUSD (sin auth).
+      2) FORGOT/RESET PASSWORD:
+         - POST /api/auth/forgot {email} → devuelve resetToken (MVP visible) y expiresAt
+         - POST /api/auth/forgot con email no registrado → 404
+         - POST /api/auth/reset {token, newPassword} → 200, contraseña actualizada (probar login con nueva pwd)
+         - POST /api/auth/reset con token inválido → 400
+      3) SUBSCRIPTION mejorada:
+         - POST /api/subscription ahora acepta screenshot (string base64 o cualquier string). El response NO debe contener el screenshot.
+      4) MY PAYMENTS:
+         - GET /api/my/payments con token → lista de pagos del usuario (sin screenshot en respuesta).
+      5) ADMIN ENDPOINTS (todos requieren role='admin'):
+         - Usuario admin auto-creado por seed: email='admin@ubik2.com', password='admin123'.
+         - GET /api/admin/stats → {products, businesses, users, pendingPayments, approvedPayments}
+         - GET /api/admin/settings → {settings: {...}}
+         - PUT /api/admin/settings con body parcial → actualiza settings
+         - GET /api/admin/payments?status=pending → lista pagos con .user y .business adjuntos
+         - POST /api/admin/payments/:id/approve → marca pago aprobado y activa plan en user con planExpiresAt 30 días.
+         - POST /api/admin/payments/:id/reject {reason} → marca rechazado
+         - GET /api/admin/users → lista users con .business y SIN password
+         - PUT /api/admin/users/:id {plan, role, suspended} → actualiza
+         - GET /api/admin/products → todos los productos con .business
+         - DELETE /api/admin/products/:id → admin puede borrar cualquier producto
+         - Cualquier admin endpoint con user normal (no admin) → 403
+         - Cualquier admin endpoint sin token → 401
+      Stack: igual que antes. JWT en header Authorization: Bearer.
   - agent: "testing"
     message: |
       ✅ BACKEND TESTING COMPLETE - ALL TESTS PASSED (30/30)
@@ -310,3 +403,49 @@ agent_communication:
       - Seed data idempotent (returns "Ya hay datos cargados")
       
       No critical issues found. Backend is production-ready.
+  - agent: "testing"
+    message: |
+      ✅ PHASE B+C BACKEND TESTING COMPLETE - ALL TESTS PASSED (5/5 test suites, 40+ individual assertions)
+      
+      Comprehensive testing of all Phase B+C endpoints completed successfully:
+      
+      1. PUBLIC SETTINGS ✅
+         - GET /api/settings returns all required fields without authentication
+         - Fields verified: usdcWallet, usdcNetwork, transfermovilNumber, transfermovilName, premiumPriceUSD
+      
+      2. FORGOT/RESET PASSWORD FLOW ✅
+         - POST /api/auth/forgot with valid email returns 24-char resetToken and expiresAt
+         - Invalid email correctly returns 404
+         - POST /api/auth/reset with valid token successfully updates password
+         - Old password correctly rejected (401) after reset
+         - New password works for login (200)
+         - Invalid token correctly rejected (400)
+      
+      3. SUBSCRIPTION WITH SCREENSHOT ✅
+         - POST /api/subscription accepts screenshot field
+         - Response correctly excludes screenshot field from payment object
+         - Verified via /api/my/payments that screenshot is not included
+      
+      4. MY PAYMENTS ✅
+         - GET /api/my/payments returns array of user's payments
+         - Screenshot field correctly excluded from all payment objects
+      
+      5. ADMIN ENDPOINTS ✅ (15 scenarios tested)
+         - Admin login working (admin@ubik2.com / admin123)
+         - GET /api/admin/stats returns all counts (products, businesses, users, pendingPayments, approvedPayments)
+         - GET /api/admin/settings returns settings object
+         - PUT /api/admin/settings successfully updates settings (verified with GET)
+         - GET /api/admin/payments returns payments with user/business attached, no password leak
+         - GET /api/admin/payments?status=pending filters correctly
+         - POST /api/admin/payments/:id/approve updates payment status and user plan with planExpiresAt ~30 days
+         - POST /api/admin/payments/:id/reject updates status and sets rejectReason
+         - GET /api/admin/users returns users with no password field
+         - PUT /api/admin/users/:id successfully updates plan to premium
+         - PUT /api/admin/users/:id successfully suspends user
+         - GET /api/admin/products returns products with business attached
+         - DELETE /api/admin/products/:id successfully deletes product
+         - Non-admin user correctly rejected with 403
+         - No token correctly rejected with 401
+      
+      ALL BACKEND ENDPOINTS WORKING CORRECTLY. No critical issues found.
+      Backend API is production-ready for Phase B+C features.

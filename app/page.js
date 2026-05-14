@@ -95,6 +95,16 @@ const App = () => {
   });
 
   const [planOpen, setPlanOpen] = useState(false);
+  const [settings, setSettings] = useState(null);
+  const [paymentForm, setPaymentForm] = useState({ method: 'usdc', reference: '', screenshot: '' });
+
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotStep, setForgotStep] = useState(1); // 1=email, 2=reset
+  const [forgotData, setForgotData] = useState({ email: '', token: '', newPassword: '' });
+
+  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null });
+  const [adminTab, setAdminTab] = useState('payments');
+  const [adminSettings, setAdminSettings] = useState(null);
 
   const [productOpen, setProductOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -123,6 +133,7 @@ const App = () => {
     refreshHome();
     api('/categories').then((d) => setCategories(d.categories || []));
     api('/stats').then((d) => setStats(d)).catch(() => {});
+    api('/settings').then((d) => setSettings(d)).catch(() => {});
   }, []);
 
   // When token changes, fetch user
@@ -294,10 +305,130 @@ const App = () => {
       await api('/subscription', {
         method: 'POST',
         token,
-        body: { plan: 'premium', paymentMethod: 'usdc', reference: 'pendiente' },
+        body: {
+          plan: 'premium',
+          paymentMethod: paymentForm.method,
+          reference: paymentForm.reference,
+          screenshot: paymentForm.screenshot,
+        },
       });
       toast.success('Solicitud enviada. Un admin revisará tu pago.');
       setPlanOpen(false);
+      setPaymentForm({ method: 'usdc', reference: '', screenshot: '' });
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const onScreenshotFile = (file) => {
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) return toast.error('La imagen debe pesar menos de 2MB');
+    const reader = new FileReader();
+    reader.onload = (e) => setPaymentForm((p) => ({ ...p, screenshot: e.target.result }));
+    reader.readAsDataURL(file);
+  };
+
+  // === FORGOT/RESET PASSWORD ===
+  const requestForgot = async () => {
+    try {
+      const d = await api('/auth/forgot', { method: 'POST', body: { email: forgotData.email } });
+      toast.success('Token generado (MVP: visible aquí)');
+      setForgotData((f) => ({ ...f, token: d.resetToken }));
+      setForgotStep(2);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const submitReset = async () => {
+    try {
+      await api('/auth/reset', {
+        method: 'POST',
+        body: { token: forgotData.token, newPassword: forgotData.newPassword },
+      });
+      toast.success('Contraseña actualizada. Inicia sesión.');
+      setForgotOpen(false);
+      setForgotStep(1);
+      setForgotData({ email: '', token: '', newPassword: '' });
+      setAuthMode('login');
+      setAuthOpen(true);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  // === ADMIN ===
+  const loadAdmin = useCallback(async () => {
+    if (!token || user?.role !== 'admin') return;
+    try {
+      const [pays, usrs, prods, st, settingsRes] = await Promise.all([
+        api('/admin/payments', { token }),
+        api('/admin/users', { token }),
+        api('/admin/products', { token }),
+        api('/admin/stats', { token }),
+        api('/admin/settings', { token }),
+      ]);
+      setAdminData({
+        payments: pays.payments || [],
+        users: usrs.users || [],
+        products: prods.products || [],
+        stats: st,
+      });
+      setAdminSettings(settingsRes.settings);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  }, [token, user]);
+
+  useEffect(() => {
+    if (view === 'admin') loadAdmin();
+  }, [view, loadAdmin]);
+
+  const approvePayment = async (id) => {
+    try {
+      await api(`/admin/payments/${id}/approve`, { method: 'POST', token });
+      toast.success('Pago aprobado y plan activado');
+      loadAdmin();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+  const rejectPayment = async (id) => {
+    const reason = prompt('Motivo de rechazo (opcional)') || '';
+    try {
+      await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason } });
+      toast.success('Pago rechazado');
+      loadAdmin();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+  const adminUpdateUser = async (id, patch) => {
+    try {
+      await api(`/admin/users/${id}`, { method: 'PUT', token, body: patch });
+      toast.success('Usuario actualizado');
+      loadAdmin();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+  const adminDeleteProduct = async (id) => {
+    if (!confirm('¿Eliminar este producto?')) return;
+    try {
+      await api(`/admin/products/${id}`, { method: 'DELETE', token });
+      toast.success('Producto eliminado');
+      loadAdmin();
+      refreshHome();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+  const saveAdminSettings = async () => {
+    try {
+      const d = await api('/admin/settings', { method: 'PUT', token, body: adminSettings });
+      setAdminSettings(d.settings);
+      setSettings(d.settings);
+      toast.success('Configuración guardada');
     } catch (err) {
       toast.error(err.message);
     }
@@ -348,6 +479,17 @@ const App = () => {
           <div className="flex items-center gap-2">
             {user ? (
               <>
+                {user.role === 'admin' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-amber-300 hover:bg-amber-500/10"
+                    onClick={() => setView('admin')}
+                  >
+                    <Crown className="h-4 w-4 mr-2" />
+                    Admin
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="sm"
@@ -437,6 +579,22 @@ const App = () => {
             onEdit={openProductEdit}
             onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
+          />
+        )}
+
+        {view === 'admin' && user?.role === 'admin' && (
+          <AdminDashboard
+            data={adminData}
+            settings={adminSettings}
+            setSettings={setAdminSettings}
+            onApprove={approvePayment}
+            onReject={rejectPayment}
+            onUpdateUser={adminUpdateUser}
+            onDeleteProduct={adminDeleteProduct}
+            onSaveSettings={saveAdminSettings}
+            tab={adminTab}
+            setTab={setAdminTab}
+            onRefresh={loadAdmin}
           />
         )}
         {view === 'dashboard' && !user && (
@@ -576,6 +734,19 @@ const App = () => {
                   {authMode === 'login' ? 'Entrar' : 'Crear cuenta'}
                 </Button>
               </DialogFooter>
+              {authMode === 'login' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthOpen(false);
+                    setForgotStep(1);
+                    setForgotOpen(true);
+                  }}
+                  className="text-xs text-fuchsia-400 hover:text-fuchsia-300 underline-offset-4 hover:underline w-full text-center"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
+              )}
             </form>
           </Tabs>
         </DialogContent>
@@ -689,62 +860,157 @@ const App = () => {
 
       {/* PLAN DIALOG */}
       <Dialog open={planOpen} onOpenChange={setPlanOpen}>
-        <DialogContent className="bg-[#100628]/95 border-white/10 backdrop-blur-xl max-w-2xl">
+        <DialogContent className="bg-[#100628]/95 border-white/10 backdrop-blur-xl max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="text-2xl flex items-center gap-2">
               <Crown className="h-6 w-6 text-amber-400" /> Pásate a Premium
             </DialogTitle>
-            <DialogDescription>
-              Desbloquea todo el poder de UBIK2 YEMG.
-            </DialogDescription>
+            <DialogDescription>Desbloquea todo el poder de UBIK2 YEMG.</DialogDescription>
           </DialogHeader>
+
           <div className="grid md:grid-cols-2 gap-4">
             <div className="rounded-xl border border-white/10 bg-white/5 p-5">
               <Badge variant="secondary">Plan Básico</Badge>
               <h3 className="text-2xl font-bold mt-2">Gratis</h3>
               <ul className="text-sm text-muted-foreground space-y-2 mt-4">
-                <li className="flex gap-2">
-                  <Check className="h-4 w-4 text-green-400" /> Hasta 10 productos
-                </li>
-                <li className="flex gap-2">
-                  <Check className="h-4 w-4 text-green-400" /> Aparece en marketplace
-                </li>
-                <li className="flex gap-2">
-                  <Check className="h-4 w-4 text-green-400" /> Botón WhatsApp directo
-                </li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-green-400" /> Hasta 10 productos</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-green-400" /> Aparece en marketplace</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-green-400" /> Botón WhatsApp directo</li>
                 <li className="text-muted-foreground/60">• Con publicidad</li>
               </ul>
             </div>
             <div className="rounded-xl border border-fuchsia-500/40 bg-gradient-to-br from-fuchsia-500/10 to-purple-600/10 p-5 relative shadow-lg shadow-purple-500/20">
               <Badge className="bg-gradient-to-r from-fuchsia-500 to-purple-600">Premium</Badge>
               <h3 className="text-2xl font-bold mt-2">
-                $9.99<span className="text-base text-muted-foreground">/mes</span>
+                ${settings?.premiumPriceUSD ?? '9.99'}<span className="text-base text-muted-foreground">/mes</span>
               </h3>
               <ul className="text-sm space-y-2 mt-4">
-                <li className="flex gap-2">
-                  <Check className="h-4 w-4 text-green-400" /> Productos ilimitados
-                </li>
-                <li className="flex gap-2">
-                  <Check className="h-4 w-4 text-green-400" /> Destacar productos
-                </li>
-                <li className="flex gap-2">
-                  <Check className="h-4 w-4 text-green-400" /> Sin publicidad
-                </li>
-                <li className="flex gap-2">
-                  <Check className="h-4 w-4 text-green-400" /> Prioridad en búsquedas
-                </li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-green-400" /> Productos ilimitados</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-green-400" /> Destacar productos</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-green-400" /> Sin publicidad</li>
+                <li className="flex gap-2"><Check className="h-4 w-4 text-green-400" /> Prioridad en búsquedas</li>
               </ul>
-              <Button
-                onClick={requestPremium}
-                className="w-full mt-4 bg-gradient-to-r from-fuchsia-500 to-purple-600 hover:from-fuchsia-600 hover:to-purple-700"
-              >
-                Pagar con USDC / Transfermóvil
-              </Button>
-              <p className="text-xs text-muted-foreground mt-2">
-                Un administrador revisará tu pago manualmente.
-              </p>
             </div>
           </div>
+
+          <div className="mt-4 space-y-3">
+            <h4 className="font-semibold text-sm">Método de pago</h4>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setPaymentForm({ ...paymentForm, method: 'usdc' })}
+                className={`rounded-lg p-3 border text-sm transition ${paymentForm.method === 'usdc' ? 'border-fuchsia-500 bg-fuchsia-500/15' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+              >
+                💎 USDC (Crypto)
+              </button>
+              <button
+                onClick={() => setPaymentForm({ ...paymentForm, method: 'transfermovil' })}
+                className={`rounded-lg p-3 border text-sm transition ${paymentForm.method === 'transfermovil' ? 'border-fuchsia-500 bg-fuchsia-500/15' : 'border-white/10 bg-white/5 hover:bg-white/10'}`}
+              >
+                📱 Transfermóvil
+              </button>
+            </div>
+
+            {paymentForm.method === 'usdc' && settings && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                <div className="font-semibold text-amber-300 mb-1">Wallet USDC ({settings.usdcNetwork})</div>
+                <div className="font-mono break-all text-foreground/90">{settings.usdcWallet}</div>
+                <p className="text-muted-foreground mt-1">Envía ${settings.premiumPriceUSD} USDC a esta dirección y pega el hash abajo.</p>
+              </div>
+            )}
+            {paymentForm.method === 'transfermovil' && settings && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs">
+                <div className="font-semibold text-amber-300 mb-1">Transfermóvil</div>
+                <div>Nombre: <b>{settings.transfermovilName}</b></div>
+                <div>Número: <b>{settings.transfermovilNumber}</b></div>
+                <p className="text-muted-foreground mt-1">Sube la captura del pago abajo.</p>
+              </div>
+            )}
+
+            <div>
+              <Label className="text-xs">Hash / Referencia del pago</Label>
+              <Input
+                value={paymentForm.reference}
+                onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })}
+                placeholder={paymentForm.method === 'usdc' ? '0x...txhash' : 'No. de operación'}
+                className="bg-white/5 border-white/10"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Captura del pago (máx 2MB)</Label>
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={(e) => onScreenshotFile(e.target.files?.[0])}
+                className="bg-white/5 border-white/10 file:text-foreground"
+              />
+              {paymentForm.screenshot && (
+                <img src={paymentForm.screenshot} alt="" className="mt-2 max-h-32 rounded-lg border border-white/10" />
+              )}
+            </div>
+            <Button
+              onClick={requestPremium}
+              className="w-full bg-gradient-to-r from-fuchsia-500 to-purple-600 hover:from-fuchsia-600 hover:to-purple-700"
+            >
+              Enviar solicitud de pago
+            </Button>
+            <p className="text-xs text-muted-foreground text-center">Un administrador revisará tu pago manualmente.</p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* FORGOT PASSWORD DIALOG */}
+      <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>
+        <DialogContent className="bg-[#100628]/95 border-white/10 backdrop-blur-xl max-w-md">
+          <DialogHeader>
+            <DialogTitle>Recuperar contraseña</DialogTitle>
+            <DialogDescription>
+              {forgotStep === 1
+                ? 'Ingresa tu email para generar un token de recuperación.'
+                : 'Pega el token y elige una nueva contraseña.'}
+            </DialogDescription>
+          </DialogHeader>
+          {forgotStep === 1 ? (
+            <div className="space-y-3">
+              <div>
+                <Label>Email</Label>
+                <Input
+                  type="email"
+                  value={forgotData.email}
+                  onChange={(e) => setForgotData({ ...forgotData, email: e.target.value })}
+                  className="bg-white/5 border-white/10"
+                />
+              </div>
+              <Button onClick={requestForgot} className="w-full bg-gradient-to-r from-fuchsia-500 to-purple-600">
+                Generar token
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <Label>Token (en MVP visible)</Label>
+                <Input
+                  value={forgotData.token}
+                  onChange={(e) => setForgotData({ ...forgotData, token: e.target.value })}
+                  className="bg-white/5 border-white/10 font-mono text-xs"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  En producción este token llegaría por email.
+                </p>
+              </div>
+              <div>
+                <Label>Nueva contraseña</Label>
+                <Input
+                  type="password"
+                  value={forgotData.newPassword}
+                  onChange={(e) => setForgotData({ ...forgotData, newPassword: e.target.value })}
+                  className="bg-white/5 border-white/10"
+                />
+              </div>
+              <Button onClick={submitReset} className="w-full bg-gradient-to-r from-fuchsia-500 to-purple-600">
+                Actualizar contraseña
+              </Button>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
@@ -1260,6 +1526,278 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
           ))}
         </div>
       )}
+    </section>
+  );
+};
+
+// === ADMIN DASHBOARD ===
+const AdminDashboard = ({
+  data,
+  settings,
+  setSettings,
+  onApprove,
+  onReject,
+  onUpdateUser,
+  onDeleteProduct,
+  onSaveSettings,
+  tab,
+  setTab,
+  onRefresh,
+}) => {
+  const { payments, users, products, stats } = data;
+  const pending = payments.filter((p) => p.status === 'pending');
+  return (
+    <section className="container mx-auto px-4 pt-10 pb-20">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <Crown className="h-7 w-7 text-amber-400" /> Panel de Administración
+          </h1>
+          <p className="text-muted-foreground">Gestiona usuarios, productos, pagos y configuración.</p>
+        </div>
+        <Button variant="outline" onClick={onRefresh} className="border-white/20 bg-white/5">
+          Actualizar
+        </Button>
+      </div>
+
+      {stats && (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-8">
+          {[
+            { l: 'Productos', v: stats.products },
+            { l: 'Negocios', v: stats.businesses },
+            { l: 'Usuarios', v: stats.users },
+            { l: 'Pagos pendientes', v: stats.pendingPayments, hl: stats.pendingPayments > 0 },
+            { l: 'Pagos aprobados', v: stats.approvedPayments },
+          ].map((s, i) => (
+            <div
+              key={i}
+              className={`rounded-xl border p-4 backdrop-blur-md ${
+                s.hl
+                  ? 'border-amber-500/40 bg-amber-500/10 shadow-lg shadow-amber-500/10'
+                  : 'border-white/10 bg-white/5'
+              }`}
+            >
+              <div className="text-xs text-muted-foreground">{s.l}</div>
+              <div className="text-2xl font-bold mt-1">{s.v}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="bg-white/5 border border-white/10">
+          <TabsTrigger value="payments">
+            Pagos
+            {pending.length > 0 && (
+              <Badge className="ml-2 bg-amber-500 text-black border-0 h-5 px-1.5">
+                {pending.length}
+              </Badge>
+            )}
+          </TabsTrigger>
+          <TabsTrigger value="users">Usuarios</TabsTrigger>
+          <TabsTrigger value="products">Productos</TabsTrigger>
+          <TabsTrigger value="settings">Configuración</TabsTrigger>
+        </TabsList>
+
+        {/* PAYMENTS */}
+        <TabsContent value="payments" className="mt-4 space-y-3">
+          {payments.length === 0 ? (
+            <p className="text-muted-foreground text-center py-12">No hay pagos.</p>
+          ) : (
+            payments.map((p) => (
+              <div
+                key={p.id}
+                className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-md p-4 flex flex-col md:flex-row gap-4 md:items-center"
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold">{p.business?.name || '—'}</span>
+                    <span className="text-xs text-muted-foreground">{p.user?.email}</span>
+                    <Badge
+                      variant="outline"
+                      className={
+                        p.status === 'pending'
+                          ? 'border-amber-500/40 text-amber-400'
+                          : p.status === 'approved'
+                          ? 'border-green-500/40 text-green-400'
+                          : 'border-red-500/40 text-red-400'
+                      }
+                    >
+                      {p.status}
+                    </Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {p.plan} · {p.paymentMethod?.toUpperCase()} · ${p.amount ?? '—'} · ref:{' '}
+                    <span className="font-mono">{p.reference || 'sin referencia'}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {new Date(p.createdAt).toLocaleString('es-ES')}
+                  </div>
+                </div>
+                {p.status === 'pending' && (
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => onApprove(p.id)}
+                      className="bg-gradient-to-r from-green-500 to-emerald-500"
+                    >
+                      <Check className="h-3 w-3 mr-1" /> Aprobar
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onReject(p.id)}
+                      className="border-red-500/40 text-red-400 hover:bg-red-500/10"
+                    >
+                      Rechazar
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </TabsContent>
+
+        {/* USERS */}
+        <TabsContent value="users" className="mt-4 space-y-2">
+          {users.map((u) => (
+            <div
+              key={u.id}
+              className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-md p-4 flex flex-col md:flex-row gap-3 md:items-center"
+            >
+              <div className="flex-1">
+                <div className="font-semibold flex items-center gap-2 flex-wrap">
+                  {u.email}
+                  {u.role === 'admin' && (
+                    <Badge className="bg-amber-500/90 text-black border-0">admin</Badge>
+                  )}
+                  {u.suspended && (
+                    <Badge variant="outline" className="border-red-500/40 text-red-400">
+                      suspendido
+                    </Badge>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Negocio: {u.business?.name || '—'} · Plan actual: <b>{u.plan}</b>
+                </div>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <Select
+                  value={u.plan}
+                  onValueChange={(v) => onUpdateUser(u.id, { plan: v })}
+                >
+                  <SelectTrigger className="w-32 bg-white/5 border-white/10">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="basico">Básico</SelectItem>
+                    <SelectItem value="premium">Premium</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onUpdateUser(u.id, { suspended: !u.suspended })}
+                  className="border-white/20 bg-white/5"
+                >
+                  {u.suspended ? 'Reactivar' : 'Suspender'}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </TabsContent>
+
+        {/* PRODUCTS */}
+        <TabsContent value="products" className="mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {products.map((p) => (
+              <Card key={p.id} className="bg-white/5 backdrop-blur-md border-white/10 overflow-hidden">
+                <div className="aspect-video bg-black/40">
+                  {p.image && <img src={p.image} alt={p.name} className="w-full h-full object-cover" />}
+                </div>
+                <CardContent className="p-3">
+                  <div className="font-semibold truncate">{p.name}</div>
+                  <div className="text-xs text-muted-foreground truncate">
+                    {p.business?.name} · {formatPrice(p.price)}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onDeleteProduct(p.id)}
+                    className="mt-2 border-red-500/40 text-red-400 hover:bg-red-500/10 w-full"
+                  >
+                    <Trash2 className="h-3 w-3 mr-1" /> Eliminar
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+
+        {/* SETTINGS */}
+        <TabsContent value="settings" className="mt-4">
+          {settings && (
+            <div className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-md p-5 space-y-3 max-w-2xl">
+              <div>
+                <Label>Wallet USDC</Label>
+                <Input
+                  value={settings.usdcWallet || ''}
+                  onChange={(e) => setSettings({ ...settings, usdcWallet: e.target.value })}
+                  className="bg-white/5 border-white/10 font-mono"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Red USDC</Label>
+                  <Input
+                    value={settings.usdcNetwork || ''}
+                    onChange={(e) => setSettings({ ...settings, usdcNetwork: e.target.value })}
+                    className="bg-white/5 border-white/10"
+                  />
+                </div>
+                <div>
+                  <Label>Precio Premium (USD)</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={settings.premiumPriceUSD ?? 0}
+                    onChange={(e) =>
+                      setSettings({ ...settings, premiumPriceUSD: Number(e.target.value) })
+                    }
+                    className="bg-white/5 border-white/10"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Transfermóvil - Nombre</Label>
+                  <Input
+                    value={settings.transfermovilName || ''}
+                    onChange={(e) => setSettings({ ...settings, transfermovilName: e.target.value })}
+                    className="bg-white/5 border-white/10"
+                  />
+                </div>
+                <div>
+                  <Label>Transfermóvil - Número</Label>
+                  <Input
+                    value={settings.transfermovilNumber || ''}
+                    onChange={(e) =>
+                      setSettings({ ...settings, transfermovilNumber: e.target.value })
+                    }
+                    className="bg-white/5 border-white/10"
+                  />
+                </div>
+              </div>
+              <Button
+                onClick={onSaveSettings}
+                className="bg-gradient-to-r from-fuchsia-500 to-purple-600"
+              >
+                Guardar cambios
+              </Button>
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </section>
   );
 };

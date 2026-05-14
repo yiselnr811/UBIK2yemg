@@ -59,6 +59,30 @@ async function requireUser(request) {
   return { user };
 }
 
+async function requireAdmin(request) {
+  const r = await requireUser(request);
+  if (r.error) return r;
+  if (r.user.role !== 'admin') return { error: json({ error: 'Solo administradores' }, 403) };
+  return r;
+}
+
+async function getSettings(db) {
+  let s = await db.collection('settings').findOne({ id: 'global' });
+  if (!s) {
+    s = {
+      id: 'global',
+      usdcWallet: 'TXyZ123ExampleUSDCWalletAddressChangeMe',
+      usdcNetwork: 'TRC20',
+      transfermovilNumber: '+5355000000',
+      transfermovilName: 'UBIK2 YEMG',
+      premiumPriceUSD: 9.99,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.collection('settings').insertOne(s);
+  }
+  return s;
+}
+
 // ROUTER
 async function route(request, method, path) {
   const db = await getDb();
@@ -148,6 +172,34 @@ async function route(request, method, path) {
       const business = await db.collection('businesses').findOne({ id: user.businessId });
       const { password: _, ...userOut } = user;
       return json({ user: userOut, business });
+    }
+
+    if (path[1] === 'forgot' && method === 'POST') {
+      const body = await request.json();
+      const { email } = body || {};
+      if (!email) return json({ error: 'Email requerido' }, 400);
+      const u = await db.collection('users').findOne({ email: email.toLowerCase() });
+      if (!u) return json({ error: 'Email no registrado' }, 404);
+      const resetToken = uuidv4().replace(/-/g, '').slice(0, 24);
+      const resetExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      await db.collection('users').updateOne({ id: u.id }, { $set: { resetToken, resetExpires } });
+      // MVP: returning token in response (in prod, send via email)
+      return json({ message: 'Token de recuperación generado', resetToken, expiresAt: resetExpires });
+    }
+
+    if (path[1] === 'reset' && method === 'POST') {
+      const body = await request.json();
+      const { token: rt, newPassword } = body || {};
+      if (!rt || !newPassword) return json({ error: 'Token y nueva contraseña requeridos' }, 400);
+      const u = await db.collection('users').findOne({ resetToken: rt });
+      if (!u) return json({ error: 'Token inválido' }, 400);
+      if (new Date(u.resetExpires) < new Date()) return json({ error: 'Token expirado' }, 400);
+      const hashed = await bcrypt.hash(newPassword, 10);
+      await db.collection('users').updateOne(
+        { id: u.id },
+        { $set: { password: hashed }, $unset: { resetToken: '', resetExpires: '' } }
+      );
+      return json({ message: 'Contraseña actualizada' });
     }
   }
 
@@ -279,26 +331,55 @@ async function route(request, method, path) {
     const body = await request.json();
     const { plan, paymentMethod, reference, screenshot } = body || {};
     if (!['basico', 'premium'].includes(plan)) return json({ error: 'Plan inválido' }, 400);
+    const settings = await getSettings(db);
     const payment = {
       id: uuidv4(),
       userId: user.id,
       businessId: user.businessId,
+      userEmail: user.email,
       plan,
       paymentMethod: paymentMethod || 'usdc',
+      amount: settings.premiumPriceUSD,
       reference: reference || '',
       screenshot: screenshot || '',
       status: 'pending',
       createdAt: new Date().toISOString(),
     };
     await db.collection('payments').insertOne(payment);
-    return json({ payment, message: 'Pago enviado. Será revisado por el administrador.' });
+    const { screenshot: _, ...out } = payment;
+    return json({ payment: out, message: 'Pago enviado. Será revisado por el administrador.' });
+  }
+
+  // ===== MY PAYMENTS =====
+  if (path[0] === 'my' && path[1] === 'payments' && method === 'GET') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    const items = await db.collection('payments').find({ userId: user.id }).sort({ createdAt: -1 }).toArray();
+    const out = items.map(({ screenshot, ...p }) => p);
+    return json({ payments: out });
   }
 
   // ===== SEED =====
   if (path[0] === 'seed' && method === 'POST') {
     // safe to call multiple times - only seeds when empty
     const existing = await db.collection('products').countDocuments();
-    if (existing > 0) return json({ message: 'Ya hay datos cargados', count: existing });
+    // ensure settings + admin user exist regardless
+    await getSettings(db);
+    let adminExists = await db.collection('users').findOne({ email: 'admin@ubik2.com' });
+    if (!adminExists) {
+      const adminId = uuidv4();
+      const adminBizId = uuidv4();
+      await db.collection('businesses').insertOne({
+        id: adminBizId, userId: adminId, name: 'UBIK2 YEMG Admin', logo: '', description: 'Administración',
+        whatsapp: '+5350000000', location: 'Cuba', instagram: '', facebook: '', createdAt: new Date().toISOString(),
+      });
+      await db.collection('users').insertOne({
+        id: adminId, email: 'admin@ubik2.com', password: await bcrypt.hash('admin123', 10),
+        role: 'admin', businessId: adminBizId, plan: 'premium', planExpiresAt: null,
+        createdAt: new Date().toISOString(),
+      });
+    }
+    if (existing > 0) return json({ message: 'Ya hay datos cargados', count: existing, adminCreated: !adminExists });
 
     const businessesSeed = [
       { name: 'Sabores de La Habana', logo: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=200&q=80', description: 'Comida tradicional cubana hecha con amor', whatsapp: '+5355512345', location: 'La Habana, Cuba', instagram: '@sabores_habana' },
@@ -348,6 +429,123 @@ async function route(request, method, path) {
 
     await db.collection('products').insertMany(products);
     return json({ message: 'Datos cargados', businesses: businessesSeed.length, products: products.length });
+  }
+
+  // ===== SETTINGS (public) =====
+  if (path[0] === 'settings' && method === 'GET') {
+    const s = await getSettings(db);
+    return json({
+      usdcWallet: s.usdcWallet,
+      usdcNetwork: s.usdcNetwork,
+      transfermovilNumber: s.transfermovilNumber,
+      transfermovilName: s.transfermovilName,
+      premiumPriceUSD: s.premiumPriceUSD,
+    });
+  }
+
+  // ===== ADMIN =====
+  if (path[0] === 'admin') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    if (path[1] === 'stats' && method === 'GET') {
+      const [products, businesses, users, pendingPayments, approvedPayments] = await Promise.all([
+        db.collection('products').countDocuments(),
+        db.collection('businesses').countDocuments(),
+        db.collection('users').countDocuments(),
+        db.collection('payments').countDocuments({ status: 'pending' }),
+        db.collection('payments').countDocuments({ status: 'approved' }),
+      ]);
+      return json({ products, businesses, users, pendingPayments, approvedPayments });
+    }
+
+    if (path[1] === 'settings' && method === 'GET') {
+      const s = await getSettings(db);
+      return json({ settings: s });
+    }
+    if (path[1] === 'settings' && method === 'PUT') {
+      const body = await request.json();
+      const allowed = ['usdcWallet', 'usdcNetwork', 'transfermovilNumber', 'transfermovilName', 'premiumPriceUSD'];
+      const update = { updatedAt: new Date().toISOString() };
+      for (const k of allowed) if (k in body) update[k] = body[k];
+      await db.collection('settings').updateOne({ id: 'global' }, { $set: update }, { upsert: true });
+      const s = await db.collection('settings').findOne({ id: 'global' });
+      return json({ settings: s });
+    }
+
+    if (path[1] === 'payments' && method === 'GET') {
+      const status = url.searchParams.get('status');
+      const filter = status ? { status } : {};
+      const items = await db.collection('payments').find(filter).sort({ createdAt: -1 }).limit(100).toArray();
+      const uids = [...new Set(items.map((p) => p.userId))];
+      const users = await db.collection('users').find({ id: { $in: uids } }).toArray();
+      const businesses = await db.collection('businesses').find({ id: { $in: items.map((p) => p.businessId) } }).toArray();
+      const um = Object.fromEntries(users.map((u) => [u.id, { id: u.id, email: u.email, plan: u.plan }]));
+      const bm = Object.fromEntries(businesses.map((b) => [b.id, { id: b.id, name: b.name }]));
+      const enriched = items.map((p) => ({ ...p, user: um[p.userId] || null, business: bm[p.businessId] || null }));
+      return json({ payments: enriched });
+    }
+
+    if (path[1] === 'payments' && path[2] && path[3] === 'approve' && method === 'POST') {
+      const pay = await db.collection('payments').findOne({ id: path[2] });
+      if (!pay) return json({ error: 'Pago no encontrado' }, 404);
+      const expires = new Date();
+      expires.setMonth(expires.getMonth() + 1);
+      await db.collection('payments').updateOne(
+        { id: path[2] },
+        { $set: { status: 'approved', approvedAt: new Date().toISOString(), approvedBy: user.id } }
+      );
+      await db.collection('users').updateOne(
+        { id: pay.userId },
+        { $set: { plan: pay.plan, planExpiresAt: expires.toISOString() } }
+      );
+      return json({ ok: true, message: 'Pago aprobado y plan activado' });
+    }
+
+    if (path[1] === 'payments' && path[2] && path[3] === 'reject' && method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      await db.collection('payments').updateOne(
+        { id: path[2] },
+        { $set: { status: 'rejected', rejectedAt: new Date().toISOString(), rejectedBy: user.id, rejectReason: body.reason || '' } }
+      );
+      return json({ ok: true, message: 'Pago rechazado' });
+    }
+
+    if (path[1] === 'users' && method === 'GET') {
+      const users = await db.collection('users').find({}).sort({ createdAt: -1 }).limit(200).toArray();
+      const out = users.map(({ password, ...u }) => u);
+      const bizs = await db.collection('businesses').find({ id: { $in: out.map((u) => u.businessId) } }).toArray();
+      const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
+      return json({ users: out.map((u) => ({ ...u, business: bm[u.businessId] || null })) });
+    }
+
+    if (path[1] === 'users' && path[2] && method === 'PUT') {
+      const body = await request.json();
+      const allowed = ['plan', 'role', 'suspended'];
+      const update = {};
+      for (const k of allowed) if (k in body) update[k] = body[k];
+      if (update.plan === 'premium') {
+        const expires = new Date();
+        expires.setMonth(expires.getMonth() + 1);
+        update.planExpiresAt = expires.toISOString();
+      }
+      await db.collection('users').updateOne({ id: path[2] }, { $set: update });
+      const u = await db.collection('users').findOne({ id: path[2] });
+      const { password, ...userOut } = u || {};
+      return json({ user: userOut });
+    }
+
+    if (path[1] === 'products' && method === 'GET') {
+      const items = await db.collection('products').find({}).sort({ createdAt: -1 }).limit(200).toArray();
+      const bizs = await db.collection('businesses').find({}).toArray();
+      const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
+      return json({ products: items.map((p) => ({ ...p, business: bm[p.businessId] || null })) });
+    }
+
+    if (path[1] === 'products' && path[2] && method === 'DELETE') {
+      await db.collection('products').deleteOne({ id: path[2] });
+      return json({ ok: true });
+    }
   }
 
   return json({ error: 'Ruta no encontrada' }, 404);

@@ -9,10 +9,23 @@ const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret';
 
 let _client = null;
+let _connectPromise = null;
 async function getDb() {
   if (!_client) {
-    _client = new MongoClient(MONGO_URL);
-    await _client.connect();
+    if (!_connectPromise) {
+      _client = new MongoClient(MONGO_URL, {
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 5000,
+        socketTimeoutMS: 10000,
+      });
+      _connectPromise = _client.connect().catch((err) => {
+        console.error('MongoDB connect error:', err.message);
+        _client = null;
+        _connectPromise = null;
+        throw err;
+      });
+    }
+    await _connectPromise;
   }
   return _client.db(DB_NAME);
 }
@@ -85,6 +98,11 @@ async function getSettings(db) {
 
 // ROUTER
 async function route(request, method, path) {
+  // Health endpoint - does NOT touch DB so K8s probes always pass
+  if (path[0] === 'health' && method === 'GET') {
+    return json({ ok: true, ts: Date.now() });
+  }
+
   const db = await getDb();
   const url = new URL(request.url);
 

@@ -126,16 +126,27 @@ const App = () => {
   const [bizDetail, setBizDetail] = useState(null);
   const [myProducts, setMyProducts] = useState([]);
 
-  // Init: load token + seed + data
+  // Init: load token + data
   useEffect(() => {
     const t = typeof window !== 'undefined' ? localStorage.getItem('ubik2_token') : null;
     if (t) setToken(t);
-    // Seed (no-op if data exists) + load
-    api('/seed', { method: 'POST' }).catch(() => {});
-    refreshHome();
-    api('/categories').then((d) => setCategories(d.categories || []));
-    api('/stats').then((d) => setStats(d)).catch(() => {});
+    // Bootstrap data with fire-and-forget; do NOT block UI on errors
+    (async () => {
+      try {
+        const st = await api('/stats');
+        setStats(st);
+        // Only seed when DB is empty (first-time install)
+        if (st && (st.productsCount === 0 || st.businessesCount === 0)) {
+          await api('/seed', { method: 'POST' }).catch(() => {});
+          api('/stats').then((d) => setStats(d)).catch(() => {});
+        }
+      } catch (e) {
+        // ignore — DB may be unreachable; UI still renders
+      }
+    })();
+    api('/categories').then((d) => setCategories(d.categories || [])).catch(() => {});
     api('/settings').then((d) => setSettings(d)).catch(() => {});
+    refreshHome();
   }, []);
 
   // When token changes, fetch user

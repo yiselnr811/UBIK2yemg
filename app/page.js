@@ -341,6 +341,51 @@ const App = () => {
     reader.readAsDataURL(file);
   };
 
+  // Compress + resize image client-side, return base64 JPEG dataURL
+  const compressImage = (file, maxSize = 1200, quality = 0.82) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxSize || height > maxSize) {
+            if (width >= height) {
+              height = Math.round((height * maxSize) / width);
+              width = maxSize;
+            } else {
+              width = Math.round((width * maxSize) / height);
+              height = maxSize;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+  const onProductImageFile = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return toast.error('Solo se permiten imágenes');
+    if (file.size > 8 * 1024 * 1024) return toast.error('La imagen debe pesar menos de 8MB');
+    try {
+      toast.loading('Procesando imagen...', { id: 'img' });
+      const dataUrl = await compressImage(file);
+      setProductForm((p) => ({ ...p, image: dataUrl }));
+      toast.success('Imagen lista', { id: 'img' });
+    } catch (e) {
+      toast.error('Error procesando la imagen', { id: 'img' });
+    }
+  };
+
   // === FORGOT/RESET PASSWORD ===
   const requestForgot = async () => {
     try {
@@ -828,13 +873,42 @@ const App = () => {
               </Select>
             </div>
             <div>
-              <Label>Imagen (URL)</Label>
-              <Input
-                value={productForm.image}
-                onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
-                placeholder="https://images.unsplash.com/..."
-                className="bg-white/5 border-white/10"
-              />
+              <Label>Imagen del producto</Label>
+              <div className="space-y-2">
+                <Input
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => onProductImageFile(e.target.files?.[0])}
+                  className="bg-white/5 border-white/10 file:text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-fuchsia-500/20 file:text-fuchsia-200 file:px-3 file:py-1.5 cursor-pointer"
+                />
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-px bg-white/10" />
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">o pega una URL</span>
+                  <div className="flex-1 h-px bg-white/10" />
+                </div>
+                <Input
+                  value={productForm.image?.startsWith('data:') ? '' : productForm.image}
+                  onChange={(e) => setProductForm({ ...productForm, image: e.target.value })}
+                  placeholder="https://images.unsplash.com/..."
+                  className="bg-white/5 border-white/10"
+                />
+                {productForm.image && (
+                  <div className="relative inline-block">
+                    <img
+                      src={productForm.image}
+                      alt="preview"
+                      className="h-24 w-24 object-cover rounded-lg border border-white/10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setProductForm({ ...productForm, image: '' })}
+                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center shadow-lg"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
             <div>
               <Label>Descripción</Label>

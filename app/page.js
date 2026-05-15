@@ -411,10 +411,9 @@ const App = () => {
   const refreshHome = useCallback(() => {
     setLoading(true);
     const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
-    // when filtering/searching, exclude featured from main grid
-    const mainQ = hasFiltersOrQuery
-      ? buildQuery({ excludeFeatured: 'true' })
-      : buildQuery({ excludeFeatured: 'true' });
+    // When searching/filtering: show ALL matching products (no excludeFeatured).
+    // When default home view: split featured (separate section) from normal grid.
+    const mainQ = hasFiltersOrQuery ? buildQuery() : buildQuery({ excludeFeatured: 'true' });
     Promise.all([
       api(`/products?${mainQ}`),
       hasFiltersOrQuery ? Promise.resolve({ products: [] }) : api('/products?featured=true'),
@@ -702,7 +701,7 @@ const App = () => {
             onCTA={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); } }}
             onOpenFilters={() => setFiltersOpen(true)}
             resetFilters={resetFilters}
-            query={query} setQuery={setQuery} setSearchInput={setSearchInput}
+            query={query} setQuery={setQuery} searchInput={searchInput} setSearchInput={setSearchInput}
             onPublish={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); setTimeout(openProductCreate, 100); } }}
             onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
             isLogged={!!user}
@@ -988,7 +987,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 );
 
 // ============ HOME ============
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, setSearchInput, onPublish, onRegister, isLogged }) => {
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged }) => {
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
 
   return (
@@ -1049,24 +1048,24 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 
             <div className="mt-7 max-w-2xl mx-auto">
               <div className="text-xs text-white/80 mb-2 uppercase tracking-wider font-semibold">¿Buscando algo?</div>
-              <div className="relative bg-white rounded-2xl shadow-2xl flex items-center p-2">
+              <form
+                onSubmit={(e) => { e.preventDefault(); setQuery(searchInput.trim()); }}
+                className="relative bg-white rounded-2xl shadow-2xl flex items-center p-2"
+              >
                 <Search className="ml-3 h-5 w-5 text-muted-foreground flex-shrink-0" />
                 <Input
-                  defaultValue={query}
+                  value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') { setQuery(e.target.value.trim()); }
-                  }}
                   placeholder={t.searchPlaceholder}
                   className="border-0 focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/70 bg-transparent text-base"
                 />
                 <Button
-                  onClick={() => { /* triggered by input search */ }}
+                  type="submit"
                   className="bg-[#1565C0] hover:bg-[#0D4E9E] text-white font-semibold rounded-xl h-10 px-6"
                 >
                   Buscar
                 </Button>
-              </div>
+              </form>
             </div>
 
             <div className="flex flex-wrap justify-center gap-6 mt-6 text-white/95 text-sm">

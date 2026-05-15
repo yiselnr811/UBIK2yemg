@@ -141,45 +141,52 @@ async function route(request, method, path) {
   if (path[0] === 'auth') {
     if (path[1] === 'register' && method === 'POST') {
       const body = await request.json();
-      const { email, password, businessName, whatsapp, location, description, logo, instagram, facebook } = body || {};
-      if (!email || !password || !businessName || !whatsapp) {
-        return json({ error: 'Faltan campos obligatorios' }, 400);
+      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook } = body || {};
+      const type = accountType === 'buyer' ? 'buyer' : 'seller';
+      if (!email || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
+      if (type === 'seller' && (!businessName || !whatsapp)) {
+        return json({ error: 'Para vender necesitas nombre del negocio y WhatsApp' }, 400);
       }
       const existing = await db.collection('users').findOne({ email: email.toLowerCase() });
       if (existing) return json({ error: 'El email ya está registrado' }, 400);
 
       const hashed = await bcrypt.hash(password, 10);
       const userId = uuidv4();
-      const businessId = uuidv4();
       const now = new Date().toISOString();
-
-      const business = {
-        id: businessId,
-        userId,
-        name: businessName,
-        logo: logo || '',
-        description: description || '',
-        whatsapp,
-        telegram: body.telegram || '',
-        sms: body.sms || whatsapp || '',
-        location: location || '',
-        instagram: instagram || '',
-        facebook: facebook || '',
-        verified: false,
-        createdAt: now,
-      };
+      let businessId = null;
+      let business = null;
+      if (type === 'seller') {
+        businessId = uuidv4();
+        business = {
+          id: businessId,
+          userId,
+          name: businessName,
+          logo: logo || '',
+          description: description || '',
+          whatsapp,
+          telegram: body.telegram || '',
+          sms: body.sms || whatsapp || '',
+          location: location || '',
+          instagram: instagram || '',
+          facebook: facebook || '',
+          verified: false,
+          createdAt: now,
+        };
+        await db.collection('businesses').insertOne(business);
+      }
       const user = {
         id: userId,
         email: email.toLowerCase(),
         password: hashed,
+        name: name || businessName || email.split('@')[0],
         role: 'user',
+        accountType: type,
         businessId,
-        plan: 'basico',
+        plan: type === 'seller' ? 'basico' : 'free',
         planExpiresAt: null,
         createdAt: now,
       };
       await db.collection('users').insertOne(user);
-      await db.collection('businesses').insertOne(business);
 
       const token = jwt.sign({ id: userId, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
       const { password: _, ...userOut } = user;
@@ -203,9 +210,35 @@ async function route(request, method, path) {
     if (path[1] === 'me' && method === 'GET') {
       const { user, error } = await requireUser(request);
       if (error) return error;
-      const business = await db.collection('businesses').findOne({ id: user.businessId });
+      const business = user.businessId ? await db.collection('businesses').findOne({ id: user.businessId }) : null;
       const { password: _, ...userOut } = user;
       return json({ user: userOut, business });
+    }
+
+    if (path[1] === 'upgrade-seller' && method === 'POST') {
+      const { user, error } = await requireUser(request);
+      if (error) return error;
+      if (user.businessId) return json({ error: 'Ya tienes un negocio' }, 400);
+      const body = await request.json();
+      const { businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook } = body || {};
+      if (!businessName || !whatsapp) return json({ error: 'Nombre del negocio y WhatsApp requeridos' }, 400);
+      const businessId = uuidv4();
+      const now = new Date().toISOString();
+      const business = {
+        id: businessId, userId: user.id,
+        name: businessName, logo: logo || '', description: description || '',
+        whatsapp, telegram: telegram || '', sms: sms || whatsapp || '',
+        location: location || '', instagram: instagram || '', facebook: facebook || '',
+        verified: false, createdAt: now,
+      };
+      await db.collection('businesses').insertOne(business);
+      await db.collection('users').updateOne(
+        { id: user.id },
+        { $set: { businessId, accountType: 'seller', plan: 'basico' } }
+      );
+      const updated = await db.collection('users').findOne({ id: user.id });
+      const { password: _, ...userOut } = updated;
+      return json({ user: userOut, business, message: '¡Bienvenido como vendedor!' });
     }
 
     if (path[1] === 'forgot' && method === 'POST') {

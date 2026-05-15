@@ -317,7 +317,9 @@ const App = () => {
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({
-    email: '', password: '', businessName: '', whatsapp: '', telegram: '', sms: '',
+    accountType: 'buyer', // 'buyer' | 'seller'
+    email: '', password: '', name: '',
+    businessName: '', whatsapp: '', telegram: '', sms: '',
     location: '', description: '', logo: '',
   });
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -337,6 +339,11 @@ const App = () => {
   const [reportOpen, setReportOpen] = useState(false);
   const [reportTarget, setReportTarget] = useState(null);
   const [reportForm, setReportForm] = useState({ reason: '', details: '' });
+
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [upgradeForm, setUpgradeForm] = useState({
+    businessName: '', whatsapp: '', telegram: '', sms: '', location: '', description: '', logo: '',
+  });
 
   const [detail, setDetail] = useState(null);
   const [bizDetail, setBizDetail] = useState(null);
@@ -435,14 +442,19 @@ const App = () => {
     e?.preventDefault();
     try {
       if (authMode === 'register') {
-        const required = ['email', 'password', 'businessName', 'whatsapp'];
-        for (const f of required) if (!authForm[f]) return toast.error('Completa los campos obligatorios');
+        if (!authForm.email || !authForm.password) return toast.error('Email y contraseña requeridos');
+        if (authForm.accountType === 'seller' && (!authForm.businessName || !authForm.whatsapp)) {
+          return toast.error('Para vender necesitas nombre del negocio y WhatsApp');
+        }
+        if (authForm.accountType === 'buyer' && !authForm.name) {
+          return toast.error('Tu nombre es requerido');
+        }
         const d = await api('/auth/register', { method: 'POST', body: authForm });
         localStorage.setItem('ubik2_token', d.token);
         setToken(d.token);
         setAuthOpen(false);
-        toast.success('¡Bienvenido a UBIK2 YEMG!');
-        setView('dashboard');
+        toast.success(authForm.accountType === 'seller' ? '¡Bienvenido a UBIK2 YEMG!' : '¡Cuenta creada! Ya puedes guardar favoritos y contactar vendedores.');
+        if (authForm.accountType === 'seller') setView('dashboard');
       } else {
         const d = await api('/auth/login', {
           method: 'POST',
@@ -453,6 +465,20 @@ const App = () => {
         setAuthOpen(false);
         toast.success('Sesión iniciada');
       }
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  // Upgrade buyer to seller
+  const upgradeSeller = async (data) => {
+    try {
+      const d = await api('/auth/upgrade-seller', { method: 'POST', token, body: data });
+      setUser(d.user);
+      setBusiness(d.business);
+      toast.success(d.message);
+      setUpgradeOpen(false);
+      setView('dashboard');
     } catch (err) {
       toast.error(err.message);
     }
@@ -682,7 +708,12 @@ const App = () => {
         user={user} business={business} onLogout={logout}
         onLogin={() => { setAuthMode('login'); setAuthOpen(true); }}
         onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
-        onPublish={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); setTimeout(openProductCreate, 100); } }}
+        onPublish={() => {
+          if (!user) { setAuthMode('register'); setAuthForm({ ...authForm, accountType: 'seller' }); setAuthOpen(true); }
+          else if (!business) { setUpgradeOpen(true); }
+          else { setView('dashboard'); setTimeout(openProductCreate, 100); }
+        }}
+        onUpgradeSeller={() => setUpgradeOpen(true)}
         searchInput={searchInput} setSearchInput={setSearchInput} onSearch={onSearch}
         setView={setView} favorites={favorites}
       />
@@ -702,7 +733,11 @@ const App = () => {
             onOpenFilters={() => setFiltersOpen(true)}
             resetFilters={resetFilters}
             query={query} setQuery={setQuery} searchInput={searchInput} setSearchInput={setSearchInput}
-            onPublish={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); setTimeout(openProductCreate, 100); } }}
+            onPublish={() => {
+              if (!user) { setAuthMode('register'); setAuthForm({ ...authForm, accountType: 'seller' }); setAuthOpen(true); }
+              else if (!business) { setUpgradeOpen(true); }
+              else { setView('dashboard'); setTimeout(openProductCreate, 100); }
+            }}
             onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
             isLogged={!!user}
           />
@@ -730,12 +765,15 @@ const App = () => {
           />
         )}
 
-        {view === 'dashboard' && user && (
+        {view === 'dashboard' && user && business && (
           <Dashboard
             user={user} business={business} products={myProducts}
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
           />
+        )}
+        {view === 'dashboard' && user && !business && (
+          <BuyerDashboard user={user} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'dashboard' && !user && (
           <div className="container mx-auto py-32 text-center">
@@ -766,6 +804,10 @@ const App = () => {
         form={authForm} setForm={setAuthForm}
         onSubmit={handleAuth}
         onForgot={() => { setAuthOpen(false); setForgotStep(1); setForgotOpen(true); }}
+      />
+      <UpgradeSellerDialog
+        open={upgradeOpen} onOpenChange={setUpgradeOpen}
+        form={upgradeForm} setForm={setUpgradeForm} onSubmit={() => upgradeSeller(upgradeForm)}
       />
       <ForgotDialog
         open={forgotOpen} onOpenChange={setForgotOpen}
@@ -872,7 +914,9 @@ const Logo = ({ size = 'md', withText = true, onDark = false }) => {
   );
 };
 
-const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, searchInput, setSearchInput, onSearch, setView, favorites }) => (
+const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites }) => {
+  const isBuyer = user && !business;
+  return (
   <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
     <div className="container mx-auto px-4 h-16 flex items-center gap-3">
       <button onClick={() => setView('home')} className="flex-shrink-0">
@@ -941,11 +985,18 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>{business?.name}</DropdownMenuLabel>
+              <DropdownMenuLabel>{business?.name || user.name || user.email}</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => setView('dashboard')}>
-                <LayoutDashboard className="h-4 w-4 mr-2" /> {t.panel}
-              </DropdownMenuItem>
+              {!isBuyer && (
+                <DropdownMenuItem onClick={() => setView('dashboard')}>
+                  <LayoutDashboard className="h-4 w-4 mr-2" /> {t.panel}
+                </DropdownMenuItem>
+              )}
+              {isBuyer && (
+                <DropdownMenuItem onClick={onUpgradeSeller} className="text-[#00A86B] font-semibold">
+                  <Store className="h-4 w-4 mr-2" /> Hazte vendedor
+                </DropdownMenuItem>
+              )}
               {user.role === 'admin' && (
                 <DropdownMenuItem onClick={() => setView('admin')}>
                   <Crown className="h-4 w-4 mr-2 text-[#00A86B]" /> {t.admin}
@@ -984,7 +1035,8 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
       </div>
     </form>
   </header>
-);
+  );
+};
 
 // ============ HOME ============
 const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged }) => {
@@ -1483,7 +1535,69 @@ const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport }
   );
 };
 
-// ============ DASHBOARD ============
+// ============ BUYER DASHBOARD ============
+const BuyerDashboard = ({ user, onBecomeSeller, onFavorites, favoritesCount }) => (
+  <section className="container mx-auto px-4 py-8">
+    <div className="mb-6">
+      <h1 className="text-3xl font-extrabold">Hola, {user.name || user.email.split('@')[0]} 👋</h1>
+      <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
+    </div>
+
+    {/* Upgrade banner */}
+    <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
+      <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div>
+          <Badge className="bg-white/20 text-white border-0 mb-2">Próximo: Plan PRO</Badge>
+          <h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2>
+          <p className="text-white/90 mt-1 max-w-lg">
+            Conviértete en vendedor gratis y publica hasta 10 productos. Cuando lo necesites, pásate a PRO para productos ilimitados.
+          </p>
+        </div>
+        <Button size="lg" onClick={onBecomeSeller} className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6">
+          <Store className="h-5 w-5 mr-2" /> Hazte vendedor
+        </Button>
+      </CardContent>
+    </Card>
+
+    {/* Grid de info */}
+    <div className="grid md:grid-cols-3 gap-4">
+      <Card className="hover-lift cursor-pointer" onClick={onFavorites}>
+        <CardContent className="p-6">
+          <Heart className="h-8 w-8 text-red-500 mb-2" />
+          <div className="text-2xl font-bold">{favoritesCount}</div>
+          <div className="text-sm text-muted-foreground">Productos guardados</div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-6">
+          <Mail className="h-8 w-8 text-[#1565C0] mb-2" />
+          <div className="text-sm font-semibold truncate">{user.email}</div>
+          <div className="text-xs text-muted-foreground">Email de tu cuenta</div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardContent className="p-6">
+          <Sparkles className="h-8 w-8 text-amber-500 mb-2" />
+          <div className="text-2xl font-bold capitalize">{user.plan || 'free'}</div>
+          <div className="text-xs text-muted-foreground">Tu plan actual</div>
+        </CardContent>
+      </Card>
+    </div>
+
+    {/* Próximamente PRO */}
+    <Card className="mt-6 border-dashed">
+      <CardContent className="p-6 text-center">
+        <Crown className="h-10 w-10 mx-auto text-amber-500 mb-3" />
+        <h3 className="text-xl font-bold mb-2">UBIK2 YEMG PRO — Próximamente</h3>
+        <p className="text-muted-foreground max-w-lg mx-auto text-sm">
+          Funciones premium para compradores: alertas de precios, búsquedas guardadas, contacto directo prioritario, comparador y mucho más.
+        </p>
+      </CardContent>
+    </Card>
+  </section>
+);
+
+// ============ DASHBOARD (Seller) ============
 const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }) => {
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
@@ -1782,20 +1896,45 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
             <LogoSVG size={48} />
           </div>
         </div>
-        <DialogTitle className="text-center text-2xl">{mode === 'login' ? 'Bienvenido' : 'Crea tu negocio'}</DialogTitle>
+        <DialogTitle className="text-center text-2xl">{mode === 'login' ? 'Bienvenido' : 'Crea tu cuenta'}</DialogTitle>
         <DialogDescription className="text-center">
-          {mode === 'login' ? 'Accede para gestionar tus productos.' : 'Publica tu negocio en minutos.'}
+          {mode === 'login' ? 'Accede a tu cuenta.' : 'Elige el tipo de cuenta que necesitas.'}
         </DialogDescription>
       </DialogHeader>
       <Tabs value={mode} onValueChange={setMode}>
         <TabsList className="grid grid-cols-2 w-full">
           <TabsTrigger value="login">Entrar</TabsTrigger>
-          <TabsTrigger value="register">Registrar negocio</TabsTrigger>
+          <TabsTrigger value="register">Registrarme</TabsTrigger>
         </TabsList>
         <form onSubmit={onSubmit} className="space-y-3 mt-4">
+          {mode === 'register' && (
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, accountType: 'buyer' })}
+                className={`p-3 rounded-xl border-2 text-left transition ${form.accountType === 'buyer' ? 'border-[#1565C0] bg-[#1565C0]/5' : 'border-border hover:border-[#1565C0]/40'}`}
+              >
+                <div className="text-2xl mb-1">🛍️</div>
+                <div className="font-semibold text-sm">Comprador</div>
+                <div className="text-[10px] text-muted-foreground">Para buscar y guardar productos</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, accountType: 'seller' })}
+                className={`p-3 rounded-xl border-2 text-left transition ${form.accountType === 'seller' ? 'border-[#00A86B] bg-[#00A86B]/5' : 'border-border hover:border-[#00A86B]/40'}`}
+              >
+                <div className="text-2xl mb-1">🏪</div>
+                <div className="font-semibold text-sm">Vendedor</div>
+                <div className="text-[10px] text-muted-foreground">Para publicar productos</div>
+              </button>
+            </div>
+          )}
           <div><Label>Email *</Label><Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required /></div>
           <div><Label>Contraseña *</Label><Input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required /></div>
-          {mode === 'register' && (
+          {mode === 'register' && form.accountType === 'buyer' && (
+            <div><Label>Tu nombre *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required placeholder="Ej: Juan Pérez" /></div>
+          )}
+          {mode === 'register' && form.accountType === 'seller' && (
             <>
               <div><Label>Nombre del negocio *</Label><Input value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} required placeholder="Ej: Mi tienda" /></div>
               <div><Label>WhatsApp * (formato internacional)</Label><Input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} required placeholder="+5355555555" /></div>
@@ -1809,7 +1948,7 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
           )}
           <DialogFooter>
             <Button type="submit" className="w-full brand-gradient text-white hover:opacity-90">
-              {mode === 'login' ? 'Entrar' : 'Crear cuenta'}
+              {mode === 'login' ? 'Entrar' : (form.accountType === 'seller' ? 'Crear cuenta de vendedor' : 'Crear cuenta gratis')}
             </Button>
           </DialogFooter>
           {mode === 'login' && (
@@ -1819,6 +1958,34 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
           )}
         </form>
       </Tabs>
+    </DialogContent>
+  </Dialog>
+);
+
+const UpgradeSellerDialog = ({ open, onOpenChange, form, setForm, onSubmit }) => (
+  <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2 text-2xl">
+          <Store className="h-6 w-6 text-[#00A86B]" /> Conviértete en vendedor
+        </DialogTitle>
+        <DialogDescription>
+          Completa los datos de tu negocio para empezar a publicar productos.
+        </DialogDescription>
+      </DialogHeader>
+      <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }} className="space-y-3">
+        <div><Label>Nombre del negocio *</Label><Input value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} required placeholder="Ej: Mi tienda" /></div>
+        <div><Label>WhatsApp *</Label><Input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} required placeholder="+5355555555" /></div>
+        <div className="grid grid-cols-2 gap-2">
+          <div><Label>Telegram</Label><Input value={form.telegram} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
+          <div><Label>SMS</Label><Input value={form.sms} onChange={(e) => setForm({ ...form, sms: e.target.value })} placeholder="+5355555555" /></div>
+        </div>
+        <div><Label>Ubicación</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
+        <div><Label>Descripción</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
+        <Button type="submit" className="w-full bg-[#00A86B] hover:bg-[#008F5B] text-white">
+          <Store className="h-4 w-4 mr-2" /> Activar mi cuenta de vendedor
+        </Button>
+      </form>
     </DialogContent>
   </Dialog>
 );

@@ -1078,37 +1078,39 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         </div>
       </section>
 
-      {/* CATEGORIES */}
-      <section className="container mx-auto px-4 -mt-8 relative z-10">
-        <Card className="shadow-xl border-0">
-          <CardContent className="p-4 md:p-6">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-bold">{t.categories}</h2>
-              {category && (
-                <Button variant="ghost" size="sm" onClick={() => setCategory('')}>
-                  <X className="h-3 w-3 mr-1" /> {t.clear}
-                </Button>
-              )}
-            </div>
-            <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-2">
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setCategory(category === c.id ? '' : c.id)}
-                  className={`group flex flex-col items-center justify-center gap-1 py-3 px-2 rounded-xl border transition-all hover-lift ${
-                    category === c.id
-                      ? 'border-[#1565C0] bg-[#1565C0]/5 shadow-md'
-                      : 'border-border bg-card hover:border-[#1565C0]/40'
-                  }`}
-                >
-                  <span className="text-2xl">{c.icon}</span>
-                  <span className={`text-[11px] font-medium text-center leading-tight line-clamp-2 ${category === c.id ? 'text-[#1565C0]' : 'text-foreground'}`}>{c.name}</span>
-                </button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+      {/* CATEGORIES - hidden when searching/filtering */}
+      {!hasFiltersOrQuery && (
+        <section className="container mx-auto px-4 -mt-8 relative z-10">
+          <Card className="shadow-xl border-0">
+            <CardContent className="p-4 md:p-6">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-lg font-bold">{t.categories}</h2>
+                {category && (
+                  <Button variant="ghost" size="sm" onClick={() => setCategory('')}>
+                    <X className="h-3 w-3 mr-1" /> {t.clear}
+                  </Button>
+                )}
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-2">
+                {categories.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setCategory(category === c.id ? '' : c.id)}
+                    className={`group flex flex-col items-center justify-center gap-1 py-3 px-2 rounded-xl border transition-all hover-lift ${
+                      category === c.id
+                        ? 'border-[#1565C0] bg-[#1565C0]/5 shadow-md'
+                        : 'border-border bg-card hover:border-[#1565C0]/40'
+                    }`}
+                  >
+                    <span className="text-2xl">{c.icon}</span>
+                    <span className={`text-[11px] font-medium text-center leading-tight line-clamp-2 ${category === c.id ? 'text-[#1565C0]' : 'text-foreground'}`}>{c.name}</span>
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
       {/* FILTERS BAR */}
       {hasFiltersOrQuery && (

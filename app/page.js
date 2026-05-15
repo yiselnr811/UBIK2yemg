@@ -703,6 +703,9 @@ const App = () => {
             onOpenFilters={() => setFiltersOpen(true)}
             resetFilters={resetFilters}
             query={query} setQuery={setQuery} setSearchInput={setSearchInput}
+            onPublish={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); setTimeout(openProductCreate, 100); } }}
+            onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
+            isLogged={!!user}
           />
         )}
 
@@ -985,7 +988,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 );
 
 // ============ HOME ============
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, setSearchInput }) => {
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, setSearchInput, onPublish, onRegister, isLogged }) => {
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
 
   return (
@@ -1008,7 +1011,44 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
             </h1>
             <p className="text-white/90 mt-3 text-base md:text-lg">{t.subSlogan}</p>
 
+            {/* CTA buttons prominent for beginners */}
+            <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center max-w-xl mx-auto">
+              <Button
+                size="lg"
+                onClick={onPublish}
+                className="h-14 bg-[#00A86B] hover:bg-[#008F5B] text-white font-bold text-base shadow-2xl hover:scale-[1.02] transition-transform flex-1"
+              >
+                <Plus className="h-5 w-5 mr-2" /> Publicar gratis
+              </Button>
+              {!isLogged && (
+                <Button
+                  size="lg"
+                  variant="outline"
+                  onClick={onRegister}
+                  className="h-14 bg-white/10 backdrop-blur-md border-white/40 text-white hover:bg-white/20 font-bold text-base flex-1"
+                >
+                  <Store className="h-5 w-5 mr-2" /> Crear cuenta
+                </Button>
+              )}
+            </div>
+
+            {/* How it works - 3 steps */}
+            <div className="mt-7 grid grid-cols-3 gap-2 max-w-xl mx-auto text-white/95">
+              {[
+                { n: '1', t: 'Crea tu cuenta', s: 'Gratis en 1 minuto' },
+                { n: '2', t: 'Publica tu producto', s: 'Foto, precio, listo' },
+                { n: '3', t: 'Recibe contactos', s: 'WhatsApp directo' },
+              ].map((step, i) => (
+                <div key={i} className="rounded-xl bg-white/10 backdrop-blur-md border border-white/20 p-3 text-center">
+                  <div className="mx-auto h-7 w-7 rounded-full bg-white text-[#1565C0] font-extrabold flex items-center justify-center text-sm">{step.n}</div>
+                  <div className="text-xs font-semibold mt-1.5">{step.t}</div>
+                  <div className="text-[10px] text-white/80 hidden sm:block">{step.s}</div>
+                </div>
+              ))}
+            </div>
+
             <div className="mt-7 max-w-2xl mx-auto">
+              <div className="text-xs text-white/80 mb-2 uppercase tracking-wider font-semibold">¿Buscando algo?</div>
               <div className="relative bg-white rounded-2xl shadow-2xl flex items-center p-2">
                 <Search className="ml-3 h-5 w-5 text-muted-foreground flex-shrink-0" />
                 <Input
@@ -1022,14 +1062,14 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
                 />
                 <Button
                   onClick={() => { /* triggered by input search */ }}
-                  className="bg-[#00A86B] hover:bg-[#008F5B] text-white font-semibold rounded-xl h-10 px-6"
+                  className="bg-[#1565C0] hover:bg-[#0D4E9E] text-white font-semibold rounded-xl h-10 px-6"
                 >
                   Buscar
                 </Button>
               </div>
             </div>
 
-            <div className="flex flex-wrap justify-center gap-6 mt-8 text-white/95 text-sm">
+            <div className="flex flex-wrap justify-center gap-6 mt-6 text-white/95 text-sm">
               <div className="flex items-center gap-1.5"><ShieldCheck className="h-4 w-4" /> Seguro</div>
               <div className="flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Rápido</div>
               <div className="flex items-center gap-1.5"><Sparkles className="h-4 w-4" /> Sin comisiones</div>

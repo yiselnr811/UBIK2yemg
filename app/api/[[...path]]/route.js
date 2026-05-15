@@ -682,6 +682,47 @@ async function route(request, method, path) {
       return json({ user: userOut });
     }
 
+    if (path[1] === 'users' && path[2] && method === 'DELETE') {
+      const target = await db.collection('users').findOne({ id: path[2] });
+      if (!target) return json({ error: 'Usuario no encontrado' }, 404);
+      if (target.role === 'admin' && target.id !== user.id) {
+        // Allow deleting other admins? safer to allow but warn. Keep simple: allow.
+      }
+      // Cascade delete: products → business → payments → user
+      if (target.businessId) {
+        await db.collection('products').deleteMany({ businessId: target.businessId });
+        await db.collection('businesses').deleteOne({ id: target.businessId });
+      }
+      await db.collection('payments').deleteMany({ userId: target.id });
+      await db.collection('reports').deleteMany({ reportedBy: target.id });
+      await db.collection('users').deleteOne({ id: target.id });
+      return json({ ok: true, message: 'Usuario y datos relacionados eliminados' });
+    }
+
+    if (path[1] === 'businesses' && path[2] && method === 'PUT') {
+      const body = await request.json();
+      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook', 'verified'];
+      const update = {};
+      for (const k of allowed) if (k in body) update[k] = body[k];
+      await db.collection('businesses').updateOne({ id: path[2] }, { $set: update });
+      const updated = await db.collection('businesses').findOne({ id: path[2] });
+      return json({ business: updated });
+    }
+
+    if (path[1] === 'businesses' && path[2] && method === 'DELETE') {
+      // Delete business + its products. User account remains as buyer.
+      const biz = await db.collection('businesses').findOne({ id: path[2] });
+      if (!biz) return json({ error: 'Negocio no encontrado' }, 404);
+      await db.collection('products').deleteMany({ businessId: path[2] });
+      await db.collection('businesses').deleteOne({ id: path[2] });
+      // Convert owner back to buyer
+      await db.collection('users').updateOne(
+        { id: biz.userId },
+        { $set: { businessId: null, accountType: 'buyer', plan: 'free' } }
+      );
+      return json({ ok: true, message: 'Negocio eliminado, usuario convertido a comprador' });
+    }
+
     if (path[1] === 'products' && method === 'GET') {
       const items = await db.collection('products').find({}).sort({ createdAt: -1 }).limit(200).toArray();
       const bizIds = [...new Set(items.map((p) => p.businessId))];

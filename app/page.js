@@ -691,6 +691,20 @@ const App = () => {
   const rejectPayment = async (id) => { const r = prompt('Motivo') || ''; try { await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason: r } }); toast.success('Rechazado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const adminUpdateUser = async (id, patch) => { try { await api(`/admin/users/${id}`, { method: 'PUT', token, body: patch }); toast.success('Actualizado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const adminDeleteProduct = async (id) => { if (!confirm('¿Eliminar?')) return; try { await api(`/admin/products/${id}`, { method: 'DELETE', token }); toast.success('Eliminado'); loadAdmin(); refreshHome(); } catch (e) { toast.error(e.message); } };
+  const adminDeleteUser = async (id, email) => {
+    if (!confirm(`⚠️ Eliminar usuario ${email} y TODOS sus datos (negocio, productos, pagos)? Esta acción no se puede deshacer.`)) return;
+    try { await api(`/admin/users/${id}`, { method: 'DELETE', token }); toast.success('Usuario eliminado'); loadAdmin(); refreshHome(); }
+    catch (e) { toast.error(e.message); }
+  };
+  const adminUpdateBusiness = async (id, patch) => {
+    try { await api(`/admin/businesses/${id}`, { method: 'PUT', token, body: patch }); toast.success('Negocio actualizado'); loadAdmin(); refreshHome(); }
+    catch (e) { toast.error(e.message); }
+  };
+  const adminDeleteBusiness = async (id, name) => {
+    if (!confirm(`Eliminar el negocio "${name}" y todos sus productos? El usuario se convertirá en comprador.`)) return;
+    try { await api(`/admin/businesses/${id}`, { method: 'DELETE', token }); toast.success('Negocio eliminado'); loadAdmin(); refreshHome(); }
+    catch (e) { toast.error(e.message); }
+  };
   const adminResolveReport = async (id, status) => { try { await api(`/admin/reports/${id}`, { method: 'PUT', token, body: { status } }); toast.success('Reporte actualizado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const saveAdminSettings = async () => { try { const d = await api('/admin/settings', { method: 'PUT', token, body: adminSettings }); setAdminSettings(d.settings); setSettings(d.settings); toast.success('Guardado'); } catch (e) { toast.error(e.message); } };
 
@@ -791,7 +805,9 @@ const App = () => {
           <AdminDashboard
             data={adminData} settings={adminSettings} setSettings={setAdminSettings}
             onApprove={approvePayment} onReject={rejectPayment}
-            onUpdateUser={adminUpdateUser} onDeleteProduct={adminDeleteProduct}
+            onUpdateUser={adminUpdateUser} onDeleteUser={adminDeleteUser}
+            onUpdateBusiness={adminUpdateBusiness} onDeleteBusiness={adminDeleteBusiness}
+            onDeleteProduct={adminDeleteProduct}
             onResolveReport={adminResolveReport}
             onSaveSettings={saveAdminSettings}
             tab={adminTab} setTab={setAdminTab} onRefresh={loadAdmin}
@@ -1606,6 +1622,11 @@ const BuyerDashboard = ({ user, onBecomeSeller, onFavorites, favoritesCount }) =
 const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }) => {
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
+  // breakdown by category
+  const byCategory = products.reduce((acc, p) => {
+    acc[p.category] = (acc[p.category] || 0) + 1;
+    return acc;
+  }, {});
   return (
     <section className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -1625,7 +1646,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
 
       <div className="grid sm:grid-cols-3 gap-3 mb-6">
         {[
-          { l: 'Productos', v: limit },
+          { l: 'Productos', v: limit, sub: isPremium ? 'Plan Premium' : 'Plan Básico' },
           { l: 'Plan', v: user.plan, icon: isPremium ? <Crown className="h-4 w-4 text-amber-500 inline ml-1" /> : null },
           { l: 'WhatsApp', v: business?.whatsapp || '—' },
         ].map((s, i) => (
@@ -1633,12 +1654,21 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
             <CardContent className="p-5">
               <div className="text-xs text-muted-foreground uppercase tracking-wider">{s.l}</div>
               <div className="text-2xl font-bold mt-1 capitalize">{s.v}{s.icon}</div>
+              {s.sub && <div className="text-[10px] text-muted-foreground mt-1">{s.sub}</div>}
             </CardContent>
           </Card>
         ))}
       </div>
 
-      <h2 className="text-xl font-bold mb-4">Tus productos</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-xl font-bold">Tus productos ({products.length})</h2>
+        {Object.keys(byCategory).length > 1 && (
+          <div className="text-xs text-muted-foreground hidden md:block">
+            En {Object.keys(byCategory).length} categorías: {Object.entries(byCategory).map(([c, n]) => `${c} (${n})`).join(' · ')}
+          </div>
+        )}
+      </div>
+
       {products.length === 0 ? (
         <Card className="text-center py-12 border-dashed">
           <CardContent>
@@ -1661,7 +1691,10 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
                   <div className="min-w-0">
                     <div className="font-semibold truncate">{p.name}</div>
                     <div className="text-sm text-[#00A86B] font-bold">{formatPrice(p.price, p.currency)}</div>
-                    <div className="text-xs text-muted-foreground">Stock: {p.stock}</div>
+                    <div className="text-xs text-muted-foreground">
+                      <Badge variant="outline" className="text-[10px] mr-1">{p.category}</Badge>
+                      Stock: {p.stock}
+                    </div>
                   </div>
                   {p.featured && <Badge className="bg-amber-500 text-black border-0"><Sparkles className="h-3 w-3" /></Badge>}
                 </div>
@@ -1683,7 +1716,8 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteProduct, onResolveReport, onSaveSettings, tab, setTab, onRefresh }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, tab, setTab, onRefresh }) => {
+  const [editBiz, setEditBiz] = useState(null);
   const { payments, users, products, stats, reports } = data;
   const pending = payments.filter((p) => p.status === 'pending');
   const pendingReports = reports.filter((r) => r.status === 'pending');
@@ -1774,29 +1808,49 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
           {users.map((u) => (
             <Card key={u.id}>
               <CardContent className="p-4 flex flex-col md:flex-row gap-3 md:items-center">
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <div className="font-semibold flex items-center gap-2 flex-wrap">
                     {u.email}
                     {u.role === 'admin' && <Badge className="bg-amber-500 text-black border-0">admin</Badge>}
+                    {u.accountType === 'buyer' && <Badge variant="outline">comprador</Badge>}
                     {u.suspended && <Badge variant="destructive">suspendido</Badge>}
                   </div>
-                  <div className="text-xs text-muted-foreground">{u.business?.name || '—'} · Plan: <b>{u.plan}</b></div>
+                  <div className="text-xs text-muted-foreground">
+                    {u.business ? `🏪 ${u.business.name}` : '🛍️ Sin negocio'} · Plan: <b>{u.plan}</b> · {u.name || '—'}
+                  </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Select value={u.plan} onValueChange={(v) => onUpdateUser(u.id, { plan: v })}>
-                    <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="free">Free</SelectItem>
                       <SelectItem value="basico">Básico</SelectItem>
                       <SelectItem value="premium">Premium</SelectItem>
                     </SelectContent>
                   </Select>
+                  {u.business && (
+                    <Button size="sm" variant="outline" onClick={() => setEditBiz(u.business)}>
+                      <Pencil className="h-3 w-3 mr-1" /> Editar negocio
+                    </Button>
+                  )}
                   <Button size="sm" variant="outline" onClick={() => onUpdateUser(u.id, { suspended: !u.suspended })}>
                     {u.suspended ? 'Reactivar' : 'Suspender'}
                   </Button>
+                  {u.business && (
+                    <Button size="sm" variant="outline" onClick={() => onDeleteBusiness(u.business.id, u.business.name)} className="text-orange-600 border-orange-500/40">
+                      <Trash2 className="h-3 w-3 mr-1" /> Negocio
+                    </Button>
+                  )}
+                  {u.role !== 'admin' && (
+                    <Button size="sm" variant="outline" onClick={() => onDeleteUser(u.id, u.email)} className="text-destructive border-destructive/40">
+                      <Trash2 className="h-3 w-3 mr-1" /> Usuario
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
           ))}
+          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={(id, patch) => { onUpdateBusiness(id, patch); setEditBiz(null); }} />
         </TabsContent>
 
         <TabsContent value="products" className="mt-4">
@@ -2251,6 +2305,44 @@ const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
               </a>
             </>
           )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const BusinessEditDialog = ({ biz, onClose, onSave }) => {
+  const [form, setForm] = useState(null);
+  useEffect(() => { if (biz) setForm({ ...biz }); }, [biz]);
+  if (!biz || !form) return null;
+  return (
+    <Dialog open={!!biz} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Store className="h-5 w-5" /> Editar negocio
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div><Label>Nombre *</Label><Input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+          <div><Label>Descripción</Label><Textarea value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>WhatsApp</Label><Input value={form.whatsapp || ''} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} /></div>
+            <div><Label>Telegram</Label><Input value={form.telegram || ''} onChange={(e) => setForm({ ...form, telegram: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>SMS</Label><Input value={form.sms || ''} onChange={(e) => setForm({ ...form, sms: e.target.value })} /></div>
+            <div><Label>Ubicación</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label>Instagram</Label><Input value={form.instagram || ''} onChange={(e) => setForm({ ...form, instagram: e.target.value })} /></div>
+            <div><Label>Facebook</Label><Input value={form.facebook || ''} onChange={(e) => setForm({ ...form, facebook: e.target.value })} /></div>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
+            <ShieldCheck className="h-4 w-4 text-[#1565C0]" /> Marcar como verificado
+          </label>
+          <Button onClick={() => onSave(biz.id, form)} className="w-full brand-gradient text-white">Guardar cambios</Button>
         </div>
       </DialogContent>
     </Dialog>

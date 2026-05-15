@@ -260,8 +260,13 @@ const TRANSLATIONS = {
 const FLAGS = { es: '🇪🇸', en: '🇬🇧', it: '🇮🇹', ru: '🇷🇺' };
 const LANG_NAMES = { es: 'Español', en: 'English', it: 'Italiano', ru: 'Русский' };
 
-const formatPrice = (n) =>
-  `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(Number(n || 0))} CUP`;
+const formatPrice = (n, currency = 'CUP') => {
+  const num = Number(n || 0);
+  if (currency === 'USDC') {
+    return `${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num)} USDC`;
+  }
+  return `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(num)} CUP`;
+};
 
 const timeAgo = (iso) => {
   if (!iso) return '';
@@ -331,7 +336,7 @@ const App = () => {
   const [editingProduct, setEditingProduct] = useState(null);
   const emptyProduct = {
     name: '', price: '', description: '', category: 'electronica', stock: 1, image: '',
-    available: true, featured: false, location: '',
+    available: true, featured: false, location: '', currency: 'CUP',
   };
   const [productForm, setProductForm] = useState(emptyProduct);
   const [legalOpen, setLegalOpen] = useState(null); // 'privacy' | 'terms' | 'contact'
@@ -502,7 +507,7 @@ const App = () => {
   // === Share ===
   const shareProduct = async (p) => {
     const url = `${window.location.origin}/?p=${p.id}`;
-    const text = `${p.name} — ${formatPrice(p.price)}`;
+    const text = `${p.name} — ${formatPrice(p.price, p.currency)}`;
     if (navigator.share) {
       try { await navigator.share({ title: p.name, text, url }); return; } catch {}
     }
@@ -564,7 +569,7 @@ const App = () => {
     setProductForm({
       name: p.name, price: p.price, description: p.description || '', category: p.category,
       stock: p.stock, image: p.image || '', available: p.available, featured: !!p.featured,
-      location: p.location || '',
+      location: p.location || '', currency: p.currency || 'CUP',
     });
     setProductOpen(true);
   };
@@ -1296,7 +1301,7 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
       </div>
 
       <CardContent className="p-3">
-        <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none">{formatPrice(p.price)}</div>
+        <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none">{formatPrice(p.price, p.currency)}</div>
         <div className="text-sm font-medium mt-1.5 line-clamp-2 leading-tight min-h-[2.5rem]">{p.name}</div>
         <div className="flex items-center justify-between mt-1 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-0.5 truncate">
@@ -1375,7 +1380,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
             {product.stock > 0 ? <Badge className="bg-green-500 text-white">{t.inStock}</Badge> : <Badge variant="destructive">{t.outOfStock}</Badge>}
           </div>
           <h1 className="text-3xl md:text-4xl font-extrabold">{product.name}</h1>
-          <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3">{formatPrice(product.price)}</div>
+          <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3">{formatPrice(product.price, product.currency)}</div>
 
           <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-muted-foreground">
             {product.location && <span className="flex items-center gap-1"><MapPin className="h-4 w-4" /> {product.location}</span>}
@@ -1655,7 +1660,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="font-semibold truncate">{p.name}</div>
-                    <div className="text-sm text-[#00A86B] font-bold">{formatPrice(p.price)}</div>
+                    <div className="text-sm text-[#00A86B] font-bold">{formatPrice(p.price, p.currency)}</div>
                     <div className="text-xs text-muted-foreground">Stock: {p.stock}</div>
                   </div>
                   {p.featured && <Badge className="bg-amber-500 text-black border-0"><Sparkles className="h-3 w-3" /></Badge>}
@@ -1803,7 +1808,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                 </div>
                 <CardContent className="p-3">
                   <div className="font-semibold truncate">{p.name}</div>
-                  <div className="text-xs text-muted-foreground truncate">{p.business?.name} · {formatPrice(p.price)}</div>
+                  <div className="text-xs text-muted-foreground truncate">{p.business?.name} · {formatPrice(p.price, p.currency)}</div>
                   <Button size="sm" variant="outline" onClick={() => onDeleteProduct(p.id)} className="mt-2 w-full text-destructive border-destructive/40">
                     <Trash2 className="h-3 w-3 mr-1" /> Eliminar
                   </Button>
@@ -2024,10 +2029,23 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
       </DialogHeader>
       <form onSubmit={onSubmit} className="space-y-3">
         <div><Label>Nombre *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
-        <div className="grid grid-cols-2 gap-2">
-          <div><Label>Precio CUP *</Label><Input type="number" step="1" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required placeholder="Ej: 2500" /></div>
-          <div><Label>Stock</Label><Input type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="col-span-2">
+            <Label>Precio *</Label>
+            <Input type="number" step={form.currency === 'USDC' ? '0.01' : '1'} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required placeholder={form.currency === 'USDC' ? 'Ej: 25.00' : 'Ej: 2500'} />
+          </div>
+          <div>
+            <Label>Moneda</Label>
+            <Select value={form.currency || 'CUP'} onValueChange={(v) => setForm({ ...form, currency: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="CUP">🇨🇺 CUP</SelectItem>
+                <SelectItem value="USDC">💎 USDC</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
+        <div><Label>Stock</Label><Input type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></div>
         <div><Label>Categoría *</Label>
           <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
@@ -2161,9 +2179,10 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
       <div className="space-y-4 mt-6">
         <div><Label>{t.location}</Label><Input value={filters.location} onChange={(e) => setFilters({ ...filters, location: e.target.value })} placeholder="La Habana, Santiago..." /></div>
         <div className="grid grid-cols-2 gap-2">
-          <div><Label>{t.priceMin} (CUP)</Label><Input type="number" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} /></div>
-          <div><Label>{t.priceMax} (CUP)</Label><Input type="number" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} /></div>
+          <div><Label>{t.priceMin}</Label><Input type="number" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} /></div>
+          <div><Label>{t.priceMax}</Label><Input type="number" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} /></div>
         </div>
+        <p className="text-[10px] text-muted-foreground -mt-1">Aplica en la moneda del producto (CUP o USDC).</p>
         <div>
           <Label>{t.date}</Label>
           <Select value={filters.since || 'all'} onValueChange={(v) => setFilters({ ...filters, since: v === 'all' ? '' : new Date(Date.now() - Number(v) * 86400000).toISOString() })}>

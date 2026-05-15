@@ -344,7 +344,7 @@ async function route(request, method, path) {
       const { user, error } = await requireUser(request);
       if (error) return error;
       const body = await request.json();
-      const { name, price, description, category, stock, image, available, featured, location } = body || {};
+      const { name, price, description, category, stock, image, available, featured, location, currency } = body || {};
       if (!name || price == null || !category) return json({ error: 'Faltan campos obligatorios' }, 400);
 
       const count = await db.collection('products').countDocuments({ businessId: user.businessId });
@@ -358,6 +358,7 @@ async function route(request, method, path) {
         businessId: user.businessId,
         name,
         price: Number(price),
+        currency: currency === 'USDC' ? 'USDC' : 'CUP',
         description: description || '',
         category,
         stock: stock != null ? Number(stock) : 0,
@@ -379,11 +380,12 @@ async function route(request, method, path) {
       if (!product) return json({ error: 'No encontrado' }, 404);
       if (product.businessId !== user.businessId && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
       const body = await request.json();
-      const allowed = ['name', 'price', 'description', 'category', 'stock', 'image', 'available', 'featured', 'location'];
+      const allowed = ['name', 'price', 'description', 'category', 'stock', 'image', 'available', 'featured', 'location', 'currency'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
       if (update.price != null) update.price = Number(update.price);
       if (update.stock != null) update.stock = Number(update.stock);
+      if (update.currency) update.currency = update.currency === 'USDC' ? 'USDC' : 'CUP';
       if (update.featured && user.plan !== 'premium' && user.role !== 'admin') update.featured = false;
       await db.collection('products').updateOne({ id: path[1] }, { $set: update });
       const updated = await db.collection('products').findOne({ id: path[1] });

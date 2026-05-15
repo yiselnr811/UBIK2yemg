@@ -799,13 +799,13 @@ const App = () => {
 // ============ SUB COMPONENTS ============
 
 const Logo = ({ size = 'md', dark, withText = true }) => (
-  <div className="flex items-center gap-2">
-    <div className={`relative ${size === 'lg' ? 'h-12 w-12' : size === 'sm' ? 'h-8 w-8' : 'h-10 w-10'} flex-shrink-0`}>
+  <div className="flex items-center gap-2.5">
+    <div className={`relative ${size === 'lg' ? 'h-14 w-14' : size === 'sm' ? 'h-9 w-9' : 'h-11 w-11'} flex-shrink-0 rounded-xl overflow-hidden bg-black shadow-md ring-1 ring-black/10`}>
       <img src={LOGO} alt="UBIK2 YEMG" className="h-full w-full object-contain" />
     </div>
     {withText && (
       <div className="flex flex-col leading-none">
-        <span className={`${size === 'lg' ? 'text-2xl' : 'text-lg'} font-extrabold tracking-tight brand-text-gradient`}>UBIK2 YEMG</span>
+        <span className={`${size === 'lg' ? 'text-2xl' : 'text-xl'} font-extrabold tracking-tight brand-text-gradient`}>UBIK2 YEMG</span>
         <span className="text-[10px] text-muted-foreground tracking-wider uppercase hidden sm:block">Todo en un solo lugar</span>
       </div>
     )}
@@ -938,8 +938,10 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.15),transparent_50%)]" />
         <div className="relative container mx-auto px-4 py-12 md:py-20 text-white">
           <div className="max-w-3xl mx-auto text-center">
-            <img src={LOGO} alt="" className="h-24 md:h-32 mx-auto mb-4 drop-shadow-2xl" />
-            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight leading-tight">
+            <div className="mx-auto mb-5 inline-block rounded-3xl bg-black/80 backdrop-blur-sm p-3 shadow-2xl ring-1 ring-white/20">
+              <img src={LOGO} alt="UBIK2 YEMG" className="h-28 md:h-36 w-auto object-contain block" />
+            </div>
+            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight leading-tight drop-shadow-lg">
               {t.slogan}
             </h1>
             <p className="text-white/90 mt-3 text-base md:text-lg">{t.subSlogan}</p>

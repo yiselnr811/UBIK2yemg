@@ -798,19 +798,77 @@ const App = () => {
 
 // ============ SUB COMPONENTS ============
 
-const Logo = ({ size = 'md', dark, withText = true }) => (
-  <div className="flex items-center gap-2.5">
-    <div className={`relative ${size === 'lg' ? 'h-14 w-14' : size === 'sm' ? 'h-9 w-9' : 'h-11 w-11'} flex-shrink-0 rounded-xl overflow-hidden bg-black shadow-md ring-1 ring-black/10`}>
-      <img src={LOGO} alt="UBIK2 YEMG" className="h-full w-full object-contain" />
-    </div>
-    {withText && (
-      <div className="flex flex-col leading-none">
-        <span className={`${size === 'lg' ? 'text-2xl' : 'text-xl'} font-extrabold tracking-tight brand-text-gradient`}>UBIK2 YEMG</span>
-        <span className="text-[10px] text-muted-foreground tracking-wider uppercase hidden sm:block">Todo en un solo lugar</span>
-      </div>
-    )}
-  </div>
+const LogoSVG = ({ size = 40, showText = false, textWhite = false }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 100 100"
+    xmlns="http://www.w3.org/2000/svg"
+    className="flex-shrink-0"
+    aria-label="UBIK2 YEMG"
+  >
+    <defs>
+      <linearGradient id="ubikGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stopColor="#1565C0" />
+        <stop offset="100%" stopColor="#00A86B" />
+      </linearGradient>
+    </defs>
+    {/* Pin/location marker outline */}
+    <path
+      d="M50 8 C32 8 18 22 18 40 C18 58 50 92 50 92 C50 92 82 58 82 40 C82 22 68 8 50 8 Z"
+      fill="none"
+      stroke="url(#ubikGrad)"
+      strokeWidth="4.5"
+      strokeLinejoin="round"
+    />
+    {/* Shopping cart body */}
+    <path
+      d="M30 38 L66 38 L62 58 L36 58 Z"
+      fill="none"
+      stroke="url(#ubikGrad)"
+      strokeWidth="3.5"
+      strokeLinejoin="round"
+    />
+    {/* Cart handle */}
+    <path
+      d="M26 32 L31 32 L36 58"
+      fill="none"
+      stroke="url(#ubikGrad)"
+      strokeWidth="3.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    {/* Cart wheels */}
+    <circle cx="40" cy="66" r="3" fill="url(#ubikGrad)" />
+    <circle cx="58" cy="66" r="3" fill="url(#ubikGrad)" />
+    {/* Check mark inside cart */}
+    <path
+      d="M40 47 L46 53 L57 42"
+      fill="none"
+      stroke="url(#ubikGrad)"
+      strokeWidth="4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
 );
+
+const Logo = ({ size = 'md', withText = true, onDark = false }) => {
+  const px = size === 'lg' ? 56 : size === 'sm' ? 32 : 44;
+  return (
+    <div className="flex items-center gap-2.5">
+      <div className={`relative flex-shrink-0 rounded-xl bg-black flex items-center justify-center ${size === 'lg' ? 'h-16 w-16' : size === 'sm' ? 'h-10 w-10' : 'h-12 w-12'} shadow-md`}>
+        <LogoSVG size={px - 8} />
+      </div>
+      {withText && (
+        <div className="flex flex-col leading-none">
+          <span className={`${size === 'lg' ? 'text-3xl' : 'text-xl'} font-extrabold tracking-tight ${onDark ? 'text-white' : 'brand-text-gradient'}`}>UBIK2 YEMG</span>
+          <span className={`text-[10px] tracking-wider uppercase hidden sm:block ${onDark ? 'text-white/80' : 'text-muted-foreground'}`}>Todo en un solo lugar</span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, searchInput, setSearchInput, onSearch, setView, favorites }) => (
   <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
@@ -938,8 +996,12 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.15),transparent_50%)]" />
         <div className="relative container mx-auto px-4 py-12 md:py-20 text-white">
           <div className="max-w-3xl mx-auto text-center">
-            <div className="mx-auto mb-5 inline-block rounded-3xl bg-black/80 backdrop-blur-sm p-3 shadow-2xl ring-1 ring-white/20">
-              <img src={LOGO} alt="UBIK2 YEMG" className="h-28 md:h-36 w-auto object-contain block" />
+            <div className="mx-auto mb-5 inline-flex items-center justify-center rounded-3xl bg-black/90 backdrop-blur-sm p-5 shadow-2xl ring-2 ring-white/20">
+              <LogoSVG size={96} />
+              <div className="ml-3 text-left">
+                <div className="text-3xl md:text-4xl font-extrabold tracking-tight brand-text-gradient leading-none">UBIK2 YEMG</div>
+                <div className="text-[10px] md:text-xs text-white/70 tracking-widest uppercase mt-1">Todo en un solo lugar</div>
+              </div>
             </div>
             <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight leading-tight drop-shadow-lg">
               {t.slogan}
@@ -1674,7 +1736,11 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
       <DialogHeader>
-        <div className="flex justify-center mb-2"><img src={LOGO} alt="" className="h-14" /></div>
+        <div className="flex justify-center mb-2">
+          <div className="rounded-2xl bg-black p-3 shadow-md">
+            <LogoSVG size={48} />
+          </div>
+        </div>
         <DialogTitle className="text-center text-2xl">{mode === 'login' ? 'Bienvenido' : 'Crea tu negocio'}</DialogTitle>
         <DialogDescription className="text-center">
           {mode === 'login' ? 'Accede para gestionar tus productos.' : 'Publica tu negocio en minutos.'}

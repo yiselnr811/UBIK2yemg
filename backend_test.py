@@ -39,33 +39,13 @@ def test_public_settings():
 
 
 def test_forgot_reset_password():
-    """Test forgot/reset password flow"""
-    print("\n=== TEST: Forgot/Reset Password Flow ===")
-    
-    # Step 1: Register a fresh user with UUID email
-    print("\n1. Registering fresh user...")
-    user_email = f"test-{uuid4()}@example.com"
-    user_password = "oldPassword123"
+    """Test forgot/reset password flow with Resend integration (anti-enumeration)"""
+    print("\n=== TEST: Forgot/Reset Password Flow (Resend Integration) ===")
     
     try:
-        register_data = {
-            "email": user_email,
-            "password": user_password,
-            "businessName": f"Test Business {uuid4().hex[:8]}",
-            "whatsapp": "+5355512345"
-        }
-        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
-        
-        if response.status_code != 200:
-            print(f"❌ FAILED: Registration failed with {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
-        
-        print(f"✅ User registered: {user_email}")
-        
-        # Step 2: Request password reset with valid email
-        print("\n2. Requesting password reset with valid email...")
-        response = requests.post(f"{BASE_URL}/auth/forgot", json={"email": user_email})
+        # SCENARIO A: POST /api/auth/forgot with EXISTING user email (admin@ubik2.com)
+        print("\n[A] Testing forgot with EXISTING user (admin@ubik2.com)...")
+        response = requests.post(f"{BASE_URL}/auth/forgot", json={"email": "admin@ubik2.com"})
         
         if response.status_code != 200:
             print(f"❌ FAILED: Expected 200, got {response.status_code}")
@@ -73,67 +53,188 @@ def test_forgot_reset_password():
             return False
         
         data = response.json()
-        if 'resetToken' not in data or 'expiresAt' not in data:
-            print(f"❌ FAILED: Missing resetToken or expiresAt in response")
-            print(f"Response: {json.dumps(data, indent=2)}")
+        print(f"Response: {json.dumps(data, indent=2)}")
+        
+        # Verify generic message
+        if 'message' not in data:
+            print(f"❌ FAILED: Missing 'message' field in response")
             return False
         
-        reset_token = data['resetToken']
+        expected_message = "Si el correo está registrado, te enviamos un mensaje con instrucciones para restablecer tu contraseña."
+        if data['message'] != expected_message:
+            print(f"❌ FAILED: Message doesn't match expected anti-enumeration message")
+            print(f"Expected: {expected_message}")
+            print(f"Got: {data['message']}")
+            return False
+        
+        # Verify emailDelivered is true
+        if 'emailDelivered' not in data:
+            print(f"❌ FAILED: Missing 'emailDelivered' field in response")
+            return False
+        
+        if data['emailDelivered'] != True:
+            print(f"❌ FAILED: emailDelivered should be true for existing user, got {data['emailDelivered']}")
+            return False
+        
+        # SECURITY: Verify NO resetToken in response
+        if 'resetToken' in data:
+            print(f"❌ FAILED: SECURITY ISSUE - resetToken should NOT be in response body")
+            return False
+        
+        # SECURITY: Verify NO expiresAt in response
+        if 'expiresAt' in data:
+            print(f"❌ FAILED: SECURITY ISSUE - expiresAt should NOT be in response body")
+            return False
+        
+        print(f"✅ PASSED: Existing user returns 200 with generic message, emailDelivered=true, no token leak")
+        
+        # SCENARIO B: POST /api/auth/forgot with NON-EXISTING email
+        print("\n[B] Testing forgot with NON-EXISTING email...")
+        response = requests.post(f"{BASE_URL}/auth/forgot", json={"email": "random-noexiste-xyz@test.com"})
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Expected 200 (anti-enumeration), got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        print(f"Response: {json.dumps(data, indent=2)}")
+        
+        # Verify same generic message
+        if data.get('message') != expected_message:
+            print(f"❌ FAILED: Non-existing email should return same generic message")
+            return False
+        
+        # emailDelivered should be false or undefined (not true)
+        if data.get('emailDelivered') == True:
+            print(f"❌ FAILED: emailDelivered should not be true for non-existing email")
+            return False
+        
+        print(f"✅ PASSED: Non-existing email returns 200 with generic message (anti-enumeration working)")
+        
+        # SCENARIO C: POST /api/auth/forgot missing email field
+        print("\n[C] Testing forgot with missing email field...")
+        response = requests.post(f"{BASE_URL}/auth/forgot", json={})
+        
+        if response.status_code != 400:
+            print(f"❌ FAILED: Expected 400, got {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        data = response.json()
+        if data.get('error') != 'Email requerido':
+            print(f"❌ FAILED: Expected error message 'Email requerido', got {data.get('error')}")
+            return False
+        
+        print(f"✅ PASSED: Missing email correctly rejected with 400")
+        
+        # SCENARIO D: Full forgot→reset cycle with MongoDB token retrieval
+        print("\n[D] Testing full forgot→reset cycle with MongoDB token retrieval...")
+        
+        # D1: Create a temporary test user
+        print("\n  D1. Creating temporary test user...")
+        test_email = f"test-reset-{uuid4().hex[:8]}@ubik2test.com"
+        test_password_old = "OldPassword123"
+        test_password_new = "NewPassword456"
+        
+        register_data = {
+            "email": test_email,
+            "password": test_password_old,
+            "businessName": f"Test Reset Business {uuid4().hex[:6]}",
+            "whatsapp": "+5355512345"
+        }
+        response = requests.post(f"{BASE_URL}/auth/register", json=register_data)
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: User registration failed with {response.status_code}")
+            print(f"Response: {response.text}")
+            return False
+        
+        print(f"  ✅ Test user created: {test_email}")
+        
+        # D2: Call forgot password
+        print("\n  D2. Calling forgot password...")
+        response = requests.post(f"{BASE_URL}/auth/forgot", json={"email": test_email})
+        
+        if response.status_code != 200:
+            print(f"❌ FAILED: Forgot password failed with {response.status_code}")
+            return False
+        
+        data = response.json()
+        if data.get('emailDelivered') != True:
+            print(f"❌ FAILED: emailDelivered should be true for valid user")
+            return False
+        
+        print(f"  ✅ Forgot password called successfully")
+        
+        # D3: Read resetToken directly from MongoDB
+        print("\n  D3. Reading resetToken from MongoDB...")
+        import pymongo
+        mongo_client = pymongo.MongoClient("mongodb://localhost:27017")
+        db = mongo_client["ubik2_yemg"]
+        user_doc = db.users.find_one({"email": test_email})
+        
+        if not user_doc:
+            print(f"❌ FAILED: User not found in MongoDB")
+            return False
+        
+        if 'resetToken' not in user_doc:
+            print(f"❌ FAILED: resetToken not stored in MongoDB")
+            return False
+        
+        reset_token = user_doc['resetToken']
+        
         if len(reset_token) != 24:
             print(f"❌ FAILED: resetToken should be 24 chars, got {len(reset_token)}")
             return False
         
-        print(f"✅ Reset token received: {reset_token}")
-        
-        # Step 3: Request password reset with invalid email
-        print("\n3. Requesting password reset with invalid email...")
-        response = requests.post(f"{BASE_URL}/auth/forgot", json={"email": "nope@nope.com"})
-        
-        if response.status_code != 404:
-            print(f"❌ FAILED: Expected 404, got {response.status_code}")
-            print(f"Response: {response.text}")
+        if 'resetExpires' not in user_doc:
+            print(f"❌ FAILED: resetExpires not stored in MongoDB")
             return False
         
-        print(f"✅ Invalid email correctly rejected with 404")
+        print(f"  ✅ resetToken retrieved from MongoDB: {reset_token[:8]}... (24 chars)")
         
-        # Step 4: Reset password with valid token
-        print("\n4. Resetting password with valid token...")
-        new_password = "newPass123"
+        # D4: Call reset password with token
+        print("\n  D4. Calling reset password with token...")
         response = requests.post(f"{BASE_URL}/auth/reset", json={
             "token": reset_token,
-            "newPassword": new_password
+            "newPassword": test_password_new
         })
         
         if response.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"❌ FAILED: Reset password failed with {response.status_code}")
             print(f"Response: {response.text}")
             return False
         
-        print(f"✅ Password reset successful")
+        data = response.json()
+        if data.get('message') != 'Contraseña actualizada':
+            print(f"❌ FAILED: Expected message 'Contraseña actualizada', got {data.get('message')}")
+            return False
         
-        # Step 5: Try login with old password (should fail)
-        print("\n5. Attempting login with old password...")
+        print(f"  ✅ Password reset successful")
+        
+        # D5: Verify old password no longer works
+        print("\n  D5. Verifying old password no longer works...")
         response = requests.post(f"{BASE_URL}/auth/login", json={
-            "email": user_email,
-            "password": user_password
+            "email": test_email,
+            "password": test_password_old
         })
         
         if response.status_code != 401:
-            print(f"❌ FAILED: Expected 401, got {response.status_code}")
-            print(f"Response: {response.text}")
+            print(f"❌ FAILED: Old password should be rejected with 401, got {response.status_code}")
             return False
         
-        print(f"✅ Old password correctly rejected with 401")
+        print(f"  ✅ Old password correctly rejected with 401")
         
-        # Step 6: Login with new password (should succeed)
-        print("\n6. Attempting login with new password...")
+        # D6: Verify new password works
+        print("\n  D6. Verifying new password works...")
         response = requests.post(f"{BASE_URL}/auth/login", json={
-            "email": user_email,
-            "password": new_password
+            "email": test_email,
+            "password": test_password_new
         })
         
         if response.status_code != 200:
-            print(f"❌ FAILED: Expected 200, got {response.status_code}")
+            print(f"❌ FAILED: New password should work, got {response.status_code}")
             print(f"Response: {response.text}")
             return False
         
@@ -142,13 +243,15 @@ def test_forgot_reset_password():
             print(f"❌ FAILED: No token in login response")
             return False
         
-        print(f"✅ Login with new password successful")
+        print(f"  ✅ New password works, login successful")
         
-        # Step 7: Try reset with invalid token
-        print("\n7. Attempting reset with invalid token...")
+        print(f"✅ PASSED: Full forgot→reset cycle working correctly")
+        
+        # SCENARIO E: POST /api/auth/reset with invalid token
+        print("\n[E] Testing reset with invalid token...")
         response = requests.post(f"{BASE_URL}/auth/reset", json={
-            "token": "invalidtoken123456789012",
-            "newPassword": "anotherPass123"
+            "token": "invalidtoken1234567890ab",
+            "newPassword": "SomePassword123"
         })
         
         if response.status_code != 400:
@@ -156,13 +259,37 @@ def test_forgot_reset_password():
             print(f"Response: {response.text}")
             return False
         
-        print(f"✅ Invalid token correctly rejected with 400")
+        data = response.json()
+        if data.get('error') != 'Token inválido':
+            print(f"❌ FAILED: Expected error 'Token inválido', got {data.get('error')}")
+            return False
         
-        print("\n✅ ALL FORGOT/RESET PASSWORD TESTS PASSED")
+        print(f"✅ PASSED: Invalid token correctly rejected with 400")
+        
+        # SCENARIO F: POST /api/auth/reset missing token or newPassword
+        print("\n[F] Testing reset with missing fields...")
+        
+        # Missing token
+        response = requests.post(f"{BASE_URL}/auth/reset", json={"newPassword": "Test123"})
+        if response.status_code != 400:
+            print(f"❌ FAILED: Missing token should return 400, got {response.status_code}")
+            return False
+        
+        # Missing newPassword
+        response = requests.post(f"{BASE_URL}/auth/reset", json={"token": "sometoken123456789012"})
+        if response.status_code != 400:
+            print(f"❌ FAILED: Missing newPassword should return 400, got {response.status_code}")
+            return False
+        
+        print(f"✅ PASSED: Missing fields correctly rejected with 400")
+        
+        print("\n✅ ALL FORGOT/RESET PASSWORD TESTS PASSED (Resend Integration)")
         return True
         
     except Exception as e:
         print(f"❌ FAILED: Exception - {str(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -342,7 +469,7 @@ def test_admin_endpoints():
         print("\n1. Logging in as admin...")
         response = requests.post(f"{BASE_URL}/auth/login", json={
             "email": "admin@ubik2.com",
-            "password": "admin123"
+            "password": "Administra2r.1279"
         })
         
         if response.status_code != 200:

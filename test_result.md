@@ -238,7 +238,7 @@ backend:
     file: "/app/app/api/[[...path]]/route.js"
     stuck_count: 0
     priority: "high"
-    needs_retesting: false
+    needs_retesting: true
     status_history:
       - working: "NA"
         agent: "main"
@@ -246,6 +246,9 @@ backend:
       - working: true
         agent: "testing"
         comment: "✅ Complete forgot/reset password flow working correctly. POST /api/auth/forgot with valid email returns resetToken (24 chars) and expiresAt. Invalid email correctly returns 404. POST /api/auth/reset with valid token successfully updates password. Old password correctly rejected (401) after reset. New password works for login. Invalid token correctly rejected with 400."
+      - working: "NA"
+        agent: "main"
+        comment: "UPDATED: Integrated Resend email provider (re_7Bed83Tj_8miJbnEtroEZKNTq5W62eJw5) to send real password reset emails. Changes: (1) POST /api/auth/forgot now returns generic anti-enumeration message {message, emailDelivered} regardless of whether the email exists in DB (no longer returns 404 for unknown emails, no longer returns resetToken in response). (2) When user exists, generates token, stores it in users.resetToken with 30 min expiry, and sends HTML email via Resend from 'UBIK2 YEMG <onboarding@resend.dev>' with subject 'Restablece tu contraseña de UBIK2 YEMG' and a clickable link to {NEXT_PUBLIC_BASE_URL}/?reset_token=XXX + raw token as fallback. (3) POST /api/auth/reset unchanged - validates token and updates password. Needs retesting: verify generic message for non-existing email (200, no 404), verify resetToken still stored in DB and reset endpoint still works, verify emailDelivered=true when valid email is sent. Use admin@ubik2.com to trigger forgot, then read resetToken directly from MongoDB users collection to test reset endpoint."
 
   - task: "My payments list"
     implemented: true
@@ -334,7 +337,8 @@ metadata:
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Forgot/Reset password flow"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -449,3 +453,25 @@ agent_communication:
       
       ALL BACKEND ENDPOINTS WORKING CORRECTLY. No critical issues found.
       Backend API is production-ready for Phase B+C features.
+
+  - agent: "main"
+    message: |
+      FORGOT PASSWORD - Integración Resend real añadida. Cambios:
+      1) Nuevo paquete: resend@6.x instalado vía yarn.
+      2) Variables .env nuevas: RESEND_API_KEY, RESEND_FROM_EMAIL=onboarding@resend.dev, RESEND_FROM_NAME='UBIK2 YEMG'.
+      3) POST /api/auth/forgot ahora:
+         - Devuelve siempre 200 con {message: 'Si el correo está registrado...', emailDelivered}
+           regardless de si el email existe (anti-enumeración). YA NO devuelve 404 ni resetToken en el body.
+         - Si el usuario existe, genera resetToken (24 chars), lo guarda en users.resetToken con resetExpires=30 min,
+           y envía un email HTML en español vía Resend con asunto 'Restablece tu contraseña de UBIK2 YEMG'.
+         - El email contiene un enlace clickeable a {NEXT_PUBLIC_BASE_URL}/?reset_token=XXX + el token raw.
+      4) POST /api/auth/reset NO cambió. Sigue validando token y actualizando password.
+      Por favor probar (usar usuario existente admin@ubik2.com):
+         a) POST /api/auth/forgot {email: 'admin@ubik2.com'} → 200, {message, emailDelivered: true}
+         b) POST /api/auth/forgot {email: 'noexiste@nada.com'} → 200, {message, emailDelivered: false} (NO debe ser 404)
+         c) Para validar el flujo completo de reset: leer resetToken directamente de la colección users
+            en MongoDB (db.users.findOne({email:'admin@ubik2.com'})) y luego llamar a POST /api/auth/reset
+            {token, newPassword:'NuevoTest123'} → 200, después verificar login con la nueva contraseña.
+         d) POST /api/auth/reset con token inválido → 400.
+      NOTA: No es necesario verificar la entrega física del email (sandbox de Resend), solo que el endpoint
+      responda correctamente y los logs muestren '[Resend] email enviado:'.

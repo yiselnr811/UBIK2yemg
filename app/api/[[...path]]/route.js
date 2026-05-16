@@ -3,10 +3,96 @@ import { MongoClient } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
+import { Resend } from 'resend';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret';
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || 'UBIK2 YEMG';
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+
+async function sendPasswordResetEmail(toEmail, name, token) {
+  if (!resend) {
+    console.warn('[Resend] RESEND_API_KEY no configurado, omitiendo envío real');
+    return { skipped: true };
+  }
+  const resetUrl = `${BASE_URL}/?reset_token=${encodeURIComponent(token)}`;
+  const safeName = (name || '').toString().split(' ')[0] || 'usuario';
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Restablece tu contraseña</title></head>
+<body style="margin:0;padding:0;background:#f4f6f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f6f9;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+        <tr><td style="background:linear-gradient(135deg,#1565C0 0%,#00A86B 100%);padding:28px 24px;text-align:center;color:#ffffff;">
+          <div style="font-size:22px;font-weight:800;letter-spacing:0.5px;">UBIK2 YEMG</div>
+          <div style="font-size:13px;opacity:0.9;margin-top:4px;">Marketplace para MiPymes cubanas</div>
+        </td></tr>
+        <tr><td style="padding:32px 28px 8px;color:#111827;">
+          <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} 👋</h1>
+          <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
+            Recibimos una solicitud para restablecer la contraseña de tu cuenta en UBIK2 YEMG.
+            Haz clic en el botón de abajo para elegir una nueva contraseña.
+          </p>
+        </td></tr>
+        <tr><td align="center" style="padding:8px 28px 24px;">
+          <a href="${resetUrl}" target="_blank" style="display:inline-block;padding:14px 28px;background:#1565C0;color:#ffffff;text-decoration:none;border-radius:9999px;font-weight:700;font-size:15px;">
+            Restablecer contraseña
+          </a>
+        </td></tr>
+        <tr><td style="padding:0 28px 8px;color:#374151;">
+          <p style="margin:0 0 8px;font-size:13px;line-height:20px;">
+            ¿No funciona el botón? Copia y pega este enlace en tu navegador:
+          </p>
+          <p style="margin:0 0 16px;font-size:12px;line-height:18px;word-break:break-all;color:#1565C0;">
+            ${resetUrl}
+          </p>
+          <p style="margin:0 0 8px;font-size:13px;line-height:20px;">
+            O usa este token manualmente en el formulario de recuperación:
+          </p>
+          <p style="margin:0 0 16px;font-size:14px;line-height:20px;font-family:Menlo,Monaco,Consolas,monospace;background:#f3f4f6;padding:10px 12px;border-radius:8px;color:#111827;word-break:break-all;">
+            ${token}
+          </p>
+        </td></tr>
+        <tr><td style="padding:0 28px 24px;color:#6b7280;">
+          <p style="margin:0;font-size:12px;line-height:18px;">
+            ⏱️ Por seguridad, este enlace caduca en <strong>30 minutos</strong> y solo se puede usar una vez.
+          </p>
+          <p style="margin:8px 0 0;font-size:12px;line-height:18px;">
+            Si no solicitaste este cambio, puedes ignorar este correo. Tu contraseña actual seguirá siendo válida.
+          </p>
+        </td></tr>
+        <tr><td style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center;color:#9ca3af;font-size:12px;">
+          © ${new Date().getFullYear()} UBIK2 YEMG · Marketplace cubano de MiPymes
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+      to: [toEmail],
+      subject: 'Restablece tu contraseña de UBIK2 YEMG',
+      html,
+    });
+    if (error) {
+      console.error('[Resend] error enviando email:', error);
+      return { error };
+    }
+    console.log('[Resend] email enviado:', data?.id);
+    return { data };
+  } catch (e) {
+    console.error('[Resend] excepción enviando email:', e?.message || e);
+    return { error: e };
+  }
+}
 
 let _client = null;
 let _connectPromise = null;
@@ -245,13 +331,24 @@ async function route(request, method, path) {
       const body = await request.json();
       const { email } = body || {};
       if (!email) return json({ error: 'Email requerido' }, 400);
-      const u = await db.collection('users').findOne({ email: email.toLowerCase() });
-      if (!u) return json({ error: 'Email no registrado' }, 404);
+
+      const genericMessage = 'Si el correo está registrado, te enviamos un mensaje con instrucciones para restablecer tu contraseña.';
+      const u = await db.collection('users').findOne({ email: String(email).toLowerCase() });
+
+      // Anti-enumeration: respond the same way whether the user exists or not
+      if (!u) {
+        return json({ message: genericMessage });
+      }
+
       const resetToken = uuidv4().replace(/-/g, '').slice(0, 24);
       const resetExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
       await db.collection('users').updateOne({ id: u.id }, { $set: { resetToken, resetExpires } });
-      // MVP: returning token in response (in prod, send via email)
-      return json({ message: 'Token de recuperación generado', resetToken, expiresAt: resetExpires });
+
+      // Send via Resend (real email). Do not leak whether the email exists.
+      const emailResult = await sendPasswordResetEmail(u.email, u.name || '', resetToken);
+      const emailDelivered = !!(emailResult && emailResult.data);
+
+      return json({ message: genericMessage, emailDelivered });
     }
 
     if (path[1] === 'reset' && method === 'POST') {

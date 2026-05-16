@@ -394,6 +394,24 @@ const App = () => {
     localStorage.setItem('ubik2_lang', lang);
   }, [lang]);
 
+  // === Detect ?reset_token=... from password recovery email ===
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const rt = params.get('reset_token');
+      if (rt) {
+        setForgotData((f) => ({ ...f, token: rt, newPassword: '' }));
+        setForgotStep(2);
+        setForgotOpen(true);
+        // Clean URL so refreshing doesn't re-open the dialog
+        const url = new URL(window.location.href);
+        url.searchParams.delete('reset_token');
+        window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => {
     if (typeof window === 'undefined') return;
     document.documentElement.classList.toggle('dark', dark);
@@ -633,9 +651,9 @@ const App = () => {
   // === Forgot ===
   const requestForgot = async () => {
     try {
-      const d = await api('/auth/forgot', { method: 'POST', body: { email: forgotData.email } });
-      toast.success('Token generado');
-      setForgotData((f) => ({ ...f, token: d.resetToken }));
+      if (!forgotData.email) return toast.error('Ingresa tu email');
+      await api('/auth/forgot', { method: 'POST', body: { email: forgotData.email } });
+      toast.success('Revisa tu correo. Si está registrado, te enviamos instrucciones.');
       setForgotStep(2);
     } catch (err) { toast.error(err.message); }
   };
@@ -2179,19 +2197,37 @@ const ForgotDialog = ({ open, onOpenChange, step, setStep, data, setData, onRequ
       <DialogHeader>
         <DialogTitle>Recuperar contraseña</DialogTitle>
         <DialogDescription>
-          {step === 1 ? 'Ingresa tu email para generar un token.' : 'Pega el token y elige una nueva contraseña.'}
+          {step === 1
+            ? 'Ingresa tu email y te enviaremos un enlace para restablecer tu contraseña.'
+            : 'Revisa tu correo (incluida la carpeta de spam). Haz clic en el enlace recibido o pega el token aquí.'}
         </DialogDescription>
       </DialogHeader>
       {step === 1 ? (
         <div className="space-y-3">
-          <div><Label>Email</Label><Input type="email" value={data.email} onChange={(e) => setData({ ...data, email: e.target.value })} /></div>
-          <Button onClick={onRequest} className="w-full brand-gradient text-white">Generar token</Button>
+          <div><Label>Email</Label><Input type="email" value={data.email} onChange={(e) => setData({ ...data, email: e.target.value })} placeholder="tu@correo.com" /></div>
+          <Button onClick={onRequest} className="w-full brand-gradient text-white">Enviar instrucciones</Button>
+          <p className="text-xs text-muted-foreground text-center">
+            Si el correo está registrado en UBIK2 YEMG, recibirás un mensaje en pocos minutos.
+          </p>
         </div>
       ) : (
         <div className="space-y-3">
-          <div><Label>Token</Label><Input value={data.token} onChange={(e) => setData({ ...data, token: e.target.value })} className="font-mono text-xs" /><p className="text-xs text-muted-foreground mt-1">En producción este token llegaría por email.</p></div>
-          <div><Label>Nueva contraseña</Label><Input type="password" value={data.newPassword} onChange={(e) => setData({ ...data, newPassword: e.target.value })} /></div>
-          <Button onClick={onSubmit} className="w-full brand-gradient text-white">Actualizar</Button>
+          <div className="text-xs bg-green-50 border border-green-200 text-green-800 rounded-md p-3">
+            📧 Te enviamos un correo con un enlace de recuperación. El enlace caduca en <strong>30 minutos</strong>.
+          </div>
+          <div>
+            <Label>Token (del correo)</Label>
+            <Input value={data.token} onChange={(e) => setData({ ...data, token: e.target.value })} className="font-mono text-xs" placeholder="Pega aquí el token del correo" />
+            <p className="text-xs text-muted-foreground mt-1">También puedes hacer clic directamente en el botón del correo.</p>
+          </div>
+          <div>
+            <Label>Nueva contraseña</Label>
+            <Input type="password" value={data.newPassword} onChange={(e) => setData({ ...data, newPassword: e.target.value })} placeholder="Mínimo 6 caracteres" />
+          </div>
+          <Button onClick={onSubmit} className="w-full brand-gradient text-white">Actualizar contraseña</Button>
+          <button type="button" onClick={() => setStep(1)} className="text-xs text-[#1565C0] hover:underline w-full text-center">
+            ¿No recibiste el correo? Reintentar
+          </button>
         </div>
       )}
     </DialogContent>

@@ -44,6 +44,7 @@ import {
   MapPin, Crown, Trash2, Pencil, ArrowLeft, Check, Loader2, Instagram, Facebook,
   Heart, Share2, Flag, Filter, Globe, Sun, Moon, ShieldCheck, Phone, Mail,
   Send, Sparkles, ChevronRight, Tag, Clock, X, Menu, Star, TrendingUp,
+  Leaf, ImageOff, ImageIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -278,18 +279,48 @@ const timeAgo = (iso) => {
   return new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
 };
 
-function api(path, { method = 'GET', body, token } = {}) {
+// Resilient API helper with timeout + automatic retry (network-friendly for Cuba)
+function api(path, { method = 'GET', body, token, timeout = 10000, retries = 1, signal } = {}) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers.Authorization = `Bearer ${token}`;
-  return fetch(`${API}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  }).then(async (r) => {
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.error || 'Error');
-    return data;
-  });
+  const doFetch = (attempt) => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    if (signal) signal.addEventListener('abort', () => ctrl.abort());
+    return fetch(`${API}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: ctrl.signal,
+    })
+      .then(async (r) => {
+        clearTimeout(timer);
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || `Error ${r.status}`);
+        return data;
+      })
+      .catch((err) => {
+        clearTimeout(timer);
+        const isAbort = err?.name === 'AbortError';
+        const isNetwork = err?.message === 'Failed to fetch' || err?.message?.includes('NetworkError');
+        // Only retry on GET for transient network failures or timeouts
+        if (attempt < retries && method === 'GET' && (isAbort || isNetwork)) {
+          return new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1))).then(() => doFetch(attempt + 1));
+        }
+        if (isAbort) throw new Error('La conexión es lenta. Intenta de nuevo.');
+        throw err;
+      });
+  };
+  return doFetch(0);
+}
+
+// Detect slow connection (2G/slow-2g) to auto-enable data saver
+function detectSlowConnection() {
+  if (typeof navigator === 'undefined') return false;
+  const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  if (!c) return false;
+  if (c.saveData) return true;
+  return ['slow-2g', '2g'].includes(c.effectiveType);
 }
 
 const App = () => {
@@ -313,6 +344,19 @@ const App = () => {
   const [category, setCategory] = useState('');
   const [filters, setFilters] = useState({ location: '', priceMin: '', priceMax: '', since: '' });
   const [loading, setLoading] = useState(false);
+
+  // === Cuba/100K optimizations ===
+  const [dataSaver, setDataSaver] = useState(false); // hides images, uses lite payloads
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // === Search autocomplete ===
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+
+  const PAGE_SIZE = 12;
 
   const [lang, setLang] = useState('es');
   const [dark, setDark] = useState(false);
@@ -371,6 +415,14 @@ const App = () => {
     const sDark = localStorage.getItem('ubik2_dark') === '1';
     setDark(sDark);
     document.documentElement.classList.toggle('dark', sDark);
+    // Data saver: explicit pref wins; otherwise auto-detect slow conns
+    const dsStored = localStorage.getItem('ubik2_data_saver');
+    if (dsStored === '1') setDataSaver(true);
+    else if (dsStored === '0') setDataSaver(false);
+    else if (detectSlowConnection()) {
+      setDataSaver(true);
+      toast.success('Detectamos conexión lenta. Activamos modo ahorro de datos.', { duration: 4500 });
+    }
     try {
       const fav = JSON.parse(localStorage.getItem('ubik2_favs') || '[]');
       setFavorites(Array.isArray(fav) ? fav : []);
@@ -419,6 +471,11 @@ const App = () => {
   }, [dark]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem('ubik2_data_saver', dataSaver ? '1' : '0');
+  }, [dataSaver]);
+
+  useEffect(() => {
     if (!token) { setUser(null); setBusiness(null); return; }
     api('/auth/me', { token })
       .then((d) => { setUser(d.user); setBusiness(d.business); })
@@ -434,27 +491,86 @@ const App = () => {
     if (filters.priceMin) params.set('priceMin', filters.priceMin);
     if (filters.priceMax) params.set('priceMax', filters.priceMax);
     if (filters.since) params.set('since', filters.since);
+    // Data saver mode: ask backend to skip heavy base64 images
+    if (dataSaver) params.set('lite', 'true');
+    params.set('limit', String(PAGE_SIZE));
     Object.entries(extra).forEach(([k, v]) => params.set(k, v));
     return params.toString();
-  }, [query, category, filters]);
+  }, [query, category, filters, dataSaver]);
 
   const refreshHome = useCallback(() => {
     setLoading(true);
+    setPage(1);
     const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
     // When searching/filtering: show ALL matching products (no excludeFeatured).
     // When default home view: split featured (separate section) from normal grid.
-    const mainQ = hasFiltersOrQuery ? buildQuery() : buildQuery({ excludeFeatured: 'true' });
+    const mainQ = hasFiltersOrQuery ? buildQuery({ page: '1' }) : buildQuery({ excludeFeatured: 'true', page: '1' });
+    const featQ = dataSaver ? '/products?featured=true&lite=true&limit=8' : '/products?featured=true&limit=12';
     Promise.all([
       api(`/products?${mainQ}`),
-      hasFiltersOrQuery ? Promise.resolve({ products: [] }) : api('/products?featured=true'),
+      hasFiltersOrQuery ? Promise.resolve({ products: [], hasMore: false }) : api(featQ),
     ])
       .then(([all, feat]) => {
         setProducts(all.products || []);
+        setHasMore(!!all.hasMore);
         setFeatured(feat.products || []);
       })
       .catch((e) => toast.error(e.message))
       .finally(() => setLoading(false));
-  }, [buildQuery, query, category, filters]);
+  }, [buildQuery, query, category, filters, dataSaver]);
+
+  const loadMore = useCallback(() => {
+    if (loadingMore || !hasMore) return;
+    setLoadingMore(true);
+    const next = page + 1;
+    const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
+    const mainQ = hasFiltersOrQuery ? buildQuery({ page: String(next) }) : buildQuery({ excludeFeatured: 'true', page: String(next) });
+    api(`/products?${mainQ}`)
+      .then((d) => {
+        setProducts((prev) => [...prev, ...(d.products || [])]);
+        setHasMore(!!d.hasMore);
+        setPage(next);
+      })
+      .catch((e) => toast.error(e.message))
+      .finally(() => setLoadingMore(false));
+  }, [loadingMore, hasMore, page, buildQuery, query, category, filters]);
+
+  // === Autocomplete (debounced) ===
+  useEffect(() => {
+    const q = (searchInput || '').trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      setSuggestLoading(false);
+      return;
+    }
+    setSuggestLoading(true);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      api(`/search/suggest?q=${encodeURIComponent(q)}`, { signal: ctrl.signal, retries: 0, timeout: 4000 })
+        .then((d) => setSuggestions(d.suggestions || []))
+        .catch(() => setSuggestions([]))
+        .finally(() => setSuggestLoading(false));
+    }, 280); // debounce ~280ms — gentle on Cuban networks
+    return () => { clearTimeout(timer); ctrl.abort(); };
+  }, [searchInput]);
+
+  const onSuggestionClick = useCallback((s) => {
+    setSuggestOpen(false);
+    if (s.type === 'category') {
+      setCategory(s.value);
+      setQuery('');
+      setSearchInput('');
+      setView('home');
+    } else if (s.type === 'product') {
+      setProductId(s.value);
+      setView('product');
+      setSearchInput('');
+    } else if (s.type === 'business') {
+      setBusinessId(s.value);
+      setView('business');
+      setSearchInput('');
+    }
+  }, []);
 
   useEffect(() => {
     if (view === 'home') refreshHome();
@@ -753,6 +869,9 @@ const App = () => {
         onUpgradeSeller={() => setUpgradeOpen(true)}
         searchInput={searchInput} setSearchInput={setSearchInput} onSearch={onSearch}
         setView={setView} favorites={favorites}
+        dataSaver={dataSaver} setDataSaver={setDataSaver}
+        suggestions={suggestions} suggestOpen={suggestOpen} setSuggestOpen={setSuggestOpen}
+        suggestLoading={suggestLoading} onSuggestionClick={onSuggestionClick}
       />
 
       {/* ====== MAIN ====== */}
@@ -777,6 +896,10 @@ const App = () => {
             }}
             onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
             isLogged={!!user}
+            dataSaver={dataSaver}
+            hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
+            suggestions={suggestions} suggestOpen={suggestOpen} setSuggestOpen={setSuggestOpen}
+            suggestLoading={suggestLoading} onSuggestionClick={onSuggestionClick}
           />
         )}
 
@@ -957,7 +1080,66 @@ const Logo = ({ size = 'md', withText = true, onDark = false }) => {
   );
 };
 
-const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites }) => {
+const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, setOpen, loading, onPick, compact = false }) => {
+  const [focused, setFocused] = useState(false);
+  const show = focused && open && (suggestions?.length > 0 || loading);
+  return (
+    <div className="relative flex-1">
+      <form onSubmit={(e) => { e.preventDefault(); setOpen(false); onSubmit(e); }}>
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Input
+          value={value}
+          onChange={(e) => { onChange(e); setOpen(true); }}
+          onFocus={() => { setFocused(true); setOpen(true); }}
+          onBlur={() => setTimeout(() => setFocused(false), 180)}
+          placeholder={placeholder}
+          className={compact ? 'pl-9 h-9' : 'pl-9 pr-20 h-10 bg-muted/40'}
+          autoComplete="off"
+        />
+        {!compact && (
+          <Button type="submit" size="sm" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
+            Buscar
+          </Button>
+        )}
+      </form>
+      {show && (
+        <div className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg overflow-hidden z-50 max-h-80 overflow-y-auto">
+          {loading && suggestions.length === 0 && (
+            <div className="p-3 text-xs text-muted-foreground flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded-full border-2 border-[#1565C0] border-t-transparent animate-spin" />
+              Buscando sugerencias…
+            </div>
+          )}
+          {suggestions.map((s, i) => (
+            <button
+              key={`${s.type}-${s.value}-${i}`}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); onPick(s); }}
+              className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex items-center justify-between gap-2 border-b last:border-b-0 border-border/40"
+            >
+              <span className="flex items-center gap-2 truncate">
+                <span className="text-xs uppercase font-semibold text-muted-foreground w-16 flex-shrink-0">
+                  {s.type === 'product' ? 'Producto' : s.type === 'business' ? 'Negocio' : 'Categoría'}
+                </span>
+                <span className="truncate">{s.label}</span>
+              </span>
+              {s.type === 'product' && s.price != null && (
+                <span className="text-xs font-bold text-[#1565C0] flex-shrink-0">
+                  {s.currency === 'USDC' ? '💎' : '🇨🇺'} {Number(s.price).toLocaleString()}
+                </span>
+              )}
+            </button>
+          ))}
+          {!loading && suggestions.length === 0 && (
+            <div className="p-3 text-xs text-muted-foreground">Sin sugerencias. Pulsa Enter para buscar.</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
   const isBuyer = user && !business;
   return (
   <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
@@ -966,18 +1148,19 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
         <Logo />
       </button>
 
-      <form onSubmit={onSearch} className="hidden md:flex flex-1 max-w-2xl mx-2 relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
+      <div className="hidden md:flex flex-1 max-w-2xl mx-2">
+        <SearchBar
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
+          onSubmit={onSearch}
           placeholder={t.searchPlaceholder}
-          className="pl-9 pr-20 h-10 bg-muted/40"
+          suggestions={suggestions}
+          open={suggestOpen}
+          setOpen={setSuggestOpen}
+          loading={suggestLoading}
+          onPick={onSuggestionClick}
         />
-        <Button type="submit" size="sm" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
-          {t.home === 'Inicio' ? 'Buscar' : 'Search'}
-        </Button>
-      </form>
+      </div>
 
       <div className="flex items-center gap-1 ml-auto">
         <Button
@@ -996,6 +1179,21 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
               {favorites.length}
             </span>
           )}
+        </Button>
+
+        {/* Data saver toggle (ahorro de datos para conexiones lentas) */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => {
+            setDataSaver(!dataSaver);
+            toast.success(dataSaver ? 'Modo ahorro de datos: OFF' : 'Modo ahorro de datos: ON', { duration: 2200 });
+          }}
+          title={dataSaver ? 'Modo ahorro de datos activado (sin imágenes)' : 'Activar modo ahorro de datos'}
+          className={dataSaver ? 'text-[#00A86B]' : ''}
+          aria-label="Ahorro de datos"
+        >
+          {dataSaver ? <Leaf className="h-5 w-5" /> : <ImageIcon className="h-5 w-5" />}
         </Button>
 
         <Button variant="ghost" size="icon" onClick={() => setDark(!dark)}>
@@ -1065,24 +1263,27 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
       </div>
     </div>
 
-    {/* Mobile search */}
-    <form onSubmit={onSearch} className="md:hidden border-t border-border px-4 py-2 bg-muted/30">
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-        <Input
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder={t.searchPlaceholder}
-          className="pl-9 h-9"
-        />
-      </div>
-    </form>
+    {/* Mobile search with autocomplete */}
+    <div className="md:hidden border-t border-border px-4 py-2 bg-muted/30">
+      <SearchBar
+        compact
+        value={searchInput}
+        onChange={(e) => setSearchInput(e.target.value)}
+        onSubmit={onSearch}
+        placeholder={t.searchPlaceholder}
+        suggestions={suggestions}
+        open={suggestOpen}
+        setOpen={setSuggestOpen}
+        loading={suggestLoading}
+        onPick={onSuggestionClick}
+      />
+    </div>
   </header>
   );
 };
 
 // ============ HOME ============
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged }) => {
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
 
   return (
@@ -1143,24 +1344,19 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 
             <div className="mt-7 max-w-2xl mx-auto">
               <div className="text-xs text-white/80 mb-2 uppercase tracking-wider font-semibold">¿Buscando algo?</div>
-              <form
-                onSubmit={(e) => { e.preventDefault(); setQuery(searchInput.trim()); }}
-                className="relative bg-white rounded-2xl shadow-2xl flex items-center p-2"
-              >
-                <Search className="ml-3 h-5 w-5 text-muted-foreground flex-shrink-0" />
-                <Input
+              <div className="relative bg-white rounded-2xl shadow-2xl p-2">
+                <SearchBar
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
+                  onSubmit={(e) => { setQuery(searchInput.trim()); }}
                   placeholder={t.searchPlaceholder}
-                  className="border-0 focus-visible:ring-0 text-foreground placeholder:text-muted-foreground/70 bg-transparent text-base"
+                  suggestions={suggestions}
+                  open={suggestOpen}
+                  setOpen={setSuggestOpen}
+                  loading={suggestLoading}
+                  onPick={onSuggestionClick}
                 />
-                <Button
-                  type="submit"
-                  className="bg-[#1565C0] hover:bg-[#0D4E9E] text-white font-semibold rounded-xl h-10 px-6"
-                >
-                  Buscar
-                </Button>
-              </form>
+              </div>
             </div>
 
             <div className="flex flex-wrap justify-center gap-6 mt-6 text-white/95 text-sm">
@@ -1242,11 +1438,35 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
             <p className="text-muted-foreground">{t.noResults}</p>
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-            {products.map((p) => (
-              <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
-            ))}
-          </div>
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
+              {products.map((p) => (
+                <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+              ))}
+            </div>
+            {hasMore && (
+              <div className="flex justify-center mt-6">
+                <Button
+                  onClick={onLoadMore}
+                  disabled={loadingMore}
+                  variant="outline"
+                  size="lg"
+                  className="min-w-48 border-[#1565C0] text-[#1565C0] hover:bg-[#1565C0] hover:text-white"
+                >
+                  {loadingMore ? (
+                    <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Cargando…</>
+                  ) : (
+                    <>Cargar más productos <ChevronRight className="h-4 w-4 ml-1" /></>
+                  )}
+                </Button>
+              </div>
+            )}
+            {!hasMore && products.length > 12 && (
+              <div className="text-center mt-6 text-xs text-muted-foreground">
+                ✅ Has visto todos los productos disponibles
+              </div>
+            )}
+          </>
         )}
       </section>
 
@@ -1319,7 +1539,19 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
     >
       <div className="relative aspect-square overflow-hidden bg-muted">
         {p.image ? (
-          <img src={p.image} alt={p.name} loading="lazy" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+          <img
+            src={p.image}
+            alt={p.name}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+        ) : p.hasImage ? (
+          // Lite/data-saver mode: image not loaded — placeholder explaining why
+          <div className="w-full h-full flex flex-col items-center justify-center text-muted-foreground/70 bg-gradient-to-br from-[#1565C0]/5 to-[#00A86B]/5">
+            <ImageOff className="h-10 w-10 mb-1" />
+            <span className="text-[10px] text-center px-2">Imagen omitida (ahorro de datos)</span>
+          </div>
         ) : (
           <div className="w-full h-full flex items-center justify-center text-muted-foreground/40">
             <ShoppingBag className="h-12 w-12" />
@@ -1407,7 +1639,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 
       <div className="grid md:grid-cols-2 gap-8">
         <div className="rounded-2xl overflow-hidden bg-card border border-border shadow-md">
-          <img src={product.image || 'https://placehold.co/600x600?text=Sin+imagen'} alt={product.name} className="w-full aspect-square object-cover" />
+          <img src={product.image || 'https://placehold.co/600x600?text=Sin+imagen'} alt={product.name} loading="eager" decoding="async" className="w-full aspect-square object-cover" />
         </div>
         <div>
           <div className="flex items-start gap-2 mb-3 flex-wrap">
@@ -1826,7 +2058,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
           {products.map((p) => (
             <Card key={p.id} className="overflow-hidden hover-lift">
               <div className="aspect-video bg-muted overflow-hidden">
-                {p.image && <img src={p.image} alt={p.name} className="w-full h-full object-cover" />}
+                {p.image && <img src={p.image} alt={p.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />}
               </div>
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-2">

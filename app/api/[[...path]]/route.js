@@ -96,6 +96,39 @@ async function sendPasswordResetEmail(toEmail, name, token) {
 
 let _client = null;
 let _connectPromise = null;
+let _indexesEnsured = false;
+async function ensureIndexes(db) {
+  if (_indexesEnsured) return;
+  try {
+    await Promise.all([
+      // Products
+      db.collection('products').createIndex({ available: 1, featured: -1, createdAt: -1 }),
+      db.collection('products').createIndex({ category: 1, createdAt: -1 }),
+      db.collection('products').createIndex({ businessId: 1, createdAt: -1 }),
+      db.collection('products').createIndex({ name: 'text', description: 'text' }, { name: 'products_text' }).catch(() => {}),
+      db.collection('products').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      // Businesses
+      db.collection('businesses').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      db.collection('businesses').createIndex({ name: 1 }),
+      db.collection('businesses').createIndex({ userId: 1 }),
+      // Users
+      db.collection('users').createIndex({ email: 1 }, { unique: true }).catch(() => {}),
+      db.collection('users').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      db.collection('users').createIndex({ resetToken: 1 }),
+      // Reviews
+      db.collection('reviews').createIndex({ productId: 1, createdAt: -1 }),
+      db.collection('reviews').createIndex({ businessId: 1, createdAt: -1 }),
+      // Payments
+      db.collection('payments').createIndex({ userId: 1, createdAt: -1 }),
+      db.collection('payments').createIndex({ status: 1, createdAt: -1 }),
+    ]);
+    _indexesEnsured = true;
+    console.log('[MongoDB] Índices creados/verificados');
+  } catch (e) {
+    console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
+  }
+}
+
 async function getDb() {
   if (!_client) {
     if (!_connectPromise) {
@@ -113,7 +146,22 @@ async function getDb() {
     }
     await _connectPromise;
   }
-  return _client.db(DB_NAME);
+  const db = _client.db(DB_NAME);
+  // Fire-and-forget index creation (idempotent)
+  if (!_indexesEnsured) ensureIndexes(db);
+  return db;
+}
+
+function jsonCached(data, status = 200, maxAge = 60) {
+  return NextResponse.json(data, {
+    status,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+      'Cache-Control': `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`,
+    },
+  });
 }
 
 const CATEGORIES = [
@@ -212,7 +260,8 @@ async function route(request, method, path) {
 
   // Categories
   if (path[0] === 'categories' && method === 'GET') {
-    return json({ categories: CATEGORIES });
+    // Categories are static — cache aggressively for 1 hour
+    return jsonCached({ categories: CATEGORIES }, 200, 3600);
   }
 
   // Stats
@@ -220,7 +269,8 @@ async function route(request, method, path) {
     const productsCount = await db.collection('products').countDocuments();
     const businessesCount = await db.collection('businesses').countDocuments();
     const usersCount = await db.collection('users').countDocuments();
-    return json({ productsCount, businessesCount, usersCount });
+    // Stats change slowly — cache 2 min
+    return jsonCached({ productsCount, businessesCount, usersCount }, 200, 120);
   }
 
   // ===== AUTH =====
@@ -392,6 +442,43 @@ async function route(request, method, path) {
   }
 
   // ===== PRODUCTS =====
+  // ===== SEARCH SUGGESTIONS (autocompletado) =====
+  if (path[0] === 'search' && path[1] === 'suggest' && method === 'GET') {
+    const q = (url.searchParams.get('q') || '').trim();
+    if (q.length < 2) return jsonCached({ suggestions: [] }, 200, 60);
+    const limit = 6;
+    const regex = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+    // Run all 3 lookups in parallel (categories first since it's just an in-memory filter)
+    const matchedCategories = CATEGORIES
+      .filter((c) => regex.test(c.name))
+      .slice(0, 3)
+      .map((c) => ({ type: 'category', label: `${c.icon} ${c.name}`, value: c.id }));
+
+    const [products, businesses] = await Promise.all([
+      db.collection('products')
+        .find(
+          { available: true, $and: [{ $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] }], name: { $regex: regex } },
+          { projection: { id: 1, name: 1, price: 1, currency: 1, category: 1 } }
+        )
+        .limit(limit)
+        .toArray(),
+      db.collection('businesses')
+        .find({ name: { $regex: regex } }, { projection: { id: 1, name: 1 } })
+        .limit(3)
+        .toArray(),
+    ]);
+
+    const suggestions = [
+      ...matchedCategories,
+      ...products.map((p) => ({ type: 'product', label: p.name, value: p.id, price: p.price, currency: p.currency, category: p.category })),
+      ...businesses.map((b) => ({ type: 'business', label: `🏪 ${b.name}`, value: b.id })),
+    ].slice(0, 10);
+
+    // 5 min cache: suggestions don't change often
+    return jsonCached({ suggestions }, 200, 300);
+  }
+
   if (path[0] === 'products') {
     if (!path[1] && method === 'GET') {
       const q = url.searchParams.get('q') || '';
@@ -403,6 +490,12 @@ async function route(request, method, path) {
       const priceMin = url.searchParams.get('priceMin');
       const priceMax = url.searchParams.get('priceMax');
       const since = url.searchParams.get('since'); // ISO date string
+
+      // Pagination (Cuba/100K opt): default smaller page, support page/limit
+      const lite = url.searchParams.get('lite') === 'true';
+      const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+      const limit = Math.min(60, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10)));
+      const skip = (page - 1) * limit;
 
       const filter = { available: true };
       // Smart stock: hide products with stock === 0 from public marketplace
@@ -424,13 +517,32 @@ async function route(request, method, path) {
       }
       if (since) filter.createdAt = { $gte: since };
 
-      const items = await db.collection('products').find(filter).sort({ featured: -1, createdAt: -1 }).limit(60).toArray();
-      // attach business info
+      // In lite mode, project out the heavy `image` field (huge base64) to drastically reduce payload size for Cuban connections
+      const projection = lite ? { image: 0 } : {};
+
+      const cursor = db.collection('products').find(filter, { projection }).sort({ featured: -1, createdAt: -1 }).skip(skip).limit(limit);
+      const [items, total] = await Promise.all([
+        cursor.toArray(),
+        db.collection('products').countDocuments(filter),
+      ]);
+      // attach business info (slim)
       const bizIds = [...new Set(items.map((p) => p.businessId))];
-      const businesses = await db.collection('businesses').find({ id: { $in: bizIds } }).toArray();
-      const bizMap = Object.fromEntries(businesses.map((b) => [b.id, b]));
-      const enriched = items.map((p) => ({ ...p, business: bizMap[p.businessId] || null }));
-      return json({ products: enriched });
+      const businesses = bizIds.length
+        ? await db.collection('businesses')
+            .find({ id: { $in: bizIds } })
+            .toArray()
+        : [];
+      const bizMap = Object.fromEntries(businesses.map((b) => {
+        if (lite) {
+          // Strip heavy logo (base64) in lite mode for Cuban connections
+          const { logo, ...rest } = b;
+          return [b.id, { ...rest, hasLogo: !!logo }];
+        }
+        return [b.id, b];
+      }));
+      const enriched = items.map((p) => ({ ...p, hasImage: !!p.image || lite, business: bizMap[p.businessId] || null }));
+      // Light cache (30s) so repeat scrolls reuse the response
+      return jsonCached({ products: enriched, total, page, limit, hasMore: skip + items.length < total }, 200, 30);
     }
 
     if (path[1] && method === 'GET') {
@@ -605,6 +717,7 @@ async function route(request, method, path) {
       businessId: businessesSeed[p.biz].id,
       name: p.name,
       price: p.price,
+      currency: 'CUP',
       description: p.description,
       category: p.category,
       stock: p.stock,
@@ -621,7 +734,7 @@ async function route(request, method, path) {
   // ===== SETTINGS (public) =====
   if (path[0] === 'settings' && method === 'GET') {
     const s = await getSettings(db);
-    return json({
+    return jsonCached({
       usdcWallet: s.usdcWallet,
       usdcNetwork: s.usdcNetwork,
       transfermovilNumber: s.transfermovilNumber,
@@ -629,7 +742,7 @@ async function route(request, method, path) {
       premiumPriceUSD: s.premiumPriceUSD,
       contactPhone: s.contactPhone || '+5359195051',
       contactEmail: s.contactEmail || 'UBIK2YEMG@gmail.com',
-    });
+    }, 200, 300);
   }
 
   // ===== REPORTS (anti-spam) =====

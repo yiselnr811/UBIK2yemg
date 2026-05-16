@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
 import { Resend } from 'resend';
+import { v2 as cloudinary } from 'cloudinary';
 
 const MONGO_URL = process.env.MONGO_URL;
 const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
@@ -12,6 +13,34 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || 'UBIK2 YEMG';
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+
+const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
+const CLOUDINARY_API_SECRET = process.env.CLOUDINARY_API_SECRET;
+const CLOUDINARY_ENABLED = !!(CLOUDINARY_CLOUD_NAME && CLOUDINARY_API_KEY && CLOUDINARY_API_SECRET);
+if (CLOUDINARY_ENABLED) {
+  cloudinary.config({
+    cloud_name: CLOUDINARY_CLOUD_NAME,
+    api_key: CLOUDINARY_API_KEY,
+    api_secret: CLOUDINARY_API_SECRET,
+    secure: true,
+  });
+}
+
+// Upload base64/data-URL or raw URL to Cloudinary; return secure URL.
+// folder: 'products' or 'logos'
+async function uploadToCloudinary(dataUrlOrUrl, folder = 'products') {
+  if (!CLOUDINARY_ENABLED) throw new Error('Cloudinary no configurado');
+  if (!dataUrlOrUrl || typeof dataUrlOrUrl !== 'string') throw new Error('Imagen vacía');
+  // If it's already a Cloudinary URL, return as is
+  if (dataUrlOrUrl.includes('res.cloudinary.com')) return dataUrlOrUrl;
+  const result = await cloudinary.uploader.upload(dataUrlOrUrl, {
+    folder: `ubik2-yemg/${folder}`,
+    resource_type: 'image',
+    transformation: [{ quality: 'auto:good', fetch_format: 'auto' }],
+  });
+  return result.secure_url;
+}
 
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
@@ -292,12 +321,18 @@ async function route(request, method, path) {
       let businessId = null;
       let business = null;
       if (type === 'seller') {
+        // Cloudinary auto-upload for business logo if base64
+        let finalLogo = logo || '';
+        if (finalLogo && finalLogo.startsWith('data:') && CLOUDINARY_ENABLED) {
+          try { finalLogo = await uploadToCloudinary(finalLogo, 'logos'); }
+          catch (e) { console.error('[Cloudinary] logo upload failed:', e?.message || e); }
+        }
         businessId = uuidv4();
         business = {
           id: businessId,
           userId,
           name: businessName,
-          logo: logo || '',
+          logo: finalLogo,
           description: description || '',
           whatsapp,
           telegram: body.telegram || '',
@@ -358,11 +393,17 @@ async function route(request, method, path) {
       const body = await request.json();
       const { businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook } = body || {};
       if (!businessName || !whatsapp) return json({ error: 'Nombre del negocio y WhatsApp requeridos' }, 400);
+      // Cloudinary auto-upload for business logo if base64
+      let finalLogo = logo || '';
+      if (finalLogo && finalLogo.startsWith('data:') && CLOUDINARY_ENABLED) {
+        try { finalLogo = await uploadToCloudinary(finalLogo, 'logos'); }
+        catch (e) { console.error('[Cloudinary] logo upload failed:', e?.message || e); }
+      }
       const businessId = uuidv4();
       const now = new Date().toISOString();
       const business = {
         id: businessId, userId: user.id,
-        name: businessName, logo: logo || '', description: description || '',
+        name: businessName, logo: finalLogo, description: description || '',
         whatsapp, telegram: telegram || '', sms: sms || whatsapp || '',
         location: location || '', instagram: instagram || '', facebook: facebook || '',
         verified: false, createdAt: now,
@@ -435,6 +476,11 @@ async function route(request, method, path) {
       const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+      // Cloudinary auto-upload for logo if base64
+      if (update.logo && typeof update.logo === 'string' && update.logo.startsWith('data:') && CLOUDINARY_ENABLED) {
+        try { update.logo = await uploadToCloudinary(update.logo, 'logos'); }
+        catch (e) { console.error('[Cloudinary] logo edit upload failed:', e?.message || e); }
+      }
       await db.collection('businesses').updateOne({ id: path[1] }, { $set: update });
       const updated = await db.collection('businesses').findOne({ id: path[1] });
       return json({ business: updated });
@@ -565,6 +611,18 @@ async function route(request, method, path) {
         return json({ error: 'Límite del plan Básico (10 productos) alcanzado. Actualiza a Premium.' }, 403);
       }
       const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId }, { projection: { location: 1 } });
+
+      // Cloudinary auto-upload: if `image` is a base64 data URL, upload it and store the URL instead
+      let finalImage = image || '';
+      if (finalImage && finalImage.startsWith('data:') && CLOUDINARY_ENABLED) {
+        try {
+          finalImage = await uploadToCloudinary(finalImage, 'products');
+        } catch (e) {
+          console.error('[Cloudinary] product upload failed:', e?.message || e);
+          // Fallback: keep the base64 to not break UX
+        }
+      }
+
       const product = {
         id: uuidv4(),
         businessId: user.businessId,
@@ -574,7 +632,7 @@ async function route(request, method, path) {
         description: description || '',
         category,
         stock: stock != null ? Number(stock) : 0,
-        image: image || '',
+        image: finalImage,
         location: location || businessForLoc?.location || '',
         available: available !== false,
         featured: isPremium ? !!featured : false,
@@ -599,6 +657,14 @@ async function route(request, method, path) {
       if (update.stock != null) update.stock = Number(update.stock);
       if (update.currency) update.currency = update.currency === 'USDC' ? 'USDC' : 'CUP';
       if (update.featured && user.plan !== 'premium' && user.role !== 'admin') update.featured = false;
+      // Cloudinary auto-upload on edit too
+      if (update.image && typeof update.image === 'string' && update.image.startsWith('data:') && CLOUDINARY_ENABLED) {
+        try {
+          update.image = await uploadToCloudinary(update.image, 'products');
+        } catch (e) {
+          console.error('[Cloudinary] product edit upload failed:', e?.message || e);
+        }
+      }
       await db.collection('products').updateOne({ id: path[1] }, { $set: update });
       const updated = await db.collection('products').findOne({ id: path[1] });
       return json({ product: updated });

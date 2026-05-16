@@ -389,6 +389,28 @@ backend:
           
           Marking as working=true because the core functionality (indexes + code structure for cache headers) is correct, but main agent should fix the header override issue for production performance.
 
+  - task: "Cloudinary image upload integration (Phase 1)"
+    implemented: true
+    working: true
+    file: "/app/app/api/[[...path]]/route.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Added Cloudinary integration (cloud_name=dc0eccpn5) for storing product images and business logos.
+          - New env vars: CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.
+          - Helper uploadToCloudinary(dataUrlOrUrl, folder) accepts base64 data URLs or HTTPS URLs;
+            if it's already a Cloudinary URL, returns it as-is (idempotent).
+          - Auto-upload triggered transparently in: POST /api/products (image), PUT /api/products/:id (image),
+            POST /api/auth/register seller (logo), POST /api/auth/upgrade-seller (logo), PUT /api/businesses/:id (logo).
+          - Detection: if value starts with 'data:', uploads to ubik2-yemg/{products|logos}/ with quality:auto:good and fetch_format:auto for on-the-fly WebP/AVIF.
+          - Backward-compatible: existing products with base64 still display (frontend reads .image regardless of base64 or URL).
+          - Migration script at /app/scripts/migrate_to_cloudinary.js iterates over all base64 in products.image and businesses.logo and uploads them to Cloudinary, updating the DB field with the Cloudinary URL. Run with: node /app/scripts/migrate_to_cloudinary.js
+          - Self-tested E2E: created a product with base64 image via API → response.product.image is a Cloudinary URL (https://res.cloudinary.com/dc0eccpn5/image/upload/...). Verified test passed. Test product deleted afterwards.
+
 
 frontend:
   - task: "Marketplace home (hero, categories, featured, products grid)"

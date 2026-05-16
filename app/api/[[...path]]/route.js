@@ -660,25 +660,66 @@ async function route(request, method, path) {
 
   // ===== SEED =====
   if (path[0] === 'seed' && method === 'POST') {
-    // safe to call multiple times - only seeds when empty
+    // safe to call multiple times - only seeds products when empty, but ALWAYS reconciles admin
     const existing = await db.collection('products').countDocuments();
     // ensure settings + admin user exist regardless
     await getSettings(db);
-    let adminExists = await db.collection('users').findOne({ email: 'admin@ubik2.com' });
-    if (!adminExists) {
-      const adminId = uuidv4();
-      const adminBizId = uuidv4();
-      await db.collection('businesses').insertOne({
-        id: adminBizId, userId: adminId, name: 'UBIK2 YEMG Admin', logo: '', description: 'Administración',
-        whatsapp: '+5350000000', location: 'Cuba', instagram: '', facebook: '', createdAt: new Date().toISOString(),
-      });
-      await db.collection('users').insertOne({
-        id: adminId, email: 'admin@ubik2.com', password: await bcrypt.hash('Administra2r.1279', 10),
-        role: 'admin', businessId: adminBizId, plan: 'premium', planExpiresAt: null,
-        createdAt: new Date().toISOString(),
-      });
+
+    // === Admin reconciliation (idempotent) ===
+    // Target: yiselnr811@gmail.com with password Administra2r.1279
+    const ADMIN_EMAIL = 'yiselnr811@gmail.com';
+    const ADMIN_PASSWORD = 'Administra2r.1279';
+    const ADMIN_NAME = 'Administrador UBIK2 YEMG';
+
+    const newHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
+    let adminReconciled = 'none';
+
+    // 1) If the old admin email exists, migrate it to the new one + reset password
+    const oldAdmin = await db.collection('users').findOne({ email: 'admin@ubik2.com' });
+    if (oldAdmin) {
+      // Check if new email already taken by another doc to avoid conflict
+      const conflicting = await db.collection('users').findOne({ email: ADMIN_EMAIL });
+      if (conflicting && conflicting.id !== oldAdmin.id) {
+        // Delete the conflicting doc (and its businesses/products) to allow renaming
+        if (conflicting.businessId) {
+          await db.collection('businesses').deleteOne({ id: conflicting.businessId });
+          await db.collection('products').deleteMany({ businessId: conflicting.businessId });
+        }
+        await db.collection('users').deleteOne({ id: conflicting.id });
+      }
+      await db.collection('users').updateOne(
+        { id: oldAdmin.id },
+        { $set: { email: ADMIN_EMAIL, password: newHash, role: 'admin', name: oldAdmin.name || ADMIN_NAME, suspended: false } }
+      );
+      adminReconciled = 'migrated';
+    } else {
+      // 2) Otherwise, look for existing user with the new email
+      const existingNew = await db.collection('users').findOne({ email: ADMIN_EMAIL });
+      if (existingNew) {
+        // Reset password + ensure admin role
+        await db.collection('users').updateOne(
+          { id: existingNew.id },
+          { $set: { password: newHash, role: 'admin', suspended: false } }
+        );
+        adminReconciled = 'password-reset';
+      } else {
+        // 3) Create from scratch
+        const adminId = uuidv4();
+        const adminBizId = uuidv4();
+        await db.collection('businesses').insertOne({
+          id: adminBizId, userId: adminId, name: 'UBIK2 YEMG Admin', logo: '', description: 'Administración',
+          whatsapp: '+5350000000', location: 'Cuba', instagram: '', facebook: '', createdAt: new Date().toISOString(),
+        });
+        await db.collection('users').insertOne({
+          id: adminId, email: ADMIN_EMAIL, password: newHash, name: ADMIN_NAME,
+          role: 'admin', businessId: adminBizId, plan: 'premium', planExpiresAt: null,
+          createdAt: new Date().toISOString(),
+        });
+        adminReconciled = 'created';
+      }
     }
-    if (existing > 0) return json({ message: 'Ya hay datos cargados', count: existing, adminCreated: !adminExists });
+
+    if (existing > 0) return json({ message: 'Ya hay datos cargados', count: existing, adminReconciled });
 
     const businessesSeed = [
       { name: 'Sabores de La Habana', logo: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=200&q=80', description: 'Comida tradicional cubana hecha con amor', whatsapp: '+5355512345', location: 'La Habana, Cuba', instagram: '@sabores_habana' },

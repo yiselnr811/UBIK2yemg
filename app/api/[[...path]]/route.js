@@ -308,6 +308,9 @@ async function route(request, method, path) {
       const since = url.searchParams.get('since'); // ISO date string
 
       const filter = { available: true };
+      // Smart stock: hide products with stock === 0 from public marketplace
+      // (sellers still see them in their dashboard via /my/products)
+      filter.$and = [{ $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] }];
       if (q) filter.$or = [
         { name: { $regex: q, $options: 'i' } },
         { description: { $regex: q, $options: 'i' } },
@@ -739,6 +742,70 @@ async function route(request, method, path) {
       await db.collection('products').deleteOne({ id: path[2] });
       return json({ ok: true });
     }
+  }
+
+  // ===== REVIEWS / RATINGS =====
+  if (path[0] === 'reviews') {
+    if (method === 'POST') {
+      const { user, error } = await requireUser(request);
+      if (error) return error;
+      const body = await request.json();
+      const { productId, businessId, rating, comment } = body || {};
+      if (!productId && !businessId) return json({ error: 'productId o businessId requerido' }, 400);
+      const r = Number(rating);
+      if (!r || r < 1 || r > 5) return json({ error: 'Rating debe ser 1-5' }, 400);
+      // Prevent duplicate review by same user for same target
+      const existing = await db.collection('reviews').findOne({
+        userId: user.id,
+        ...(productId ? { productId } : { businessId }),
+      });
+      const data = {
+        rating: r,
+        comment: (comment || '').slice(0, 500),
+        updatedAt: new Date().toISOString(),
+      };
+      if (existing) {
+        await db.collection('reviews').updateOne({ id: existing.id }, { $set: data });
+        return json({ review: { ...existing, ...data }, message: 'Reseña actualizada' });
+      }
+      const review = {
+        id: uuidv4(),
+        productId: productId || null,
+        businessId: businessId || null,
+        userId: user.id,
+        userName: user.name || user.email.split('@')[0],
+        ...data,
+        status: 'visible',
+        createdAt: new Date().toISOString(),
+      };
+      await db.collection('reviews').insertOne(review);
+      return json({ review, message: 'Reseña publicada' });
+    }
+    if (method === 'GET') {
+      const productId = url.searchParams.get('productId');
+      const businessId = url.searchParams.get('businessId');
+      const filter = { status: 'visible' };
+      if (productId) filter.productId = productId;
+      else if (businessId) filter.businessId = businessId;
+      else return json({ error: 'productId o businessId requerido' }, 400);
+      const items = await db.collection('reviews').find(filter).sort({ createdAt: -1 }).limit(100).toArray();
+      const avg = items.length ? items.reduce((s, r) => s + r.rating, 0) / items.length : 0;
+      return json({ reviews: items, average: Math.round(avg * 10) / 10, count: items.length });
+    }
+  }
+
+  // ===== ADMIN REVIEWS =====
+  if (path[0] === 'admin' && path[1] === 'reviews' && method === 'GET') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+    const items = await db.collection('reviews').find({}).sort({ createdAt: -1 }).limit(200).toArray();
+    return json({ reviews: items });
+  }
+  if (path[0] === 'admin' && path[1] === 'reviews' && path[2] && method === 'DELETE') {
+    const { error } = await requireAdmin(request);
+    if (error) return error;
+    await db.collection('reviews').deleteOne({ id: path[2] });
+    return json({ ok: true });
   }
 
   return json({ error: 'Ruta no encontrada' }, 404);

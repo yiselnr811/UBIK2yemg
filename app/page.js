@@ -767,6 +767,8 @@ const App = () => {
             t={t} product={detail} onBack={() => setView('home')}
             onBusiness={openBusiness} favorites={favorites} toggleFav={toggleFav}
             onShare={shareProduct} onReport={openReport}
+            token={token} isLogged={!!user}
+            onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
           />
         )}
 
@@ -774,6 +776,8 @@ const App = () => {
           <BusinessDetail
             t={t} data={bizDetail} onBack={() => setView('home')} onProduct={openProduct}
             favorites={favorites} toggleFav={toggleFav}
+            token={token} isLogged={!!user}
+            onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
           />
         )}
 
@@ -1366,7 +1370,7 @@ const ProductGridSkeleton = () => (
 );
 
 // ============ PRODUCT DETAIL ============
-const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport }) => {
+const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded }) => {
   if (!product) {
     return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   }
@@ -1466,12 +1470,15 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
           )}
         </div>
       </div>
+
+      {/* Reviews section - full width */}
+      <Reviews productId={product.id} token={token} isLogged={isLogged} onLoginNeeded={onLoginNeeded} />
     </section>
   );
 };
 
 // ============ BUSINESS DETAIL ============
-const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav }) => {
+const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, token, isLogged, onLoginNeeded }) => {
   if (!data) return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   const { business, products } = data;
   const wa = (business.whatsapp || '').replace(/[^0-9+]/g, '').replace('+', '');
@@ -1521,6 +1528,9 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav }) =>
           ))}
         </div>
       )}
+
+      {/* Business reviews */}
+      <Reviews businessId={business.id} token={token} isLogged={isLogged} onLoginNeeded={onLoginNeeded} />
     </section>
   );
 };
@@ -1553,6 +1563,120 @@ const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport }
         </div>
       )}
     </section>
+  );
+};
+
+// ============ REVIEWS ============
+const StarRating = ({ value, onChange, size = 'md' }) => {
+  const sizes = { sm: 'h-3.5 w-3.5', md: 'h-5 w-5', lg: 'h-6 w-6' };
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          disabled={!onChange}
+          onClick={() => onChange?.(n)}
+          className={onChange ? 'cursor-pointer hover:scale-110 transition' : 'cursor-default'}
+        >
+          <Star
+            className={`${sizes[size]} ${n <= value ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/30'}`}
+          />
+        </button>
+      ))}
+    </div>
+  );
+};
+
+const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
+  const [data, setData] = useState({ reviews: [], average: 0, count: 0 });
+  const [loading, setLoading] = useState(true);
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    const q = productId ? `productId=${productId}` : `businessId=${businessId}`;
+    api(`/reviews?${q}`)
+      .then((d) => setData(d))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [productId, businessId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!isLogged) return onLoginNeeded?.();
+    if (rating < 1) return toast.error('Selecciona una calificación');
+    setSubmitting(true);
+    try {
+      await api('/reviews', { method: 'POST', token, body: { productId, businessId, rating, comment } });
+      toast.success('¡Gracias por tu reseña!');
+      setRating(0); setComment('');
+      load();
+    } catch (err) { toast.error(err.message); }
+    finally { setSubmitting(false); }
+  };
+
+  return (
+    <div className="mt-8 rounded-2xl border border-border bg-card p-5 md:p-6">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
+        <h3 className="text-xl font-bold flex items-center gap-2">
+          <Star className="h-5 w-5 fill-amber-400 text-amber-400" />
+          Reseñas
+        </h3>
+        {data.count > 0 && (
+          <div className="flex items-center gap-2">
+            <StarRating value={Math.round(data.average)} />
+            <span className="text-sm font-bold">{data.average.toFixed(1)}</span>
+            <span className="text-xs text-muted-foreground">· {data.count} reseña{data.count !== 1 ? 's' : ''}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Add review form */}
+      <form onSubmit={submit} className="space-y-2 mb-5 p-4 rounded-xl bg-muted/40">
+        <Label className="text-xs">Tu calificación</Label>
+        <StarRating value={rating} onChange={setRating} size="lg" />
+        <Textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Cuéntanos tu experiencia (opcional, máx 500 caracteres)"
+          rows={2}
+          maxLength={500}
+          className="bg-card"
+        />
+        <Button type="submit" size="sm" disabled={submitting} className="brand-gradient text-white">
+          {submitting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Star className="h-4 w-4 mr-1" />}
+          {isLogged ? 'Publicar reseña' : 'Inicia sesión para reseñar'}
+        </Button>
+      </form>
+
+      {/* Reviews list */}
+      {loading ? (
+        <div className="flex justify-center py-6"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : data.reviews.length === 0 ? (
+        <p className="text-sm text-muted-foreground text-center py-4">Sé el primero en dejar una reseña.</p>
+      ) : (
+        <div className="space-y-3">
+          {data.reviews.map((r) => (
+            <div key={r.id} className="border-b border-border last:border-0 pb-3 last:pb-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="h-8 w-8 rounded-full brand-gradient flex items-center justify-center text-white text-xs font-bold">
+                  {r.userName?.[0]?.toUpperCase() || '?'}
+                </div>
+                <span className="font-semibold text-sm">{r.userName}</span>
+                <StarRating value={r.rating} size="sm" />
+                <span className="text-[10px] text-muted-foreground ml-auto">{timeAgo(r.createdAt)}</span>
+              </div>
+              {r.comment && <p className="text-sm mt-2 ml-10 text-foreground/90">{r.comment}</p>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 };
 

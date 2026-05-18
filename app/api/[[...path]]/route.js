@@ -532,6 +532,7 @@ async function route(request, method, path) {
       const featured = url.searchParams.get('featured');
       const excludeFeatured = url.searchParams.get('excludeFeatured') === 'true';
       const businessId = url.searchParams.get('businessId') || '';
+      const businessName = url.searchParams.get('businessName') || '';
       const location = url.searchParams.get('location') || '';
       const priceMin = url.searchParams.get('priceMin');
       const priceMax = url.searchParams.get('priceMax');
@@ -555,6 +556,20 @@ async function route(request, method, path) {
       if (featured === 'true') filter.featured = true;
       if (excludeFeatured) filter.featured = { $ne: true };
       if (businessId) filter.businessId = businessId;
+      // Filter by business name (regex on businesses, then narrow by businessId)
+      if (businessName) {
+        const matchingBiz = await db.collection('businesses')
+          .find({ name: { $regex: businessName, $options: 'i' } }, { projection: { id: 1 } })
+          .limit(50)
+          .toArray();
+        const ids = matchingBiz.map((b) => b.id);
+        if (ids.length === 0) {
+          return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 30);
+        }
+        filter.businessId = filter.businessId
+          ? (ids.includes(filter.businessId) ? filter.businessId : '__no_match__')
+          : { $in: ids };
+      }
       if (location) filter.location = { $regex: location, $options: 'i' };
       if (priceMin || priceMax) {
         filter.price = {};
@@ -847,6 +862,8 @@ async function route(request, method, path) {
       transfermovilNumber: s.transfermovilNumber,
       transfermovilName: s.transfermovilName,
       premiumPriceUSD: s.premiumPriceUSD,
+      premiumPriceCUP: s.premiumPriceCUP || 0,
+      plansEnabled: s.plansEnabled !== false,
       contactPhone: s.contactPhone || '+5359195051',
       contactEmail: s.contactEmail || 'UBIK2YEMG@gmail.com',
     }, 200, 300);

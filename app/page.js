@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -342,7 +342,7 @@ const App = () => {
   const [query, setQuery] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [category, setCategory] = useState('');
-  const [filters, setFilters] = useState({ location: '', priceMin: '', priceMax: '', since: '' });
+  const [filters, setFilters] = useState({ location: '', businessName: '', priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
   const [loading, setLoading] = useState(false);
 
   // === Cuba/100K optimizations ===
@@ -446,19 +446,41 @@ const App = () => {
     localStorage.setItem('ubik2_lang', lang);
   }, [lang]);
 
-  // === Detect ?reset_token=... from password recovery email ===
+  // === Detect query params from shared links / email recovery ===
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
       const params = new URLSearchParams(window.location.search);
       const rt = params.get('reset_token');
+      const sharedProductId = params.get('product');
+      const sharedBusinessId = params.get('business');
+      let cleaned = false;
+
       if (rt) {
         setForgotData((f) => ({ ...f, token: rt, newPassword: '' }));
         setForgotStep(2);
         setForgotOpen(true);
-        // Clean URL so refreshing doesn't re-open the dialog
+        cleaned = true;
+      }
+      if (sharedProductId) {
+        setProductId(sharedProductId);
+        setView('product');
+        setDetail(null);
+        api(`/products/${sharedProductId}`).then((d) => setDetail(d.product)).catch(() => {});
+        cleaned = true;
+      } else if (sharedBusinessId) {
+        setBusinessId(sharedBusinessId);
+        setView('business');
+        setBizDetail(null);
+        api(`/businesses/${sharedBusinessId}`).then((d) => setBizDetail(d)).catch(() => {});
+        cleaned = true;
+      }
+
+      if (cleaned) {
         const url = new URL(window.location.href);
         url.searchParams.delete('reset_token');
+        url.searchParams.delete('product');
+        url.searchParams.delete('business');
         window.history.replaceState({}, '', url.pathname + (url.search || '') + url.hash);
       }
     } catch {}
@@ -488,9 +510,11 @@ const App = () => {
     if (query) params.set('q', query);
     if (category) params.set('category', category);
     if (filters.location) params.set('location', filters.location);
+    if (filters.businessName) params.set('businessName', filters.businessName);
     if (filters.priceMin) params.set('priceMin', filters.priceMin);
     if (filters.priceMax) params.set('priceMax', filters.priceMax);
     if (filters.since) params.set('since', filters.since);
+    if (filters.featuredOnly) params.set('featured', 'true');
     // Data saver mode: ask backend to skip heavy base64 images
     if (dataSaver) params.set('lite', 'true');
     params.set('limit', String(PAGE_SIZE));
@@ -556,19 +580,18 @@ const App = () => {
 
   const onSuggestionClick = useCallback((s) => {
     setSuggestOpen(false);
+    setSearchInput('');
     if (s.type === 'category') {
       setCategory(s.value);
       setQuery('');
-      setSearchInput('');
       setView('home');
     } else if (s.type === 'product') {
-      setProductId(s.value);
-      setView('product');
-      setSearchInput('');
+      // Fetch product detail like openProduct does (was the bug)
+      setProductId(s.value); setView('product'); setDetail(null);
+      api(`/products/${s.value}`).then((d) => setDetail(d.product)).catch((e) => toast.error(e.message));
     } else if (s.type === 'business') {
-      setBusinessId(s.value);
-      setView('business');
-      setSearchInput('');
+      setBusinessId(s.value); setView('business'); setBizDetail(null);
+      api(`/businesses/${s.value}`).then((d) => setBizDetail(d)).catch((e) => toast.error(e.message));
     }
   }, []);
 
@@ -640,7 +663,8 @@ const App = () => {
 
   // === Share ===
   const shareProduct = async (p) => {
-    const url = `${window.location.origin}/?p=${p.id}`;
+    // SEO-friendly URL — server-rendered with OpenGraph metadata so WhatsApp/FB preview shows the product image+price.
+    const url = `${window.location.origin}/product/${p.id}`;
     const text = `${p.name} — ${formatPrice(p.price, p.currency)}`;
     if (navigator.share) {
       try { await navigator.share({ title: p.name, text, url }); return; } catch {}
@@ -801,13 +825,19 @@ const App = () => {
   };
 
   // === Admin ===
+  const [adminLoading, setAdminLoading] = useState(false);
+  const adminLoadingRef = React.useRef(false);
   const loadAdmin = useCallback(async () => {
     if (!token || user?.role !== 'admin') return;
+    // Guard: prevent overlapping/duplicate calls (anti-freeze)
+    if (adminLoadingRef.current) return;
+    adminLoadingRef.current = true;
+    setAdminLoading(true);
     try {
       const [pays, usrs, prods, st, settingsRes, reps] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
-        api('/admin/products', { token }),
+        api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
         api('/admin/stats', { token }),
         api('/admin/settings', { token }),
         api('/admin/reports', { token }).catch(() => ({ reports: [] })),
@@ -817,27 +847,53 @@ const App = () => {
         products: prods.products || [], stats: st, reports: reps.reports || [],
       });
       setAdminSettings(settingsRes.settings);
+      // Keep global stats in sync with admin stats so home shows latest counters too
+      if (st) setStats({
+        productsCount: st.products ?? st.productsCount,
+        businessesCount: st.businesses ?? st.businessesCount,
+        usersCount: st.users ?? st.usersCount,
+      });
     } catch (err) { toast.error(err.message); }
+    finally { adminLoadingRef.current = false; setAdminLoading(false); }
   }, [token, user]);
   useEffect(() => { if (view === 'admin') loadAdmin(); }, [view, loadAdmin]);
 
   const approvePayment = async (id) => { try { await api(`/admin/payments/${id}/approve`, { method: 'POST', token }); toast.success('Aprobado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const rejectPayment = async (id) => { const r = prompt('Motivo') || ''; try { await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason: r } }); toast.success('Rechazado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
-  const adminUpdateUser = async (id, patch) => { try { await api(`/admin/users/${id}`, { method: 'PUT', token, body: patch }); toast.success('Actualizado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
-  const adminDeleteProduct = async (id) => { if (!confirm('¿Eliminar?')) return; try { await api(`/admin/products/${id}`, { method: 'DELETE', token }); toast.success('Eliminado'); loadAdmin(); refreshHome(); } catch (e) { toast.error(e.message); } };
+  // Optimistic UI: update local state immediately, then sync from server. Prevents UI freeze when changing plan.
+  const adminUpdateUser = async (id, patch) => {
+    setAdminData((d) => ({ ...d, users: (d.users || []).map((u) => u.id === id ? { ...u, ...patch } : u) }));
+    try { await api(`/admin/users/${id}`, { method: 'PUT', token, body: patch }); toast.success('Actualizado'); loadAdmin(); }
+    catch (e) { toast.error(e.message); loadAdmin(); }
+  };
+  const adminDeleteProduct = async (id) => {
+    if (!confirm('¿Eliminar?')) return;
+    setAdminData((d) => ({ ...d, products: (d.products || []).filter((p) => p.id !== id), stats: d.stats ? { ...d.stats, products: Math.max(0, (d.stats.products ?? 1) - 1) } : d.stats }));
+    setStats((s) => ({ ...s, productsCount: Math.max(0, (s?.productsCount ?? 1) - 1) }));
+    try { await api(`/admin/products/${id}`, { method: 'DELETE', token }); toast.success('Eliminado'); loadAdmin(); refreshHome(); }
+    catch (e) { toast.error(e.message); loadAdmin(); }
+  };
   const adminDeleteUser = async (id, email) => {
     if (!confirm(`⚠️ Eliminar usuario ${email} y TODOS sus datos (negocio, productos, pagos)? Esta acción no se puede deshacer.`)) return;
+    setAdminData((d) => ({ ...d, users: (d.users || []).filter((u) => u.id !== id) }));
+    setStats((s) => ({ ...s, usersCount: Math.max(0, (s?.usersCount ?? 1) - 1) }));
     try { await api(`/admin/users/${id}`, { method: 'DELETE', token }); toast.success('Usuario eliminado'); loadAdmin(); refreshHome(); }
-    catch (e) { toast.error(e.message); }
+    catch (e) { toast.error(e.message); loadAdmin(); }
   };
   const adminUpdateBusiness = async (id, patch) => {
+    setAdminData((d) => ({
+      ...d,
+      users: (d.users || []).map((u) => u.business?.id === id ? { ...u, business: { ...u.business, ...patch } } : u),
+    }));
     try { await api(`/admin/businesses/${id}`, { method: 'PUT', token, body: patch }); toast.success('Negocio actualizado'); loadAdmin(); refreshHome(); }
-    catch (e) { toast.error(e.message); }
+    catch (e) { toast.error(e.message); loadAdmin(); }
   };
   const adminDeleteBusiness = async (id, name) => {
     if (!confirm(`Eliminar el negocio "${name}" y todos sus productos? El usuario se convertirá en comprador.`)) return;
+    setAdminData((d) => ({ ...d, users: (d.users || []).map((u) => u.business?.id === id ? { ...u, business: null } : u) }));
+    setStats((s) => ({ ...s, businessesCount: Math.max(0, (s?.businessesCount ?? 1) - 1) }));
     try { await api(`/admin/businesses/${id}`, { method: 'DELETE', token }); toast.success('Negocio eliminado'); loadAdmin(); refreshHome(); }
-    catch (e) { toast.error(e.message); }
+    catch (e) { toast.error(e.message); loadAdmin(); }
   };
   const adminResolveReport = async (id, status) => { try { await api(`/admin/reports/${id}`, { method: 'PUT', token, body: { status } }); toast.success('Reporte actualizado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const saveAdminSettings = async () => { try { const d = await api('/admin/settings', { method: 'PUT', token, body: adminSettings }); setAdminSettings(d.settings); setSettings(d.settings); toast.success('Guardado'); } catch (e) { toast.error(e.message); } };
@@ -849,8 +905,10 @@ const App = () => {
   };
 
   const resetFilters = () => {
-    setCategory(''); setQuery(''); setSearchInput('');
-    setFilters({ location: '', priceMin: '', priceMax: '', since: '' });
+    setCategory('');
+    setFilters({ location: '', businessName: '', priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
+    setQuery('');
+    setSearchInput('');
   };
 
   return (
@@ -999,7 +1057,7 @@ const App = () => {
       <FiltersSheet
         open={filtersOpen} onOpenChange={setFiltersOpen}
         t={t} filters={filters} setFilters={setFilters} onApply={() => setFiltersOpen(false)}
-        onClear={() => { setFilters({ location: '', priceMin: '', priceMax: '', since: '' }); setFiltersOpen(false); }}
+        onClear={() => { setFilters({ location: '', businessName: '', priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true }); setFiltersOpen(false); }}
       />
       <LegalDialog open={!!legalOpen} onOpenChange={(v) => !v && setLegalOpen(null)} kind={legalOpen} settings={settings} />
     </div>
@@ -2143,6 +2201,23 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                     <Badge variant={p.status === 'pending' ? 'default' : p.status === 'approved' ? 'secondary' : 'destructive'}>{p.status}</Badge>
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">{p.plan} · {p.paymentMethod?.toUpperCase()} · ${p.amount} · ref: {p.reference || 's/ref'}</div>
+                  {p.screenshot && (
+                    <a
+                      href={p.screenshot}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Click para ver comprobante completo"
+                      className="inline-block mt-2 rounded-md overflow-hidden border border-border hover:ring-2 hover:ring-[#1565C0] transition-all"
+                    >
+                      <img
+                        src={p.screenshot}
+                        alt="Comprobante de pago"
+                        loading="lazy"
+                        decoding="async"
+                        className="max-h-24 cursor-zoom-in"
+                      />
+                    </a>
+                  )}
                 </div>
                 {p.status === 'pending' && (
                   <div className="flex gap-2">
@@ -2257,6 +2332,15 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Red USDC</Label><Input value={settings.usdcNetwork || ''} onChange={(e) => setSettings({ ...settings, usdcNetwork: e.target.value })} /></div>
                   <div><Label>Precio Premium (USD)</Label><Input type="number" step="0.01" value={settings.premiumPriceUSD ?? 0} onChange={(e) => setSettings({ ...settings, premiumPriceUSD: Number(e.target.value) })} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Precio Premium (CUP)</Label><Input type="number" step="1" value={settings.premiumPriceCUP ?? 0} onChange={(e) => setSettings({ ...settings, premiumPriceCUP: Number(e.target.value) })} placeholder="Ej: 3500" /></div>
+                  <div className="flex items-end gap-2">
+                    <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 w-full cursor-pointer hover:bg-muted/50">
+                      <input type="checkbox" checked={settings.plansEnabled !== false} onChange={(e) => setSettings({ ...settings, plansEnabled: e.target.checked })} />
+                      <Sparkles className="h-4 w-4 text-amber-500" /> Suscripciones activas
+                    </label>
+                  </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Transfermóvil - Nombre</Label><Input value={settings.transfermovilName || ''} onChange={(e) => setSettings({ ...settings, transfermovilName: e.target.value })} /></div>
@@ -2623,12 +2707,30 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
         <SheetTitle className="flex items-center gap-2"><Filter className="h-5 w-5" /> {t.filters}</SheetTitle>
       </SheetHeader>
       <div className="space-y-4 mt-6">
-        <div><Label>{t.location}</Label><Input value={filters.location} onChange={(e) => setFilters({ ...filters, location: e.target.value })} placeholder="La Habana, Santiago..." /></div>
+        <div>
+          <Label>Provincia / Municipio / Dirección</Label>
+          <Input value={filters.location} onChange={(e) => setFilters({ ...filters, location: e.target.value })} placeholder="La Habana, Santiago, Vedado..." />
+          <p className="text-[10px] text-muted-foreground mt-1">Busca por provincia, municipio o palabra clave de la ubicación.</p>
+        </div>
+        <div>
+          <Label>Nombre del negocio</Label>
+          <Input value={filters.businessName || ''} onChange={(e) => setFilters({ ...filters, businessName: e.target.value })} placeholder="Ej: Cafetería La Esquina" />
+        </div>
         <div className="grid grid-cols-2 gap-2">
-          <div><Label>{t.priceMin}</Label><Input type="number" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} /></div>
-          <div><Label>{t.priceMax}</Label><Input type="number" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} /></div>
+          <div><Label>{t.priceMin}</Label><Input type="number" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} placeholder="0" /></div>
+          <div><Label>{t.priceMax}</Label><Input type="number" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} placeholder="∞" /></div>
         </div>
         <p className="text-[10px] text-muted-foreground -mt-1">Aplica en la moneda del producto (CUP o USDC).</p>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 cursor-pointer hover:bg-muted/50">
+            <input type="checkbox" checked={!!filters.featuredOnly} onChange={(e) => setFilters({ ...filters, featuredOnly: e.target.checked })} />
+            <Star className="h-4 w-4 text-amber-500" /> Solo destacados
+          </label>
+          <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 cursor-pointer hover:bg-muted/50">
+            <input type="checkbox" checked={filters.availableOnly !== false} onChange={(e) => setFilters({ ...filters, availableOnly: e.target.checked })} />
+            <Check className="h-4 w-4 text-green-600" /> Disponibles
+          </label>
+        </div>
         <div>
           <Label>{t.date}</Label>
           <Select value={filters.since || 'all'} onValueChange={(v) => setFilters({ ...filters, since: v === 'all' ? '' : new Date(Date.now() - Number(v) * 86400000).toISOString() })}>

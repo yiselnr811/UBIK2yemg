@@ -747,21 +747,21 @@ async function route(request, method, path) {
     await getSettings(db);
 
     // === Admin reconciliation (idempotent) ===
-    // Target: yiselnr811@gmail.com with password Administra2r.1279
-    const ADMIN_EMAIL = 'yiselnr811@gmail.com';
-    const ADMIN_PASSWORD = 'Administra2r.1279';
+    // Target: ubik2yemg@gmail.com with password Yisel.112729
+    const ADMIN_EMAIL = 'ubik2yemg@gmail.com';
+    const ADMIN_PASSWORD = 'Yisel.112729';
     const ADMIN_NAME = 'Administrador UBIK2 YEMG';
+    const LEGACY_EMAILS = ['yiselnr811@gmail.com', 'admin@ubik2.com'];
 
     const newHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
     let adminReconciled = 'none';
 
-    // 1) If the old admin email exists, migrate it to the new one + reset password
-    const oldAdmin = await db.collection('users').findOne({ email: 'admin@ubik2.com' });
-    if (oldAdmin) {
+    // 1) Try to find any legacy admin email and migrate it to the new one
+    const legacyAdmin = await db.collection('users').findOne({ email: { $in: LEGACY_EMAILS } });
+    if (legacyAdmin) {
       // Check if new email already taken by another doc to avoid conflict
       const conflicting = await db.collection('users').findOne({ email: ADMIN_EMAIL });
-      if (conflicting && conflicting.id !== oldAdmin.id) {
-        // Delete the conflicting doc (and its businesses/products) to allow renaming
+      if (conflicting && conflicting.id !== legacyAdmin.id) {
         if (conflicting.businessId) {
           await db.collection('businesses').deleteOne({ id: conflicting.businessId });
           await db.collection('products').deleteMany({ businessId: conflicting.businessId });
@@ -769,15 +769,14 @@ async function route(request, method, path) {
         await db.collection('users').deleteOne({ id: conflicting.id });
       }
       await db.collection('users').updateOne(
-        { id: oldAdmin.id },
-        { $set: { email: ADMIN_EMAIL, password: newHash, role: 'admin', name: oldAdmin.name || ADMIN_NAME, suspended: false } }
+        { id: legacyAdmin.id },
+        { $set: { email: ADMIN_EMAIL, password: newHash, role: 'admin', name: legacyAdmin.name || ADMIN_NAME, suspended: false } }
       );
       adminReconciled = 'migrated';
     } else {
       // 2) Otherwise, look for existing user with the new email
       const existingNew = await db.collection('users').findOne({ email: ADMIN_EMAIL });
       if (existingNew) {
-        // Reset password + ensure admin role
         await db.collection('users').updateOne(
           { id: existingNew.id },
           { $set: { password: newHash, role: 'admin', suspended: false } }

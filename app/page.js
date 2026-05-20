@@ -269,6 +269,47 @@ const formatPrice = (n, currency = 'CUP') => {
   return `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(num)} CUP`;
 };
 
+// === Centralized contact links for "Contactar vendedor" buttons ===
+// Builds a professional, dynamic message and detects which channels the seller has.
+// Returns { msg, encoded, wa, tg, sms, waLink, tgLink, smsLink, anyAvailable }.
+const buildContactLinks = (p) => {
+  if (!p) return { anyAvailable: false };
+  const b = p.business || {};
+  const cleanPhone = (s) => String(s || '').replace(/[^0-9+]/g, '').replace(/^\+/, '');
+  const wa = cleanPhone(b.whatsapp);
+  const tgRaw = (b.telegram || '').trim();
+  const sms = cleanPhone(b.sms || b.whatsapp);
+
+  const name = p.name || 'tu producto';
+  const price = formatPrice(p.price, p.currency);
+  const location = (p.location || b.location || '').trim() || 'Cuba';
+
+  // Professional template — kept compact, emoji-friendly, mobile-first
+  const msg =
+    `Hola 👋, vi tu producto en UBIK2:\n\n` +
+    `🛒 ${name}\n` +
+    `💲 Precio: ${price}\n` +
+    `📍 Ubicación: ${location}\n\n` +
+    `Me interesa obtener más información. ¿Sigue disponible?`;
+  const encoded = encodeURIComponent(msg);
+
+  // WhatsApp: wa.me link with prefilled text
+  const waLink = wa ? `https://wa.me/${wa}?text=${encoded}` : '';
+  // Telegram: t.me/<username> — Telegram doesn't support prefilled text via deep link reliably,
+  // so we open the chat directly. Username can be "@user" or "user".
+  const tgUser = tgRaw.replace(/^@/, '').replace(/^https?:\/\/(t\.me|telegram\.me)\//i, '');
+  const tgLink = tgUser ? `https://t.me/${tgUser}` : '';
+  // SMS: spec is sms:NUMBER?body=... (iOS uses `&body=`, Android `?body=`; ?body works on both).
+  const smsLink = sms ? `sms:${sms}?body=${encoded}` : '';
+
+  return {
+    msg, encoded,
+    wa, tg: tgUser, sms,
+    waLink, tgLink, smsLink,
+    anyAvailable: !!(waLink || tgLink || smsLink),
+  };
+};
+
 const timeAgo = (iso) => {
   if (!iso) return '';
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -1582,12 +1623,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 
 // ============ PRODUCT CARD ============
 const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight }) => {
-  const wa = (p.business?.whatsapp || '').replace(/[^0-9+]/g, '').replace('+', '');
-  const tg = p.business?.telegram?.trim();
-  const sms = (p.business?.sms || p.business?.whatsapp || '').replace(/[^0-9+]/g, '');
-  const waLink = wa && `https://wa.me/${wa}?text=${encodeURIComponent('Hola, vi tu producto en UBIK2 YEMG: ' + p.name)}`;
-  const tgLink = tg && (tg.startsWith('@') ? `https://t.me/${tg.slice(1)}` : `https://t.me/${tg}`);
-  const smsLink = sms && `sms:${sms}`;
+  const { waLink, tgLink, smsLink } = buildContactLinks(p);
 
   return (
     <Card
@@ -1681,13 +1717,13 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
   if (!product) {
     return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   }
-  const wa = (product.business?.whatsapp || '').replace(/[^0-9+]/g, '').replace('+', '');
-  const tg = product.business?.telegram?.trim();
-  const sms = (product.business?.sms || product.business?.whatsapp || '').replace(/[^0-9+]/g, '');
-  const waMsg = encodeURIComponent(`¡Hola! Vi tu producto "${product.name}" en UBIK2 YEMG. ¿Sigue disponible?`);
-  const waLink = wa && `https://wa.me/${wa}?text=${waMsg}`;
-  const tgLink = tg && (tg.startsWith('@') ? `https://t.me/${tg.slice(1)}` : `https://t.me/${tg}`);
-  const smsLink = sms && `sms:${sms}?body=${encodeURIComponent('Hola, vi tu producto en UBIK2 YEMG: ' + product.name)}`;
+  const contact = buildContactLinks(product);
+  const { waLink, tgLink, smsLink, anyAvailable } = contact;
+
+  // Smart unified CTA: prefers WhatsApp, then Telegram, then SMS.
+  // Opens the first available channel directly so user doesn't have to choose if there's only one.
+  const primaryHref = waLink || tgLink || smsLink || '#';
+  const primaryLabel = waLink ? 'WhatsApp' : tgLink ? 'Telegram' : smsLink ? 'SMS' : '';
   const isFav = favorites.includes(product.id);
 
   return (
@@ -1730,25 +1766,51 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
           </div>
 
           {/* Contact section */}
-          <div className="mt-6 p-4 rounded-2xl bg-muted/30 border border-border">
-            <h3 className="font-semibold mb-3 text-sm">{t.contact}</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {waLink && (
-                <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-md hover:shadow-lg">
-                  <MessageCircle className="h-5 w-5" /> {t.whatsapp}
-                </a>
-              )}
-              {tgLink && (
-                <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-md hover:shadow-lg">
-                  <Send className="h-5 w-5" /> {t.telegram}
-                </a>
-              )}
-              {smsLink && (
-                <a href={smsLink} className="h-12 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-md hover:shadow-lg">
-                  <Phone className="h-5 w-5" /> {t.sms}
-                </a>
-              )}
-            </div>
+          <div className="mt-6 p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
+            {/* Primary CTA — Web3-style */}
+            {anyAvailable ? (
+              <a
+                href={primaryHref}
+                target={primaryHref.startsWith('sms:') ? undefined : '_blank'}
+                rel="noopener noreferrer"
+                className="block w-full h-14 rounded-xl brand-gradient text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
+                aria-label="Contactar vendedor"
+              >
+                <MessageCircle className="h-5 w-5" />
+                Contactar vendedor
+                <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
+              </a>
+            ) : (
+              <div className="text-center py-3 text-sm text-muted-foreground">
+                Este vendedor no configuró canales de contacto.
+              </div>
+            )}
+
+            {/* Secondary channels — only shown if there are 2+ channels */}
+            {anyAvailable && ((!!waLink + !!tgLink + !!smsLink) > 1) && (
+              <>
+                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-4 mb-2 text-center font-semibold">
+                  O elige otro canal
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  {waLink && (
+                    <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
+                      <MessageCircle className="h-4 w-4" /> {t.whatsapp}
+                    </a>
+                  )}
+                  {tgLink && (
+                    <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
+                      <Send className="h-4 w-4" /> {t.telegram}
+                    </a>
+                  )}
+                  {smsLink && (
+                    <a href={smsLink} className="h-11 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
+                      <Phone className="h-4 w-4" /> {t.sms}
+                    </a>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           {/* Seller card */}

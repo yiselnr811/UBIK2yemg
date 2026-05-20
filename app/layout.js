@@ -22,6 +22,13 @@ export const metadata = {
     'yemg',
   ],
   authors: [{ name: 'UBIK2 YEMG' }],
+  manifest: '/manifest.webmanifest',
+  applicationName: 'UBIK2 YEMG',
+  appleWebApp: {
+    capable: true,
+    title: 'UBIK2 YEMG',
+    statusBarStyle: 'default',
+  },
   icons: {
     icon: [
       { url: '/favicon.svg', type: 'image/svg+xml' },
@@ -56,6 +63,12 @@ export default function RootLayout({ children }) {
       <body className="min-h-screen bg-background text-foreground antialiased">
         {children}
         <Toaster richColors position="top-center" />
+        {/* Service Worker registration — minimal PWA for Cuban offline-friendly UX. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(e){console.warn('SW reg failed',e&&e.message)})})}`,
+          }}
+        />
       </body>
     </html>
   );

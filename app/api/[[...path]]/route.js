@@ -298,8 +298,8 @@ async function route(request, method, path) {
     const productsCount = await db.collection('products').countDocuments();
     const businessesCount = await db.collection('businesses').countDocuments();
     const usersCount = await db.collection('users').countDocuments();
-    // Stats change slowly — cache 2 min
-    return jsonCached({ productsCount, businessesCount, usersCount }, 200, 120);
+    // Cache shorter (15s) so business/user/product counts feel near-real-time
+    return jsonCached({ productsCount, businessesCount, usersCount }, 200, 15);
   }
 
   // ===== AUTH =====
@@ -548,10 +548,16 @@ async function route(request, method, path) {
       // Smart stock: hide products with stock === 0 from public marketplace
       // (sellers still see them in their dashboard via /my/products)
       filter.$and = [{ $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] }];
-      if (q) filter.$or = [
-        { name: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-      ];
+      // Escape regex special chars so users can search with parens, dots, dashes, etc.
+      const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (q) {
+        const safeQ = escapeRe(q.trim());
+        filter.$or = [
+          { name: { $regex: safeQ, $options: 'i' } },
+          { description: { $regex: safeQ, $options: 'i' } },
+          { category: { $regex: safeQ, $options: 'i' } },
+        ];
+      }
       if (category) filter.category = category;
       if (featured === 'true') filter.featured = true;
       if (excludeFeatured) filter.featured = { $ne: true };
@@ -559,7 +565,7 @@ async function route(request, method, path) {
       // Filter by business name (regex on businesses, then narrow by businessId)
       if (businessName) {
         const matchingBiz = await db.collection('businesses')
-          .find({ name: { $regex: businessName, $options: 'i' } }, { projection: { id: 1 } })
+          .find({ name: { $regex: escapeRe(businessName), $options: 'i' } }, { projection: { id: 1 } })
           .limit(50)
           .toArray();
         const ids = matchingBiz.map((b) => b.id);
@@ -570,7 +576,7 @@ async function route(request, method, path) {
           ? (ids.includes(filter.businessId) ? filter.businessId : '__no_match__')
           : { $in: ids };
       }
-      if (location) filter.location = { $regex: location, $options: 'i' };
+      if (location) filter.location = { $regex: escapeRe(location), $options: 'i' };
       if (priceMin || priceMax) {
         filter.price = {};
         if (priceMin) filter.price.$gte = Number(priceMin);

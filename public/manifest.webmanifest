@@ -1,0 +1,39 @@
+{
+  "name": "UBIK2 YEMG — Marketplace cubano",
+  "short_name": "UBIK2 YEMG",
+  "description": "Compra fácil. Vende rápido. Marketplace para MiPymes cubanas.",
+  "start_url": "/?utm_source=pwa",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0d1117",
+  "theme_color": "#1565C0",
+  "scope": "/",
+  "lang": "es",
+  "categories": ["shopping", "business", "lifestyle"],
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Publicar producto",
+      "url": "/?action=publish",
+      "description": "Publica un nuevo producto en el marketplace"
+    },
+    {
+      "name": "Mi panel",
+      "url": "/?action=dashboard",
+      "description": "Gestiona tus productos"
+    }
+  ]
+}

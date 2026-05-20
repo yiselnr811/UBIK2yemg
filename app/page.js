@@ -526,9 +526,9 @@ const App = () => {
     setLoading(true);
     setPage(1);
     const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
-    // When searching/filtering: show ALL matching products (no excludeFeatured).
-    // When default home view: split featured (separate section) from normal grid.
-    const mainQ = hasFiltersOrQuery ? buildQuery({ page: '1' }) : buildQuery({ excludeFeatured: 'true', page: '1' });
+    // Show ALL products (incl. featured) in main grid so destacados también aparecen en "Recientes".
+    // Featured section sigue cargando aparte para el carrusel arriba.
+    const mainQ = buildQuery({ page: '1' });
     const featQ = dataSaver ? '/products?featured=true&lite=true&limit=8' : '/products?featured=true&limit=12';
     Promise.all([
       api(`/products?${mainQ}`),
@@ -547,8 +547,7 @@ const App = () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
     const next = page + 1;
-    const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
-    const mainQ = hasFiltersOrQuery ? buildQuery({ page: String(next) }) : buildQuery({ excludeFeatured: 'true', page: String(next) });
+    const mainQ = buildQuery({ page: String(next) });
     api(`/products?${mainQ}`)
       .then((d) => {
         setProducts((prev) => [...prev, ...(d.products || [])]);
@@ -557,7 +556,7 @@ const App = () => {
       })
       .catch((e) => toast.error(e.message))
       .finally(() => setLoadingMore(false));
-  }, [loadingMore, hasMore, page, buildQuery, query, category, filters]);
+  }, [loadingMore, hasMore, page, buildQuery]);
 
   // === Autocomplete (debounced) ===
   useEffect(() => {
@@ -2054,11 +2053,80 @@ const BuyerDashboard = ({ user, onBecomeSeller, onFavorites, favoritesCount }) =
 const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }) => {
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
-  // breakdown by category
-  const byCategory = products.reduce((acc, p) => {
-    acc[p.category] = (acc[p.category] || 0) + 1;
-    return acc;
-  }, {});
+  const [tab, setTab] = React.useState('all');
+  const [groupByCategory, setGroupByCategory] = React.useState(false);
+
+  // Stats derived once
+  const stats = React.useMemo(() => {
+    const total = products.length;
+    const outOfStock = products.filter((p) => !p.stock || p.stock <= 0).length;
+    const active = products.filter((p) => p.stock > 0 && p.available !== false).length;
+    const featured = products.filter((p) => p.featured).length;
+    const byCategory = products.reduce((acc, p) => {
+      acc[p.category] = (acc[p.category] || 0) + 1;
+      return acc;
+    }, {});
+    return { total, outOfStock, active, featured, byCategory };
+  }, [products]);
+
+  // Filter products based on selected tab
+  const visibleProducts = React.useMemo(() => {
+    if (tab === 'active') return products.filter((p) => p.stock > 0 && p.available !== false);
+    if (tab === 'out') return products.filter((p) => !p.stock || p.stock <= 0);
+    if (tab === 'featured') return products.filter((p) => p.featured);
+    return products;
+  }, [products, tab]);
+
+  // Optional category grouping
+  const grouped = React.useMemo(() => {
+    if (!groupByCategory) return null;
+    const map = {};
+    for (const p of visibleProducts) {
+      const k = p.category || 'otros';
+      (map[k] = map[k] || []).push(p);
+    }
+    return Object.entries(map).sort((a, b) => b[1].length - a[1].length);
+  }, [visibleProducts, groupByCategory]);
+
+  const renderProductCard = (p) => (
+    <Card key={p.id} className={`overflow-hidden hover-lift ${(!p.stock || p.stock <= 0) ? 'ring-1 ring-orange-300' : ''}`}>
+      <div className="aspect-video bg-muted overflow-hidden relative">
+        {p.image && <img src={p.image} alt={p.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />}
+        {(!p.stock || p.stock <= 0) && (
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+            <Badge variant="destructive" className="font-bold text-xs">⚠️ Sin stock — Oculto</Badge>
+          </div>
+        )}
+      </div>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="font-semibold truncate">{p.name}</div>
+            <div className="text-sm text-[#00A86B] font-bold">{formatPrice(p.price, p.currency)}</div>
+            <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-1 mt-1">
+              <Badge variant="outline" className="text-[10px]">{p.category}</Badge>
+              <span>Stock: <b className={!p.stock || p.stock <= 0 ? 'text-orange-600' : ''}>{p.stock ?? 0}</b></span>
+            </div>
+          </div>
+          {p.featured && <Badge className="bg-amber-500 text-black border-0"><Sparkles className="h-3 w-3" /></Badge>}
+        </div>
+        {(!p.stock || p.stock <= 0) && (
+          <p className="text-[11px] text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-900 rounded-md p-2 mt-2">
+            Este producto <b>no será visible</b> en el marketplace porque no tiene stock disponible. Edítalo y agrega stock para reactivarlo.
+          </p>
+        )}
+        <div className="flex gap-2 mt-3">
+          <Button size="sm" variant="outline" className="flex-1" onClick={() => onEdit(p)}>
+            <Pencil className="h-3 w-3 mr-1" /> Editar
+          </Button>
+          <Button size="sm" variant="outline" className="text-destructive border-destructive/40" onClick={() => onDelete(p.id)}>
+            <Trash2 className="h-3 w-3" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <section className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -2076,71 +2144,79 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-3 gap-3 mb-6">
-        {[
-          { l: 'Productos', v: limit, sub: isPremium ? 'Plan Premium' : 'Plan Básico' },
-          { l: 'Plan', v: user.plan, icon: isPremium ? <Crown className="h-4 w-4 text-amber-500 inline ml-1" /> : null },
-          { l: 'WhatsApp', v: business?.whatsapp || '—' },
-        ].map((s, i) => (
-          <Card key={i}>
-            <CardContent className="p-5">
-              <div className="text-xs text-muted-foreground uppercase tracking-wider">{s.l}</div>
-              <div className="text-2xl font-bold mt-1 capitalize">{s.v}{s.icon}</div>
-              {s.sub && <div className="text-[10px] text-muted-foreground mt-1">{s.sub}</div>}
-            </CardContent>
-          </Card>
-        ))}
+      {/* Stats — 4 cards instead of 3 */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        <Card><CardContent className="p-4">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Total productos</div>
+          <div className="text-2xl font-bold mt-1">{stats.total}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">{isPremium ? 'Plan Premium ∞' : `Plan Básico — ${stats.total}/10`}</div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Activos</div>
+          <div className="text-2xl font-bold mt-1 text-green-600">{stats.active}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Visibles en el marketplace</div>
+        </CardContent></Card>
+        <Card className={stats.outOfStock > 0 ? 'border-orange-300' : ''}><CardContent className="p-4">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Agotados</div>
+          <div className="text-2xl font-bold mt-1 text-orange-600">{stats.outOfStock}</div>
+          <div className="text-[10px] text-muted-foreground mt-1">Ocultos automáticamente</div>
+        </CardContent></Card>
+        <Card><CardContent className="p-4">
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Destacados</div>
+          <div className="text-2xl font-bold mt-1 text-amber-500 flex items-center gap-1">{stats.featured} <Sparkles className="h-4 w-4" /></div>
+          <div className="text-[10px] text-muted-foreground mt-1">{isPremium ? 'Activa destacado al editar' : 'Solo Premium'}</div>
+        </CardContent></Card>
       </div>
 
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">Tus productos ({products.length})</h2>
-        {Object.keys(byCategory).length > 1 && (
-          <div className="text-xs text-muted-foreground hidden md:block">
-            En {Object.keys(byCategory).length} categorías: {Object.entries(byCategory).map(([c, n]) => `${c} (${n})`).join(' · ')}
-          </div>
-        )}
-      </div>
+      {/* Tabs */}
+      <Tabs value={tab} onValueChange={setTab} className="mb-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <TabsList className="flex flex-wrap h-auto">
+            <TabsTrigger value="all">Todos ({stats.total})</TabsTrigger>
+            <TabsTrigger value="active">Activos ({stats.active})</TabsTrigger>
+            <TabsTrigger value="out">
+              Agotados {stats.outOfStock > 0 && <span className="ml-1 text-orange-600 font-bold">({stats.outOfStock})</span>}
+            </TabsTrigger>
+            <TabsTrigger value="featured">Destacados ({stats.featured})</TabsTrigger>
+          </TabsList>
+          <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
+            <input type="checkbox" checked={groupByCategory} onChange={(e) => setGroupByCategory(e.target.checked)} />
+            Agrupar por categoría
+          </label>
+        </div>
+      </Tabs>
 
-      {products.length === 0 ? (
+      {visibleProducts.length === 0 ? (
         <Card className="text-center py-12 border-dashed">
           <CardContent>
             <ShoppingBag className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
-            <p className="text-muted-foreground mb-4">Aún no tienes productos publicados.</p>
+            <p className="text-muted-foreground mb-4">
+              {tab === 'out' ? '¡No tienes productos agotados! 🎉' :
+               tab === 'featured' ? 'No tienes productos destacados.' :
+               tab === 'active' ? 'No tienes productos activos.' :
+               'Aún no tienes productos publicados.'}
+            </p>
             <Button onClick={onNew} className="bg-[#00A86B] hover:bg-[#008F5B] text-white">
-              <Plus className="h-4 w-4 mr-2" /> Publica el primero
+              <Plus className="h-4 w-4 mr-2" /> {tab === 'all' ? 'Publica el primero' : 'Crear producto'}
             </Button>
           </CardContent>
         </Card>
+      ) : grouped ? (
+        <div className="space-y-6">
+          {grouped.map(([cat, items]) => (
+            <div key={cat}>
+              <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground mb-2 flex items-center gap-2">
+                <Tag className="h-3 w-3" /> {cat} <span className="text-xs font-normal">({items.length})</span>
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {items.map(renderProductCard)}
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {products.map((p) => (
-            <Card key={p.id} className="overflow-hidden hover-lift">
-              <div className="aspect-video bg-muted overflow-hidden">
-                {p.image && <img src={p.image} alt={p.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />}
-              </div>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="font-semibold truncate">{p.name}</div>
-                    <div className="text-sm text-[#00A86B] font-bold">{formatPrice(p.price, p.currency)}</div>
-                    <div className="text-xs text-muted-foreground">
-                      <Badge variant="outline" className="text-[10px] mr-1">{p.category}</Badge>
-                      Stock: {p.stock}
-                    </div>
-                  </div>
-                  {p.featured && <Badge className="bg-amber-500 text-black border-0"><Sparkles className="h-3 w-3" /></Badge>}
-                </div>
-                <div className="flex gap-2 mt-3">
-                  <Button size="sm" variant="outline" className="flex-1" onClick={() => onEdit(p)}>
-                    <Pencil className="h-3 w-3 mr-1" /> Editar
-                  </Button>
-                  <Button size="sm" variant="outline" className="text-destructive border-destructive/40" onClick={() => onDelete(p.id)}>
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          {visibleProducts.map(renderProductCard)}
         </div>
       )}
     </section>

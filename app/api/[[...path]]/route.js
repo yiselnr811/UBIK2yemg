@@ -982,6 +982,7 @@ async function route(request, method, path) {
       plansEnabled: s.plansEnabled !== false,
       contactPhone: s.contactPhone || '+5359195051',
       contactEmail: s.contactEmail || 'UBIK2YEMG@gmail.com',
+      facebookUrl: s.facebookUrl || 'https://www.facebook.com/profile.php?id=61590279593760',
     }, 200, 300);
   }
 
@@ -1028,9 +1029,14 @@ async function route(request, method, path) {
     }
     if (path[1] === 'settings' && method === 'PUT') {
       const body = await request.json();
-      const allowed = ['usdcWallet', 'usdcNetwork', 'transfermovilNumber', 'transfermovilName', 'premiumPriceUSD', 'contactPhone', 'contactEmail'];
+      const allowed = ['usdcWallet', 'usdcNetwork', 'transfermovilNumber', 'transfermovilName',
+        'premiumPriceUSD', 'premiumPriceCUP', 'plansEnabled',
+        'contactPhone', 'contactEmail', 'facebookUrl'];
       const update = { updatedAt: new Date().toISOString() };
       for (const k of allowed) if (k in body) update[k] = body[k];
+      // Coerce numeric prices
+      if ('premiumPriceUSD' in update) update.premiumPriceUSD = Number(update.premiumPriceUSD) || 0;
+      if ('premiumPriceCUP' in update) update.premiumPriceCUP = Number(update.premiumPriceCUP) || 0;
       await db.collection('settings').updateOne({ id: 'global' }, { $set: update }, { upsert: true });
       const s = await db.collection('settings').findOne({ id: 'global' });
       return json({ settings: s });

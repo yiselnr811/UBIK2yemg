@@ -915,15 +915,37 @@ const App = () => {
   };
   const adminDeleteProduct = async (id) => {
     if (!confirm('¿Eliminar?')) return;
-    setAdminData((d) => ({ ...d, products: (d.products || []).filter((p) => p.id !== id), stats: d.stats ? { ...d.stats, products: Math.max(0, (d.stats.products ?? 1) - 1) } : d.stats }));
+    setAdminData((d) => ({
+      ...d,
+      products: (d.products || []).filter((p) => p.id !== id),
+      stats: d.stats ? { ...d.stats, products: Math.max(0, (d.stats.products ?? 1) - 1) } : d.stats,
+    }));
     setStats((s) => ({ ...s, productsCount: Math.max(0, (s?.productsCount ?? 1) - 1) }));
     try { await api(`/admin/products/${id}`, { method: 'DELETE', token }); toast.success('Eliminado'); loadAdmin(); refreshHome(); }
     catch (e) { toast.error(e.message); loadAdmin(); }
   };
   const adminDeleteUser = async (id, email) => {
     if (!confirm(`⚠️ Eliminar usuario ${email} y TODOS sus datos (negocio, productos, pagos)? Esta acción no se puede deshacer.`)) return;
-    setAdminData((d) => ({ ...d, users: (d.users || []).filter((u) => u.id !== id) }));
-    setStats((s) => ({ ...s, usersCount: Math.max(0, (s?.usersCount ?? 1) - 1) }));
+    const targetUser = (adminData.users || []).find((u) => u.id === id);
+    const hadBiz = !!targetUser?.business;
+    const ownedProductsCount = (adminData.products || []).filter((p) => p.businessId === targetUser?.business?.id).length;
+    setAdminData((d) => ({
+      ...d,
+      users: (d.users || []).filter((u) => u.id !== id),
+      products: (d.products || []).filter((p) => p.businessId !== targetUser?.business?.id),
+      stats: d.stats ? {
+        ...d.stats,
+        users: Math.max(0, (d.stats.users ?? 1) - 1),
+        businesses: Math.max(0, (d.stats.businesses ?? 0) - (hadBiz ? 1 : 0)),
+        products: Math.max(0, (d.stats.products ?? 0) - ownedProductsCount),
+      } : d.stats,
+    }));
+    setStats((s) => ({
+      ...s,
+      usersCount: Math.max(0, (s?.usersCount ?? 1) - 1),
+      businessesCount: Math.max(0, (s?.businessesCount ?? 0) - (hadBiz ? 1 : 0)),
+      productsCount: Math.max(0, (s?.productsCount ?? 0) - ownedProductsCount),
+    }));
     try { await api(`/admin/users/${id}`, { method: 'DELETE', token }); toast.success('Usuario eliminado'); loadAdmin(); refreshHome(); }
     catch (e) { toast.error(e.message); loadAdmin(); }
   };
@@ -937,13 +959,38 @@ const App = () => {
   };
   const adminDeleteBusiness = async (id, name) => {
     if (!confirm(`Eliminar el negocio "${name}" y todos sus productos? El usuario se convertirá en comprador.`)) return;
-    setAdminData((d) => ({ ...d, users: (d.users || []).map((u) => u.business?.id === id ? { ...u, business: null } : u) }));
-    setStats((s) => ({ ...s, businessesCount: Math.max(0, (s?.businessesCount ?? 1) - 1) }));
+    const ownedProductsCount = (adminData.products || []).filter((p) => p.businessId === id).length;
+    setAdminData((d) => ({
+      ...d,
+      users: (d.users || []).map((u) => u.business?.id === id ? { ...u, business: null } : u),
+      products: (d.products || []).filter((p) => p.businessId !== id),
+      stats: d.stats ? {
+        ...d.stats,
+        businesses: Math.max(0, (d.stats.businesses ?? 1) - 1),
+        products: Math.max(0, (d.stats.products ?? 0) - ownedProductsCount),
+      } : d.stats,
+    }));
+    setStats((s) => ({
+      ...s,
+      businessesCount: Math.max(0, (s?.businessesCount ?? 1) - 1),
+      productsCount: Math.max(0, (s?.productsCount ?? 0) - ownedProductsCount),
+    }));
     try { await api(`/admin/businesses/${id}`, { method: 'DELETE', token }); toast.success('Negocio eliminado'); loadAdmin(); refreshHome(); }
     catch (e) { toast.error(e.message); loadAdmin(); }
   };
   const adminResolveReport = async (id, status) => { try { await api(`/admin/reports/${id}`, { method: 'PUT', token, body: { status } }); toast.success('Reporte actualizado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
-  const saveAdminSettings = async () => { try { const d = await api('/admin/settings', { method: 'PUT', token, body: adminSettings }); setAdminSettings(d.settings); setSettings(d.settings); toast.success('Guardado'); } catch (e) { toast.error(e.message); } };
+  const [savingSettings, setSavingSettings] = useState(false);
+  const saveAdminSettings = async () => {
+    if (savingSettings) return;
+    setSavingSettings(true);
+    try {
+      const d = await api('/admin/settings', { method: 'PUT', token, body: adminSettings });
+      setAdminSettings(d.settings);
+      setSettings(d.settings);
+      toast.success('Guardado ✓');
+    } catch (e) { toast.error(e.message); }
+    finally { setSavingSettings(false); }
+  };
 
   const onSearch = (e) => {
     e?.preventDefault();
@@ -1060,6 +1107,7 @@ const App = () => {
             onDeleteProduct={adminDeleteProduct}
             onResolveReport={adminResolveReport}
             onSaveSettings={saveAdminSettings}
+            savingSettings={savingSettings}
             tab={adminTab} setTab={setAdminTab} onRefresh={loadAdmin}
           />
         )}
@@ -1097,6 +1145,7 @@ const App = () => {
         open={planOpen} onOpenChange={setPlanOpen}
         settings={settings} payment={paymentForm} setPayment={setPaymentForm}
         onSubmit={requestPremium} onScreenshotFile={onScreenshotFile}
+        currentPlan={user?.plan}
       />
       <ReportDialog
         open={reportOpen} onOpenChange={setReportOpen}
@@ -2333,7 +2382,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, tab, setTab, onRefresh }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh }) => {
   const [editBiz, setEditBiz] = useState(null);
   const { payments, users, products, stats, reports } = data;
   const pending = payments.filter((p) => p.status === 'pending');
@@ -2535,7 +2584,18 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                   <div><Label>Teléfono oficial</Label><Input value={settings.contactPhone || ''} onChange={(e) => setSettings({ ...settings, contactPhone: e.target.value })} /></div>
                   <div><Label>Email oficial</Label><Input value={settings.contactEmail || ''} onChange={(e) => setSettings({ ...settings, contactEmail: e.target.value })} /></div>
                 </div>
-                <Button onClick={onSaveSettings} className="brand-gradient text-white">Guardar cambios</Button>
+                <div>
+                  <Label>URL Facebook oficial</Label>
+                  <Input
+                    value={settings.facebookUrl || ''}
+                    onChange={(e) => setSettings({ ...settings, facebookUrl: e.target.value })}
+                    placeholder="https://www.facebook.com/profile.php?id=61590279593760"
+                  />
+                  <p className="text-[10px] text-muted-foreground mt-1">Aparece en footer, contacto y comprobantes. Si dejas vacío, se usa el oficial por defecto.</p>
+                </div>
+                <Button onClick={onSaveSettings} disabled={savingSettings} className="brand-gradient text-white disabled:opacity-60">
+                  {savingSettings ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Guardando…</> : 'Guardar cambios'}
+                </Button>
               </CardContent>
             </Card>
           )}
@@ -2560,6 +2620,15 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
             <div className="space-y-2 text-sm text-muted-foreground">
               <a href={`tel:${settings.contactPhone}`} className="flex items-center gap-2 hover:text-foreground"><Phone className="h-4 w-4" /> {settings.contactPhone}</a>
               <a href={`mailto:${settings.contactEmail}`} className="flex items-center gap-2 hover:text-foreground break-all"><Mail className="h-4 w-4" /> {settings.contactEmail}</a>
+              <a
+                href={settings.facebookUrl || 'https://www.facebook.com/profile.php?id=61590279593760'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 hover:text-foreground"
+                aria-label="Facebook UBIK2 YEMG"
+              >
+                <Facebook className="h-4 w-4 text-[#1877F2]" /> Facebook UBIK2 YEMG
+              </a>
             </div>
           )}
         </div>
@@ -2861,16 +2930,31 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
   );
 };
 
-const PlanDialog = ({ open, onOpenChange, settings, payment, setPayment, onSubmit, onScreenshotFile }) => (
+const PlanDialog = ({ open, onOpenChange, settings, payment, setPayment, onSubmit, onScreenshotFile, currentPlan }) => {
+  const priceUSD = settings?.premiumPriceUSD;
+  const priceCUP = settings?.premiumPriceCUP;
+  const plansEnabled = settings?.plansEnabled !== false;
+  const isAlreadyPremium = currentPlan === 'premium';
+  return (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
       <DialogHeader>
         <DialogTitle className="flex items-center gap-2 text-2xl"><Crown className="h-6 w-6 text-amber-500" /> Pásate a Premium</DialogTitle>
-        <DialogDescription>Desbloquea todas las funciones.</DialogDescription>
+        <DialogDescription>
+          {isAlreadyPremium ? 'Tu plan actual es Premium ⭐. Puedes renovar o cambiar método de pago.' : 'Desbloquea todas las funciones del marketplace.'}
+        </DialogDescription>
       </DialogHeader>
+      {!plansEnabled && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 text-sm p-3">
+          ⚠️ Las suscripciones están temporalmente desactivadas. Vuelve más tarde.
+        </div>
+      )}
       <div className="grid md:grid-cols-2 gap-3">
-        <Card><CardContent className="p-5">
-          <Badge variant="secondary">Plan Básico</Badge>
+        <Card className={!isAlreadyPremium ? 'ring-2 ring-muted' : ''}><CardContent className="p-5">
+          <div className="flex items-center justify-between">
+            <Badge variant="secondary">Plan Básico</Badge>
+            {!isAlreadyPremium && <Badge className="bg-blue-500 text-white text-[10px]">TU PLAN</Badge>}
+          </div>
           <h3 className="text-2xl font-bold mt-2">Gratis</h3>
           <ul className="text-sm text-muted-foreground space-y-1.5 mt-3">
             <li className="flex gap-2"><Check className="h-4 w-4 text-green-500" /> Hasta 10 productos</li>
@@ -2878,46 +2962,79 @@ const PlanDialog = ({ open, onOpenChange, settings, payment, setPayment, onSubmi
             <li className="flex gap-2"><Check className="h-4 w-4 text-green-500" /> WhatsApp/Telegram/SMS</li>
           </ul>
         </CardContent></Card>
-        <Card className="border-[#00A86B] bg-[#00A86B]/5"><CardContent className="p-5">
-          <Badge className="bg-[#00A86B] text-white">Premium</Badge>
-          <h3 className="text-2xl font-bold mt-2">${settings?.premiumPriceUSD ?? '9.99'}<span className="text-base text-muted-foreground">/mes</span></h3>
+        <Card className={`border-[#00A86B] bg-[#00A86B]/5 ${isAlreadyPremium ? 'ring-2 ring-[#00A86B]' : ''}`}><CardContent className="p-5">
+          <div className="flex items-center justify-between">
+            <Badge className="bg-[#00A86B] text-white">Premium</Badge>
+            {isAlreadyPremium && <Badge className="bg-amber-500 text-black text-[10px]"><Crown className="h-3 w-3 mr-1 inline" /> TU PLAN</Badge>}
+          </div>
+          <div className="mt-2 space-y-0.5">
+            {priceUSD != null && Number(priceUSD) > 0 ? (
+              <h3 className="text-2xl font-bold">${Number(priceUSD).toFixed(2)} <span className="text-sm font-normal text-muted-foreground">USDC / mes</span></h3>
+            ) : null}
+            {priceCUP != null && Number(priceCUP) > 0 ? (
+              <h3 className="text-xl font-bold">{Number(priceCUP).toLocaleString('es-ES')} <span className="text-sm font-normal text-muted-foreground">CUP / mes (Transfermóvil)</span></h3>
+            ) : null}
+            {(!priceUSD || Number(priceUSD) <= 0) && (!priceCUP || Number(priceCUP) <= 0) && (
+              <div className="text-sm text-muted-foreground italic">
+                El administrador aún no configuró los precios. Vuelve más tarde.
+              </div>
+            )}
+          </div>
           <ul className="text-sm space-y-1.5 mt-3">
             <li className="flex gap-2"><Check className="h-4 w-4 text-green-500" /> Productos ilimitados</li>
             <li className="flex gap-2"><Check className="h-4 w-4 text-green-500" /> Destacar productos</li>
             <li className="flex gap-2"><Check className="h-4 w-4 text-green-500" /> Sin publicidad</li>
             <li className="flex gap-2"><Check className="h-4 w-4 text-green-500" /> Prioridad en búsquedas</li>
+            <li className="flex gap-2"><Check className="h-4 w-4 text-green-500" /> Estadísticas avanzadas</li>
           </ul>
         </CardContent></Card>
       </div>
       <div className="space-y-3 mt-4">
         <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setPayment({ ...payment, method: 'usdc' })} className={`rounded-lg p-3 border text-sm ${payment.method === 'usdc' ? 'border-[#1565C0] bg-[#1565C0]/5' : 'border-border'}`}>💎 USDC</button>
-          <button onClick={() => setPayment({ ...payment, method: 'transfermovil' })} className={`rounded-lg p-3 border text-sm ${payment.method === 'transfermovil' ? 'border-[#1565C0] bg-[#1565C0]/5' : 'border-border'}`}>📱 Transfermóvil</button>
+          <button
+            type="button"
+            onClick={() => setPayment({ ...payment, method: 'usdc' })}
+            className={`rounded-lg p-3 border text-sm transition ${payment.method === 'usdc' ? 'border-[#1565C0] bg-[#1565C0]/5' : 'border-border'}`}
+          >
+            💎 USDC {priceUSD ? <span className="font-bold ml-1">${Number(priceUSD).toFixed(2)}</span> : null}
+          </button>
+          <button
+            type="button"
+            onClick={() => setPayment({ ...payment, method: 'transfermovil' })}
+            className={`rounded-lg p-3 border text-sm transition ${payment.method === 'transfermovil' ? 'border-[#1565C0] bg-[#1565C0]/5' : 'border-border'}`}
+          >
+            📱 Transfermóvil {priceCUP ? <span className="font-bold ml-1">{Number(priceCUP).toLocaleString('es-ES')} CUP</span> : null}
+          </button>
         </div>
         {payment.method === 'usdc' && settings && (
-          <div className="rounded-lg border bg-amber-50 p-3 text-xs">
-            <div className="font-semibold text-amber-700 mb-1">Wallet USDC ({settings.usdcNetwork})</div>
-            <div className="font-mono break-all">{settings.usdcWallet}</div>
+          <div className="rounded-lg border bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
+            <div className="font-semibold text-amber-700 dark:text-amber-300 mb-1">Wallet USDC ({settings.usdcNetwork || 'TRC20'})</div>
+            <div className="font-mono break-all">{settings.usdcWallet || '— sin configurar —'}</div>
+            {priceUSD ? <div className="mt-2">Monto a transferir: <b>${Number(priceUSD).toFixed(2)} USDC</b></div> : null}
           </div>
         )}
         {payment.method === 'transfermovil' && settings && (
-          <div className="rounded-lg border bg-amber-50 p-3 text-xs">
-            <div className="font-semibold text-amber-700 mb-1">Transfermóvil</div>
-            <div>Nombre: <b>{settings.transfermovilName}</b></div>
-            <div>Número: <b>{settings.transfermovilNumber}</b></div>
+          <div className="rounded-lg border bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
+            <div className="font-semibold text-amber-700 dark:text-amber-300 mb-1">Transfermóvil</div>
+            <div>Nombre: <b>{settings.transfermovilName || '— sin configurar —'}</b></div>
+            <div>Número: <b>{settings.transfermovilNumber || '— sin configurar —'}</b></div>
+            {priceCUP ? <div className="mt-2">Monto a transferir: <b>{Number(priceCUP).toLocaleString('es-ES')} CUP</b></div> : null}
           </div>
         )}
         <div><Label className="text-xs">Hash / Referencia del pago</Label><Input value={payment.reference} onChange={(e) => setPayment({ ...payment, reference: e.target.value })} placeholder="0x... o número de operación" /></div>
         <div>
           <Label className="text-xs">Captura del pago (máx 2MB)</Label>
           <Input type="file" accept="image/*" onChange={(e) => onScreenshotFile(e.target.files?.[0])} />
-          {payment.screenshot && <img src={payment.screenshot} alt="" className="mt-2 max-h-32 rounded-lg border" />}
+          {payment.screenshot && <img src={payment.screenshot} alt="" loading="lazy" className="mt-2 max-h-32 rounded-lg border" />}
         </div>
-        <Button onClick={onSubmit} className="w-full brand-gradient text-white">Enviar solicitud</Button>
+        <Button onClick={onSubmit} disabled={!plansEnabled} className="w-full brand-gradient text-white disabled:opacity-50">
+          {plansEnabled ? 'Enviar solicitud de pago' : 'Suscripciones desactivadas'}
+        </Button>
       </div>
     </DialogContent>
   </Dialog>
-);
+  );
+};
 
 const REPORT_REASONS = ['Spam o estafa', 'Producto prohibido', 'Información falsa', 'Contenido ofensivo', 'Precio engañoso', 'Otro'];
 const ReportDialog = ({ open, onOpenChange, form, setForm, onSubmit }) => (

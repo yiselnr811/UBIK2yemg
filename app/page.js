@@ -383,7 +383,7 @@ const App = () => {
   const [query, setQuery] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [category, setCategory] = useState('');
-  const [filters, setFilters] = useState({ location: '', businessName: '', priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
+  const [filters, setFilters] = useState({ location: '', businessName: '', province: '', municipality: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
   const [loading, setLoading] = useState(false);
 
   // === Cuba/100K optimizations ===
@@ -422,6 +422,7 @@ const App = () => {
   const emptyProduct = {
     name: '', price: '', description: '', category: 'electronica', stock: 1, image: '',
     available: true, featured: false, location: '', currency: 'CUP',
+    showPublicContact: true, province: '', municipality: '', address: '', openingHours: '', closingHours: '',
   };
   const [productForm, setProductForm] = useState(emptyProduct);
   const [legalOpen, setLegalOpen] = useState(null); // 'privacy' | 'terms' | 'contact'
@@ -552,6 +553,9 @@ const App = () => {
     if (category) params.set('category', category);
     if (filters.location) params.set('location', filters.location);
     if (filters.businessName) params.set('businessName', filters.businessName);
+    if (filters.province) params.set('province', filters.province);
+    if (filters.municipality) params.set('municipality', filters.municipality);
+    if (filters.physicalOnly) params.set('physicalOnly', 'true');
     if (filters.priceMin) params.set('priceMin', filters.priceMin);
     if (filters.priceMax) params.set('priceMax', filters.priceMax);
     if (filters.since) params.set('since', filters.since);
@@ -768,6 +772,9 @@ const App = () => {
       name: p.name, price: p.price, description: p.description || '', category: p.category,
       stock: p.stock, image: p.image || '', available: p.available, featured: !!p.featured,
       location: p.location || '', currency: p.currency || 'CUP',
+      showPublicContact: p.showPublicContact !== false, // default true for legacy products
+      province: p.province || '', municipality: p.municipality || '', address: p.address || '',
+      openingHours: p.openingHours || '', closingHours: p.closingHours || '',
     });
     setProductOpen(true);
   };
@@ -946,7 +953,7 @@ const App = () => {
 
   const resetFilters = () => {
     setCategory('');
-    setFilters({ location: '', businessName: '', priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
+    setFilters({ location: '', businessName: '', province: '', municipality: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
     setQuery('');
     setSearchInput('');
   };
@@ -1084,6 +1091,7 @@ const App = () => {
         editing={editingProduct} form={productForm} setForm={setProductForm}
         onSubmit={submitProduct} onImageFile={onProductImageFile}
         categories={categories} isPremium={user?.plan === 'premium'}
+        business={business}
       />
       <PlanDialog
         open={planOpen} onOpenChange={setPlanOpen}
@@ -1097,7 +1105,7 @@ const App = () => {
       <FiltersSheet
         open={filtersOpen} onOpenChange={setFiltersOpen}
         t={t} filters={filters} setFilters={setFilters} onApply={() => setFiltersOpen(false)}
-        onClear={() => { setFilters({ location: '', businessName: '', priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true }); setFiltersOpen(false); }}
+        onClear={() => { setFilters({ location: '', businessName: '', province: '', municipality: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true }); setFiltersOpen(false); }}
       />
       <LegalDialog open={!!legalOpen} onOpenChange={(v) => !v && setLegalOpen(null)} kind={legalOpen} settings={settings} />
     </div>
@@ -1624,7 +1632,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 
 // ============ PRODUCT CARD ============
 const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight }) => {
-  const contactsHidden = p.business?.contactsHidden === true;
+  const contactsHidden = p.contactsHidden === true || p.showPublicContact === false || p.business?.contactsHidden === true;
   const { waLink, tgLink, smsLink } = contactsHidden ? {} : buildContactLinks(p);
 
   return (
@@ -1769,36 +1777,42 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 
           {/* Contact section */}
           <div className="mt-6 p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
-            {/* Privacy mode: business hides digital contacts, show physical info */}
-            {product.business?.contactsHidden ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-[#1565C0] font-semibold">
-                  <Store className="h-5 w-5" />
-                  <span>Negocio físico</span>
+            {/* Privacy mode: product or business hides digital contacts → show physical info */}
+            {(product.contactsHidden || product.business?.contactsHidden) ? (() => {
+              // Effective physical info: product-level fields override business-level
+              const province = product.province || product.business?.province;
+              const municipality = product.municipality || product.business?.municipality;
+              const address = product.address || product.business?.address;
+              const opening = product.openingHours || product.business?.openingHours;
+              const closing = product.closingHours || product.business?.closingHours;
+              const locLine = [municipality, province].filter(Boolean).join(', ') || product.business?.location || product.location;
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-[#1565C0] font-semibold">
+                    <Store className="h-5 w-5" />
+                    <span>Negocio físico</span>
+                  </div>
+                  <p className="text-sm leading-relaxed">
+                    <b>Visita este negocio físicamente para más información o compras.</b>
+                  </p>
+                  {(address || locLine) && (
+                    <div className="text-sm text-muted-foreground flex items-start gap-2">
+                      <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0 text-[#00A86B]" />
+                      <span>
+                        {address && <>{address}<br /></>}
+                        {locLine}
+                      </span>
+                    </div>
+                  )}
+                  {(opening || closing) && (
+                    <div className="text-sm text-muted-foreground flex items-center gap-2">
+                      <Clock className="h-4 w-4 text-[#00A86B]" />
+                      <span>Horario: <b>{opening || '—'}</b> a <b>{closing || '—'}</b></span>
+                    </div>
+                  )}
                 </div>
-                <p className="text-sm leading-relaxed">
-                  <b>Visita este negocio físicamente para más información.</b>
-                </p>
-                {(product.business.address || product.business.province || product.business.municipality) && (
-                  <div className="text-sm text-muted-foreground flex items-start gap-2">
-                    <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0 text-[#00A86B]" />
-                    <span>
-                      {product.business.address && <>{product.business.address}<br /></>}
-                      {[product.business.municipality, product.business.province].filter(Boolean).join(', ')}
-                      {product.business.location && !product.business.province && product.business.location}
-                    </span>
-                  </div>
-                )}
-                {(product.business.openingHours || product.business.closingHours) && (
-                  <div className="text-sm text-muted-foreground flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-[#00A86B]" />
-                    <span>
-                      Horario: <b>{product.business.openingHours || '—'}</b> a <b>{product.business.closingHours || '—'}</b>
-                    </span>
-                  </div>
-                )}
-              </div>
-            ) : anyAvailable ? (
+              );
+            })() : anyAvailable ? (
               <>
                 {/* Primary CTA — Web3-style */}
                 <a
@@ -2721,14 +2735,33 @@ const ForgotDialog = ({ open, onOpenChange, step, setStep, data, setData, onRequ
   </Dialog>
 );
 
-const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, onImageFile, categories, isPremium }) => (
+const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, onImageFile, categories, isPremium, business }) => {
+  const hidingContacts = form.showPublicContact === false;
+  // Effective values (form override > business fallback)
+  const eff = (k) => form[k] || business?.[k] || '';
+  const missing = hidingContacts ? [
+    !eff('province') && 'provincia',
+    !eff('municipality') && 'municipio',
+    !eff('address') && 'dirección',
+    !eff('openingHours') && 'horario apertura',
+    !eff('closingHours') && 'horario cierre',
+  ].filter(Boolean) : [];
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (hidingContacts && missing.length) {
+      toast.error(`Si ocultas los contactos debes agregar dirección física y horarios del negocio. Faltan: ${missing.join(', ')}.`);
+      return;
+    }
+    onSubmit(e);
+  };
+  return (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
       <DialogHeader>
         <DialogTitle>{editing ? 'Editar producto' : 'Publicar producto'}</DialogTitle>
         <DialogDescription>Completa los datos para mostrar tu producto en el marketplace.</DialogDescription>
       </DialogHeader>
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form onSubmit={handleSubmit} className="space-y-3">
         <div><Label>Nombre *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></div>
         <div className="grid grid-cols-3 gap-2">
           <div className="col-span-2">
@@ -2771,6 +2804,48 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
           </div>
         </div>
         <div><Label>Descripción</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} /></div>
+
+        {/* === Privacy toggle (per-product) === */}
+        <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+          <label className="flex items-center justify-between gap-2 cursor-pointer">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-[#1565C0]" />
+              <span className="text-sm font-semibold">Mostrar contactos en esta publicación</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={form.showPublicContact !== false}
+              onChange={(e) => setForm({ ...form, showPublicContact: e.target.checked })}
+              className="h-4 w-4"
+            />
+          </label>
+          <p className="text-[11px] text-muted-foreground">
+            Si lo desactivas, en <b>esta publicación</b> los clientes verán <b>producto, precio, dirección, horarios</b> pero NO WhatsApp/Teléfono/SMS/Messenger. Útil para atraer clientes físicamente al negocio.
+          </p>
+          {hidingContacts && (
+            <div className="text-[11px] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200 rounded p-2">
+              ⚠️ Si ocultas los contactos debes agregar dirección física y horarios del negocio.
+              {missing.length > 0 ? <> Faltan: <b>{missing.join(', ')}</b>.</> : <> Datos OK ✅</>}
+            </div>
+          )}
+        </div>
+
+        {/* === Physical info — required when contacts hidden. Inherit from business if blank === */}
+        {hidingContacts && (
+          <div className="space-y-2 border-l-2 border-[#1565C0]/40 pl-3">
+            <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Datos físicos del negocio {business && <span className="font-normal normal-case">(se reutilizan del negocio si los dejas vacíos)</span>}</div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Provincia *</Label><Input value={form.province ?? business?.province ?? ''} onChange={(e) => setForm({ ...form, province: e.target.value })} placeholder="La Habana" /></div>
+              <div><Label>Municipio *</Label><Input value={form.municipality ?? business?.municipality ?? ''} onChange={(e) => setForm({ ...form, municipality: e.target.value })} placeholder="Plaza" /></div>
+            </div>
+            <div><Label>Dirección exacta *</Label><Input value={form.address ?? business?.address ?? ''} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Calle 23 e/ L y M" /></div>
+            <div className="grid grid-cols-2 gap-2">
+              <div><Label>Hora apertura *</Label><Input type="time" value={form.openingHours ?? business?.openingHours ?? ''} onChange={(e) => setForm({ ...form, openingHours: e.target.value })} /></div>
+              <div><Label>Hora cierre *</Label><Input type="time" value={form.closingHours ?? business?.closingHours ?? ''} onChange={(e) => setForm({ ...form, closingHours: e.target.value })} /></div>
+            </div>
+          </div>
+        )}
+
         {isPremium && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={form.featured} onChange={(e) => setForm({ ...form, featured: e.target.checked })} />
@@ -2783,7 +2858,8 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
       </form>
     </DialogContent>
   </Dialog>
-);
+  );
+};
 
 const PlanDialog = ({ open, onOpenChange, settings, payment, setPayment, onSubmit, onScreenshotFile }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
@@ -2887,6 +2963,14 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
           <Label>Nombre del negocio</Label>
           <Input value={filters.businessName || ''} onChange={(e) => setFilters({ ...filters, businessName: e.target.value })} placeholder="Ej: Cafetería La Esquina" />
         </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div><Label>Provincia</Label><Input value={filters.province || ''} onChange={(e) => setFilters({ ...filters, province: e.target.value })} placeholder="La Habana" /></div>
+          <div><Label>Municipio</Label><Input value={filters.municipality || ''} onChange={(e) => setFilters({ ...filters, municipality: e.target.value })} placeholder="Plaza" /></div>
+        </div>
+        <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 cursor-pointer hover:bg-muted/50">
+          <input type="checkbox" checked={!!filters.physicalOnly} onChange={(e) => setFilters({ ...filters, physicalOnly: e.target.checked })} />
+          <Store className="h-4 w-4 text-[#1565C0]" /> Solo negocios físicos (sin contacto online)
+        </label>
         <div className="grid grid-cols-2 gap-2">
           <div><Label>{t.priceMin}</Label><Input type="number" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} placeholder="0" /></div>
           <div><Label>{t.priceMax}</Label><Input type="number" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} placeholder="∞" /></div>

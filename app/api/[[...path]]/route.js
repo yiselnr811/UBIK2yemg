@@ -567,6 +567,9 @@ async function route(request, method, path) {
       const businessId = url.searchParams.get('businessId') || '';
       const businessName = url.searchParams.get('businessName') || '';
       const location = url.searchParams.get('location') || '';
+      const province = url.searchParams.get('province') || '';
+      const municipality = url.searchParams.get('municipality') || '';
+      const physicalOnly = url.searchParams.get('physicalOnly') === 'true'; // only products with hidden contacts
       const priceMin = url.searchParams.get('priceMin');
       const priceMax = url.searchParams.get('priceMax');
       const since = url.searchParams.get('since'); // ISO date string
@@ -610,6 +613,9 @@ async function route(request, method, path) {
           : { $in: ids };
       }
       if (location) filter.location = { $regex: escapeRe(location), $options: 'i' };
+      if (province) filter.$and.push({ $or: [{ province: { $regex: escapeRe(province), $options: 'i' } }, { location: { $regex: escapeRe(province), $options: 'i' } }] });
+      if (municipality) filter.$and.push({ $or: [{ municipality: { $regex: escapeRe(municipality), $options: 'i' } }, { location: { $regex: escapeRe(municipality), $options: 'i' } }] });
+      if (physicalOnly) filter.showPublicContact = false;
       if (priceMin || priceMax) {
         filter.price = {};
         if (priceMin) filter.price.$gte = Number(priceMin);
@@ -646,7 +652,18 @@ async function route(request, method, path) {
         }
         return [b.id, safe];
       }));
-      const enriched = items.map((p) => ({ ...p, hasImage: !!p.image || lite, business: bizMap[p.businessId] || null }));
+      const enriched = items.map((p) => {
+        const biz = bizMap[p.businessId] || null;
+        // Per-product privacy: if showPublicContact === false on the product, hide business contacts
+        // for THIS product (regardless of business-level setting).
+        const productHidesContacts = p.showPublicContact === false;
+        let safeBiz = biz;
+        if (biz && productHidesContacts) {
+          const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = biz;
+          safeBiz = { ...rest, contactsHidden: true };
+        }
+        return { ...p, hasImage: !!p.image || lite, contactsHidden: productHidesContacts || biz?.contactsHidden === true, business: safeBiz };
+      });
       // Light cache (30s) so repeat scrolls reuse the response
       return jsonCached({ products: enriched, total, page, limit, hasMore: skip + items.length < total }, 200, 30);
     }
@@ -655,14 +672,32 @@ async function route(request, method, path) {
       const product = await db.collection('products').findOne({ id: path[1] });
       if (!product) return json({ error: 'Producto no encontrado' }, 404);
       const business = await db.collection('businesses').findOne({ id: product.businessId });
-      return json({ product: { ...product, business } });
+      // Per-product privacy: optionally hide business contacts for THIS product
+      const productHidesContacts = product.showPublicContact === false;
+      let safeBiz = business;
+      if (business && productHidesContacts) {
+        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = business;
+        safeBiz = { ...rest, contactsHidden: true };
+      } else if (business && business.showContactsPublicly === false) {
+        // business-level privacy still respected
+        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = business;
+        safeBiz = { ...rest, contactsHidden: true };
+      }
+      return json({
+        product: {
+          ...product,
+          contactsHidden: productHidesContacts || (business && business.showContactsPublicly === false),
+          business: safeBiz,
+        },
+      });
     }
 
     if (!path[1] && method === 'POST') {
       const { user, error } = await requireUser(request);
       if (error) return error;
       const body = await request.json();
-      const { name, price, description, category, stock, image, available, featured, location, currency } = body || {};
+      const { name, price, description, category, stock, image, available, featured, location, currency,
+        showPublicContact, province, municipality, address, openingHours, closingHours } = body || {};
       if (!name || price == null || !category) return json({ error: 'Faltan campos obligatorios' }, 400);
 
       const count = await db.collection('products').countDocuments({ businessId: user.businessId });
@@ -670,17 +705,30 @@ async function route(request, method, path) {
       if (!isPremium && count >= 10) {
         return json({ error: 'Límite del plan Básico (10 productos) alcanzado. Actualiza a Premium.' }, 403);
       }
-      const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId }, { projection: { location: 1 } });
+      const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId });
 
-      // Cloudinary auto-upload: if `image` is a base64 data URL, upload it and store the URL instead
+      // Per-product privacy validation: if hiding contacts, require physical info (product OR business)
+      if (showPublicContact === false) {
+        const eff = (k) => body[k] || (businessForLoc && businessForLoc[k]);
+        const missing = [];
+        if (!eff('province')) missing.push('provincia');
+        if (!eff('municipality')) missing.push('municipio');
+        if (!eff('address')) missing.push('dirección');
+        if (!eff('openingHours')) missing.push('horario apertura');
+        if (!eff('closingHours')) missing.push('horario cierre');
+        if (missing.length) {
+          return json({
+            error: `Si ocultas los contactos debes agregar dirección física y horarios del negocio. Faltan: ${missing.join(', ')}.`,
+            missing,
+          }, 400);
+        }
+      }
+
+      // Cloudinary auto-upload
       let finalImage = image || '';
       if (finalImage && finalImage.startsWith('data:') && CLOUDINARY_ENABLED) {
-        try {
-          finalImage = await uploadToCloudinary(finalImage, 'products');
-        } catch (e) {
-          console.error('[Cloudinary] product upload failed:', e?.message || e);
-          // Fallback: keep the base64 to not break UX
-        }
+        try { finalImage = await uploadToCloudinary(finalImage, 'products'); }
+        catch (e) { console.error('[Cloudinary] product upload failed:', e?.message || e); }
       }
 
       const product = {
@@ -696,6 +744,13 @@ async function route(request, method, path) {
         location: location || businessForLoc?.location || '',
         available: available !== false,
         featured: isPremium ? !!featured : false,
+        // Per-product privacy
+        showPublicContact: showPublicContact !== false,
+        province: province || '',
+        municipality: municipality || '',
+        address: address || '',
+        openingHours: openingHours || '',
+        closingHours: closingHours || '',
         views: 0,
         createdAt: new Date().toISOString(),
       };
@@ -710,20 +765,37 @@ async function route(request, method, path) {
       if (!product) return json({ error: 'No encontrado' }, 404);
       if (product.businessId !== user.businessId && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
       const body = await request.json();
-      const allowed = ['name', 'price', 'description', 'category', 'stock', 'image', 'available', 'featured', 'location', 'currency'];
+      const allowed = ['name', 'price', 'description', 'category', 'stock', 'image', 'available', 'featured', 'location', 'currency',
+        'showPublicContact', 'province', 'municipality', 'address', 'openingHours', 'closingHours'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
       if (update.price != null) update.price = Number(update.price);
       if (update.stock != null) update.stock = Number(update.stock);
       if (update.currency) update.currency = update.currency === 'USDC' ? 'USDC' : 'CUP';
       if (update.featured && user.plan !== 'premium' && user.role !== 'admin') update.featured = false;
-      // Cloudinary auto-upload on edit too
-      if (update.image && typeof update.image === 'string' && update.image.startsWith('data:') && CLOUDINARY_ENABLED) {
-        try {
-          update.image = await uploadToCloudinary(update.image, 'products');
-        } catch (e) {
-          console.error('[Cloudinary] product edit upload failed:', e?.message || e);
+
+      // Validation when hiding contacts (merge of existing product + business fallback)
+      const merged = { ...product, ...update };
+      if (merged.showPublicContact === false) {
+        const biz = await db.collection('businesses').findOne({ id: product.businessId });
+        const eff = (k) => merged[k] || (biz && biz[k]);
+        const missing = [];
+        if (!eff('province')) missing.push('provincia');
+        if (!eff('municipality')) missing.push('municipio');
+        if (!eff('address')) missing.push('dirección');
+        if (!eff('openingHours')) missing.push('horario apertura');
+        if (!eff('closingHours')) missing.push('horario cierre');
+        if (missing.length) {
+          return json({
+            error: `Si ocultas los contactos debes agregar dirección física y horarios del negocio. Faltan: ${missing.join(', ')}.`,
+            missing,
+          }, 400);
         }
+      }
+
+      if (update.image && typeof update.image === 'string' && update.image.startsWith('data:') && CLOUDINARY_ENABLED) {
+        try { update.image = await uploadToCloudinary(update.image, 'products'); }
+        catch (e) { console.error('[Cloudinary] product edit upload failed:', e?.message || e); }
       }
       await db.collection('products').updateOne({ id: path[1] }, { $set: update });
       const updated = await db.collection('products').findOne({ id: path[1] });

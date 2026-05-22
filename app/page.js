@@ -1442,7 +1442,8 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 
             <div className="mt-7 max-w-2xl mx-auto">
               <div className="text-xs text-white/80 mb-2 uppercase tracking-wider font-semibold">¿Buscando algo?</div>
-              <div className="relative bg-white rounded-2xl shadow-2xl p-2">
+              {/* Force dark text on the white hero card so search input is always visible in dark mode too */}
+              <div className="relative bg-white rounded-2xl shadow-2xl p-2 text-gray-900 [&_input]:!text-gray-900 [&_input]:placeholder:!text-gray-500">
                 <SearchBar
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
@@ -1623,7 +1624,8 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 
 // ============ PRODUCT CARD ============
 const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight }) => {
-  const { waLink, tgLink, smsLink } = buildContactLinks(p);
+  const contactsHidden = p.business?.contactsHidden === true;
+  const { waLink, tgLink, smsLink } = contactsHidden ? {} : buildContactLinks(p);
 
   return (
     <Card
@@ -1767,49 +1769,80 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 
           {/* Contact section */}
           <div className="mt-6 p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
-            {/* Primary CTA — Web3-style */}
-            {anyAvailable ? (
-              <a
-                href={primaryHref}
-                target={primaryHref.startsWith('sms:') ? undefined : '_blank'}
-                rel="noopener noreferrer"
-                className="block w-full h-14 rounded-xl brand-gradient text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
-                aria-label="Contactar vendedor"
-              >
-                <MessageCircle className="h-5 w-5" />
-                Contactar vendedor
-                <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
-              </a>
+            {/* Privacy mode: business hides digital contacts, show physical info */}
+            {product.business?.contactsHidden ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-[#1565C0] font-semibold">
+                  <Store className="h-5 w-5" />
+                  <span>Negocio físico</span>
+                </div>
+                <p className="text-sm leading-relaxed">
+                  <b>Visita este negocio físicamente para más información.</b>
+                </p>
+                {(product.business.address || product.business.province || product.business.municipality) && (
+                  <div className="text-sm text-muted-foreground flex items-start gap-2">
+                    <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0 text-[#00A86B]" />
+                    <span>
+                      {product.business.address && <>{product.business.address}<br /></>}
+                      {[product.business.municipality, product.business.province].filter(Boolean).join(', ')}
+                      {product.business.location && !product.business.province && product.business.location}
+                    </span>
+                  </div>
+                )}
+                {(product.business.openingHours || product.business.closingHours) && (
+                  <div className="text-sm text-muted-foreground flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-[#00A86B]" />
+                    <span>
+                      Horario: <b>{product.business.openingHours || '—'}</b> a <b>{product.business.closingHours || '—'}</b>
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : anyAvailable ? (
+              <>
+                {/* Primary CTA — Web3-style */}
+                <a
+                  href={primaryHref}
+                  target={primaryHref.startsWith('sms:') ? undefined : '_blank'}
+                  rel="noopener noreferrer"
+                  className="block w-full h-14 rounded-xl brand-gradient text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
+                  aria-label="Contactar vendedor"
+                >
+                  <MessageCircle className="h-5 w-5" />
+                  Contactar vendedor
+                  <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
+                </a>
+
+                {/* Secondary channels — only shown if there are 2+ channels */}
+                {((!!waLink + !!tgLink + !!smsLink) > 1) && (
+                  <>
+                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-4 mb-2 text-center font-semibold">
+                      O elige otro canal
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {waLink && (
+                        <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
+                          <MessageCircle className="h-4 w-4" /> {t.whatsapp}
+                        </a>
+                      )}
+                      {tgLink && (
+                        <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
+                          <Send className="h-4 w-4" /> {t.telegram}
+                        </a>
+                      )}
+                      {smsLink && (
+                        <a href={smsLink} className="h-11 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
+                          <Phone className="h-4 w-4" /> {t.sms}
+                        </a>
+                      )}
+                    </div>
+                  </>
+                )}
+              </>
             ) : (
               <div className="text-center py-3 text-sm text-muted-foreground">
                 Este vendedor no configuró canales de contacto.
               </div>
-            )}
-
-            {/* Secondary channels — only shown if there are 2+ channels */}
-            {anyAvailable && ((!!waLink + !!tgLink + !!smsLink) > 1) && (
-              <>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-4 mb-2 text-center font-semibold">
-                  O elige otro canal
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                  {waLink && (
-                    <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                      <MessageCircle className="h-4 w-4" /> {t.whatsapp}
-                    </a>
-                  )}
-                  {tgLink && (
-                    <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                      <Send className="h-4 w-4" /> {t.telegram}
-                    </a>
-                  )}
-                  {smsLink && (
-                    <a href={smsLink} className="h-11 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                      <Phone className="h-4 w-4" /> {t.sms}
-                    </a>
-                  )}
-                </div>
-              </>
             )}
           </div>
 
@@ -2945,11 +2978,35 @@ const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
 
 const BusinessEditDialog = ({ biz, onClose, onSave }) => {
   const [form, setForm] = useState(null);
-  useEffect(() => { if (biz) setForm({ ...biz }); }, [biz]);
+  useEffect(() => {
+    if (biz) {
+      // Pre-load existing values, defaulting new fields safely so admin can edit without losing data
+      setForm({
+        showContactsPublicly: true, // default visible
+        province: '', municipality: '', address: '', openingHours: '', closingHours: '', messenger: '',
+        ...biz,
+      });
+    }
+  }, [biz]);
   if (!biz || !form) return null;
+  const hidingContacts = form.showContactsPublicly === false;
+  const missing = hidingContacts ? [
+    !form.province && 'provincia',
+    !form.municipality && 'municipio',
+    !form.address && 'dirección',
+    !form.openingHours && 'horario apertura',
+    !form.closingHours && 'horario cierre',
+  ].filter(Boolean) : [];
+  const handleSave = () => {
+    if (hidingContacts && missing.length) {
+      toast.error(`Si ocultas los contactos debes agregar dirección física y horarios. Faltan: ${missing.join(', ')}.`);
+      return;
+    }
+    onSave(biz.id, form);
+  };
   return (
     <Dialog open={!!biz} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Store className="h-5 w-5" /> Editar negocio
@@ -2958,23 +3015,66 @@ const BusinessEditDialog = ({ biz, onClose, onSave }) => {
         <div className="space-y-3">
           <div><Label>Nombre *</Label><Input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div><Label>Descripción</Label><Textarea value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
-          <div className="grid grid-cols-2 gap-2">
-            <div><Label>WhatsApp</Label><Input value={form.whatsapp || ''} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} /></div>
-            <div><Label>Telegram</Label><Input value={form.telegram || ''} onChange={(e) => setForm({ ...form, telegram: e.target.value })} /></div>
+
+          {/* === Privacy toggle === */}
+          <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+            <label className="flex items-center justify-between gap-2 cursor-pointer">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-[#1565C0]" />
+                <span className="text-sm font-semibold">Mostrar contactos públicamente</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={form.showContactsPublicly !== false}
+                onChange={(e) => setForm({ ...form, showContactsPublicly: e.target.checked })}
+                className="h-4 w-4"
+              />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              Si lo desactivas, los compradores verán: <b>productos, dirección, horarios y descripción</b>, pero <b>NO</b> verán tus contactos digitales. Útil para negocios físicos.
+            </p>
+            {hidingContacts && (
+              <div className="text-[11px] bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-amber-800 dark:text-amber-200 rounded p-2">
+                ⚠️ Si ocultas los contactos debes agregar dirección física y horarios. {missing.length > 0 && <>Faltan: <b>{missing.join(', ')}</b>.</>}
+              </div>
+            )}
           </div>
+
+          {/* === Contact channels (hidden if showContactsPublicly === false) === */}
+          {!hidingContacts && (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>WhatsApp</Label><Input value={form.whatsapp || ''} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} placeholder="+5355..." /></div>
+                <div><Label>Telegram</Label><Input value={form.telegram || ''} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>SMS</Label><Input value={form.sms || ''} onChange={(e) => setForm({ ...form, sms: e.target.value })} placeholder="+5355..." /></div>
+                <div><Label>Messenger (URL)</Label><Input value={form.messenger || ''} onChange={(e) => setForm({ ...form, messenger: e.target.value })} placeholder="m.me/..." /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div><Label>Instagram</Label><Input value={form.instagram || ''} onChange={(e) => setForm({ ...form, instagram: e.target.value })} /></div>
+                <div><Label>Facebook</Label><Input value={form.facebook || ''} onChange={(e) => setForm({ ...form, facebook: e.target.value })} /></div>
+              </div>
+            </>
+          )}
+
+          {/* === Physical location (mandatory when hiding contacts) === */}
           <div className="grid grid-cols-2 gap-2">
-            <div><Label>SMS</Label><Input value={form.sms || ''} onChange={(e) => setForm({ ...form, sms: e.target.value })} /></div>
-            <div><Label>Ubicación</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} /></div>
+            <div><Label>Provincia {hidingContacts && '*'}</Label><Input value={form.province || ''} onChange={(e) => setForm({ ...form, province: e.target.value })} placeholder="La Habana" /></div>
+            <div><Label>Municipio {hidingContacts && '*'}</Label><Input value={form.municipality || ''} onChange={(e) => setForm({ ...form, municipality: e.target.value })} placeholder="Plaza" /></div>
           </div>
+          <div><Label>Dirección exacta {hidingContacts && '*'}</Label><Input value={form.address || ''} onChange={(e) => setForm({ ...form, address: e.target.value })} placeholder="Calle 23 e/ L y M" /></div>
           <div className="grid grid-cols-2 gap-2">
-            <div><Label>Instagram</Label><Input value={form.instagram || ''} onChange={(e) => setForm({ ...form, instagram: e.target.value })} /></div>
-            <div><Label>Facebook</Label><Input value={form.facebook || ''} onChange={(e) => setForm({ ...form, facebook: e.target.value })} /></div>
+            <div><Label>Hora apertura {hidingContacts && '*'}</Label><Input type="time" value={form.openingHours || ''} onChange={(e) => setForm({ ...form, openingHours: e.target.value })} /></div>
+            <div><Label>Hora cierre {hidingContacts && '*'}</Label><Input type="time" value={form.closingHours || ''} onChange={(e) => setForm({ ...form, closingHours: e.target.value })} /></div>
           </div>
+          <div><Label>Ubicación / Ciudad (visible)</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
+
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={!!form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
             <ShieldCheck className="h-4 w-4 text-[#1565C0]" /> Marcar como verificado
           </label>
-          <Button onClick={() => onSave(biz.id, form)} className="w-full brand-gradient text-white">Guardar cambios</Button>
+          <Button onClick={handleSave} className="w-full brand-gradient text-white">Guardar cambios</Button>
         </div>
       </DialogContent>
     </Dialog>

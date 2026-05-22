@@ -460,11 +460,25 @@ async function route(request, method, path) {
 
   // ===== BUSINESSES =====
   if (path[0] === 'businesses') {
+    // Helper: strip private contact fields when business has showContactsPublicly === false
+    const sanitizeBusiness = (biz, viewerUser) => {
+      if (!biz) return biz;
+      const isOwner = viewerUser && (viewerUser.id === biz.userId || viewerUser.role === 'admin');
+      if (biz.showContactsPublicly === false && !isOwner) {
+        return { ...biz, whatsapp: '', telegram: '', sms: '', messenger: '', instagram: '', facebook: '', contactsHidden: true };
+      }
+      return biz;
+    };
     if (path[1] && method === 'GET') {
       const business = await db.collection('businesses').findOne({ id: path[1] });
       if (!business) return json({ error: 'Negocio no encontrado' }, 404);
       const products = await db.collection('products').find({ businessId: path[1] }).sort({ createdAt: -1 }).toArray();
-      return json({ business, products });
+      // Try to identify viewer (optional auth) so owners still see their own contacts
+      let viewer = null;
+      try { const r = await requireUser(request); if (!r.error) viewer = r.user; } catch {}
+      const safeBiz = sanitizeBusiness(business, viewer);
+      // Also strip business field from products that include nested business contact info
+      return json({ business: safeBiz, products });
     }
     if (path[1] && method === 'PUT') {
       const { user, error } = await requireUser(request);
@@ -473,9 +487,28 @@ async function route(request, method, path) {
       if (!business) return json({ error: 'No encontrado' }, 404);
       if (business.userId !== user.id && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
       const body = await request.json();
-      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook'];
+      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook',
+        'showContactsPublicly', 'province', 'municipality', 'address', 'openingHours', 'closingHours', 'messenger'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      // Validation: if hiding contacts, require physical presence info
+      const merged = { ...business, ...update };
+      if (merged.showContactsPublicly === false) {
+        const missing = [];
+        if (!merged.province) missing.push('provincia');
+        if (!merged.municipality) missing.push('municipio');
+        if (!merged.address) missing.push('dirección');
+        if (!merged.openingHours) missing.push('horario apertura');
+        if (!merged.closingHours) missing.push('horario cierre');
+        if (missing.length) {
+          return json({
+            error: `Si ocultas los contactos debes agregar dirección física y horarios. Faltan: ${missing.join(', ')}.`,
+            missing,
+          }, 400);
+        }
+      }
+
       // Cloudinary auto-upload for logo if base64
       if (update.logo && typeof update.logo === 'string' && update.logo.startsWith('data:') && CLOUDINARY_ENABLED) {
         try { update.logo = await uploadToCloudinary(update.logo, 'logos'); }
@@ -600,12 +633,18 @@ async function route(request, method, path) {
             .toArray()
         : [];
       const bizMap = Object.fromEntries(businesses.map((b) => {
+        // Strip private contacts when business opted out of public contacts
+        let safe = b;
+        if (b.showContactsPublicly === false) {
+          const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = b;
+          safe = { ...rest, contactsHidden: true };
+        }
         if (lite) {
           // Strip heavy logo (base64) in lite mode for Cuban connections
-          const { logo, ...rest } = b;
+          const { logo, ...rest } = safe;
           return [b.id, { ...rest, hasLogo: !!logo }];
         }
-        return [b.id, b];
+        return [b.id, safe];
       }));
       const enriched = items.map((p) => ({ ...p, hasImage: !!p.image || lite, business: bizMap[p.businessId] || null }));
       // Light cache (30s) so repeat scrolls reuse the response

@@ -663,3 +663,17 @@ agent_communication:
       4. Check platform/CDN configuration
       
       **NO CRITICAL ISSUES FOUND** - All core functionality working correctly. Cache header issue is a performance optimization that should be fixed before production but doesn't block MVP.
+
+  - agent: "main"
+    message: |
+      [Jun 2025] Public shareable BUSINESS profile pages added.
+      - New route: /app/app/b/[id]/page.js (Server Component) emits dynamic OpenGraph + Twitter Card metadata
+        (og:title, og:description, og:image=business.logo, og:url, canonical) so WhatsApp/Facebook/Twitter
+        previews show the logo + name + description.
+      - Renders an attractive gradient fallback page server-side; real browsers are auto-redirected to /?business=<id>
+        (SPA business view).
+      - Frontend (/app/app/page.js): added shareBusiness() helper (uses navigator.share with clipboard fallback).
+      - Added "Compartir negocio" button on the public BusinessDetail view (next to "Contactar").
+      - Added "Compartir negocio" button on the seller Dashboard header for easy self-sharing.
+      - Wired per-product share button (shareProduct) on the business profile (was no-op before).
+      Verified via curl using a real business id: all OG meta tags present, redirect script emitted.

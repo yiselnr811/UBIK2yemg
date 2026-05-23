@@ -717,6 +717,18 @@ const App = () => {
     catch { toast.error('No se pudo compartir'); }
   };
 
+  const shareBusiness = async (b) => {
+    if (!b?.id) return;
+    // SEO-friendly URL — server-rendered with OpenGraph metadata (logo, name, description).
+    const url = `${window.location.origin}/b/${b.id}`;
+    const text = b.description ? `${b.name} — ${b.description.slice(0, 120)}` : b.name;
+    if (navigator.share) {
+      try { await navigator.share({ title: b.name, text, url }); return; } catch {}
+    }
+    try { await navigator.clipboard.writeText(url); toast.success('Enlace del negocio copiado'); }
+    catch { toast.error('No se pudo compartir'); }
+  };
+
   // === Product CRUD ===
   const compressImage = (file, maxSize = 1200, quality = 0.82) =>
     new Promise((resolve, reject) => {
@@ -1071,6 +1083,8 @@ const App = () => {
             favorites={favorites} toggleFav={toggleFav}
             token={token} isLogged={!!user}
             onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
+            onShareBusiness={shareBusiness} onShareProduct={shareProduct}
+            onReport={openReport}
           />
         )}
 
@@ -1086,6 +1100,7 @@ const App = () => {
             user={user} business={business} products={myProducts}
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
+            onShareBusiness={() => shareBusiness(business)}
           />
         )}
         {view === 'dashboard' && user && !business && (
@@ -1943,7 +1958,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 };
 
 // ============ BUSINESS DETAIL ============
-const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, token, isLogged, onLoginNeeded }) => {
+const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, token, isLogged, onLoginNeeded, onShareBusiness, onShareProduct, onReport }) => {
   if (!data) return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   const { business, products } = data;
   const wa = (business.whatsapp || '').replace(/[^0-9+]/g, '').replace('+', '');
@@ -1973,11 +1988,20 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, toke
                 {business.instagram && <span className="flex items-center gap-1"><Instagram className="h-4 w-4" /> {business.instagram}</span>}
                 {business.facebook && <span className="flex items-center gap-1"><Facebook className="h-4 w-4" /> {business.facebook}</span>}
               </div>
-              {waLink && (
-                <a href={waLink} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex items-center gap-2 px-5 h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold shadow">
-                  <MessageCircle className="h-4 w-4" /> {t.contact}
-                </a>
-              )}
+              <div className="flex flex-wrap gap-2 mt-4">
+                {waLink && (
+                  <a href={waLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 px-5 h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold shadow">
+                    <MessageCircle className="h-4 w-4" /> {t.contact}
+                  </a>
+                )}
+                <Button
+                  variant="outline"
+                  className="h-11 rounded-xl font-semibold"
+                  onClick={() => onShareBusiness?.(business)}
+                >
+                  <Share2 className="h-4 w-4 mr-2" /> Compartir negocio
+                </Button>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -1989,7 +2013,15 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, toke
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
           {products.map((p) => (
-            <ProductCard key={p.id} p={{ ...p, business }} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => {}} onReport={() => {}} />
+            <ProductCard
+              key={p.id}
+              p={{ ...p, business }}
+              onClick={() => onProduct(p.id)}
+              isFav={favorites.includes(p.id)}
+              onFav={() => toggleFav(p.id)}
+              onShare={() => onShareProduct?.({ ...p, business })}
+              onReport={() => onReport?.(p.id, business.id)}
+            />
           ))}
         </div>
       )}
@@ -2208,7 +2240,7 @@ const BuyerDashboard = ({ user, onBecomeSeller, onFavorites, favoritesCount }) =
 );
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }) => {
+const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness }) => {
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
   const [tab, setTab] = React.useState('all');
@@ -2292,7 +2324,10 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan }
           <h1 className="text-3xl font-extrabold">Panel de {business?.name}</h1>
           <p className="text-muted-foreground">Gestiona tu catálogo y suscripción.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
+          <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio">
+            <Share2 className="h-4 w-4 mr-2" /> Compartir negocio
+          </Button>
           <Button variant="outline" onClick={onPlan}>
             <Crown className="h-4 w-4 mr-2 text-amber-500" /> {isPremium ? 'Premium activo' : 'Mejorar plan'}
           </Button>

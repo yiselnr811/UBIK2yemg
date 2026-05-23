@@ -36,9 +36,9 @@ export async function generateMetadata({ params }) {
   const shortDesc = (product.description || '').slice(0, 160)
     || `${product.name} disponible en ${product.business?.name || 'UBIK2 YEMG'}. Precio: ${priceLabel}.`;
   const shareUrl = `${BASE_URL}/product/${product.id}`;
-  const ogImage = product.image && product.image.startsWith('http')
-    ? product.image
-    : `${BASE_URL}/logo.png`;
+  const ogImage = product.image && product.image.includes('res.cloudinary.com')
+    ? product.image.replace('/upload/', '/upload/c_pad,w_1200,h_630,b_auto,f_jpg,q_auto/')
+    : (product.image && product.image.startsWith('http') ? product.image : `${BASE_URL}/logo.png`);
   return {
     title,
     description: shortDesc,

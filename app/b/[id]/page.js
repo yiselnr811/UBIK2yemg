@@ -35,9 +35,10 @@ export async function generateMetadata({ params }) {
   const shortDesc = (business.description || '').slice(0, 160)
     || `Visita ${business.name} en UBIK2 YEMG${business.location ? ` — ${business.location}` : ''}.`;
   const shareUrl = `${BASE_URL}/b/${business.id}`;
-  const ogImage = business.logo && business.logo.startsWith('http')
-    ? business.logo
-    : `${BASE_URL}/logo.png`;
+  // Use a Cloudinary 1200x630 OG-formatted image if logo is hosted on Cloudinary.
+  const ogImage = business.logo && business.logo.includes('res.cloudinary.com')
+    ? business.logo.replace('/upload/', '/upload/c_pad,w_1200,h_630,b_auto,f_jpg,q_auto/')
+    : (business.logo && business.logo.startsWith('http') ? business.logo : `${BASE_URL}/logo.png`);
   return {
     title,
     description: shortDesc,

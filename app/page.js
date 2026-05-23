@@ -269,6 +269,19 @@ const formatPrice = (n, currency = 'CUP') => {
   return `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(num)} CUP`;
 };
 
+// === Cloudinary thumbnail helper ===
+// Injects a transformation segment into a Cloudinary URL so we serve tiny, optimized
+// thumbnails (WebP/AVIF auto, auto-quality) instead of full-size logos. Falls back to
+// the original URL if it is not a Cloudinary image.
+const cdnThumb = (url, size = 200) => {
+  if (!url || typeof url !== 'string') return url;
+  if (!url.includes('res.cloudinary.com')) return url;
+  // Avoid double-applying transformations.
+  if (url.includes('/c_fill,') || url.includes(`/w_${size},`)) return url;
+  return url.replace('/upload/', `/upload/c_fill,w_${size},h_${size},f_auto,q_auto/`);
+};
+
+
 // === Centralized contact links for "Contactar vendedor" buttons ===
 // Builds a professional, dynamic message and detects which channels the seller has.
 // Returns { msg, encoded, wa, tg, sms, waLink, tgLink, smsLink, anyAvailable }.
@@ -729,6 +742,25 @@ const App = () => {
     catch { toast.error('No se pudo compartir'); }
   };
 
+  // === Owner self-edit logo ===
+  // Sends the new logo to /api/businesses/<id> (the backend uploads it to Cloudinary
+  // and returns the CDN URL). Updates local state so the new logo appears instantly.
+  const updateMyLogo = async (dataUrl) => {
+    if (!business?.id) return;
+    try {
+      const updated = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: { logo: dataUrl },
+      });
+      const newBiz = updated?.business || { ...business, logo: dataUrl };
+      setBusiness(newBiz);
+      toast.success('Logo actualizado');
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo actualizar el logo');
+    }
+  };
+
   // === Product CRUD ===
   const compressImage = (file, maxSize = 1200, quality = 0.82) =>
     new Promise((resolve, reject) => {
@@ -747,6 +779,39 @@ const App = () => {
           canvas.width = width; canvas.height = height;
           canvas.getContext('2d').drawImage(img, 0, 0, width, height);
           resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+
+  // Logo-specific compressor: 512x512 max, WebP first with JPEG fallback for older browsers.
+  // Logos are decorative thumbnails — we never need full HD here.
+  const compressLogo = (file, maxSize = 512) =>
+    new Promise((resolve, reject) => {
+      if (!file) return reject(new Error('Archivo vacío'));
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxSize || height > maxSize) {
+            if (width >= height) { height = Math.round((height * maxSize) / width); width = maxSize; }
+            else { width = Math.round((width * maxSize) / height); height = maxSize; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          // Try WebP first (~30% smaller). Fall back to JPEG if the browser refuses.
+          let out = null;
+          try { out = canvas.toDataURL('image/webp', 0.85); } catch { out = null; }
+          if (!out || !out.startsWith('data:image/webp')) {
+            out = canvas.toDataURL('image/jpeg', 0.85);
+          }
+          resolve(out);
         };
         img.src = e.target.result;
       };
@@ -1101,6 +1166,7 @@ const App = () => {
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
             onShareBusiness={() => shareBusiness(business)}
+            compressLogo={compressLogo} onLogoChange={updateMyLogo}
           />
         )}
         {view === 'dashboard' && user && !business && (
@@ -1124,6 +1190,7 @@ const App = () => {
             onSaveSettings={saveAdminSettings}
             savingSettings={savingSettings}
             tab={adminTab} setTab={setAdminTab} onRefresh={loadAdmin}
+            compressLogo={compressLogo}
           />
         )}
       </main>
@@ -1138,10 +1205,12 @@ const App = () => {
         form={authForm} setForm={setAuthForm}
         onSubmit={handleAuth}
         onForgot={() => { setAuthOpen(false); setForgotStep(1); setForgotOpen(true); }}
+        compressLogo={compressLogo}
       />
       <UpgradeSellerDialog
         open={upgradeOpen} onOpenChange={setUpgradeOpen}
         form={upgradeForm} setForm={setUpgradeForm} onSubmit={() => upgradeSeller(upgradeForm)}
+        compressLogo={compressLogo}
       />
       <ForgotDialog
         open={forgotOpen} onOpenChange={setForgotOpen}
@@ -1177,6 +1246,89 @@ const App = () => {
 };
 
 // ============ SUB COMPONENTS ============
+
+// ============ LOGO UPLOADER ============
+// Reusable logo upload control with preview, loader and remove button.
+// Compresses to WebP/JPEG @ 512×512 max before passing the data URL to onChange.
+// The backend turns base64 into a Cloudinary URL on save.
+const LogoUploader = ({ value, onChange, compressLogo, label = 'Logo del negocio', size = 'md' }) => {
+  const inputRef = React.useRef(null);
+  const [busy, setBusy] = React.useState(false);
+  const dims = size === 'sm' ? 'h-16 w-16' : size === 'lg' ? 'h-28 w-28' : 'h-20 w-20';
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { toast.error('Solo se permiten imágenes'); return; }
+    if (file.size > 5 * 1024 * 1024) { toast.error('El logo debe pesar menos de 5MB'); return; }
+    setBusy(true);
+    try {
+      const dataUrl = await compressLogo(file);
+      onChange(dataUrl);
+    } catch {
+      toast.error('No se pudo procesar la imagen');
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+  return (
+    <div>
+      <Label className="text-sm">{label}</Label>
+      <div className="mt-1 flex items-center gap-3">
+        <div className={`${dims} rounded-2xl bg-muted border border-border overflow-hidden flex items-center justify-center relative shrink-0`}>
+          {busy ? (
+            <Loader2 className="h-6 w-6 text-[#1565C0] animate-spin" />
+          ) : value ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={value}
+              alt="logo preview"
+              className="w-full h-full object-cover"
+              loading="lazy"
+              decoding="async"
+            />
+          ) : (
+            <ImageIcon className="h-6 w-6 text-muted-foreground/50" />
+          )}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              onClick={() => inputRef.current?.click()}
+            >
+              {busy ? (<><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Subiendo...</>) : (value ? 'Cambiar logo' : 'Subir logo')}
+            </Button>
+            {value && !busy && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => onChange('')}
+              >
+                <X className="h-3 w-3 mr-1" /> Quitar
+              </Button>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1 leading-tight">
+            JPG/PNG/WebP. Se comprime a ~512px (WebP) para carga rápida en móviles.
+          </p>
+        </div>
+      </div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => handleFile(e.target.files?.[0])}
+      />
+    </div>
+  );
+};
+
 
 const LogoSVG = ({ size = 40, showText = false, textWhite = false }) => (
   <svg
@@ -1929,7 +2081,15 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
             <div className="mt-6 rounded-2xl border border-border bg-card p-4 cursor-pointer hover:bg-muted/40 transition" onClick={() => onBusiness(product.business.id)}>
               <div className="flex items-center gap-3">
                 {product.business.logo ? (
-                  <img src={product.business.logo} alt="" className="h-14 w-14 rounded-full object-cover border" />
+                  <img
+                    src={cdnThumb(product.business.logo, 120)}
+                    alt={product.business.name || ''}
+                    width={56}
+                    height={56}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-14 w-14 rounded-full object-cover border"
+                  />
                 ) : (
                   <div className="h-14 w-14 rounded-full brand-gradient flex items-center justify-center text-white font-bold text-xl">
                     {product.business.name[0]?.toUpperCase()}
@@ -1971,7 +2131,16 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, toke
         <CardContent className="p-6">
           <div className="flex flex-col md:flex-row gap-6 items-start -mt-16 md:-mt-20">
             {business.logo ? (
-              <img src={business.logo} alt="" className="h-24 w-24 md:h-32 md:w-32 rounded-2xl object-cover border-4 border-card shadow-lg" />
+              <img
+                src={cdnThumb(business.logo, 512)}
+                alt={business.name}
+                width={128}
+                height={128}
+                loading="eager"
+                fetchPriority="high"
+                decoding="async"
+                className="h-24 w-24 md:h-32 md:w-32 rounded-2xl object-cover border-4 border-card shadow-lg"
+              />
             ) : (
               <div className="h-24 w-24 md:h-32 md:w-32 rounded-2xl brand-gradient border-4 border-card shadow-lg flex items-center justify-center text-white text-4xl font-bold">
                 {business.name[0]?.toUpperCase()}
@@ -2240,7 +2409,7 @@ const BuyerDashboard = ({ user, onBecomeSeller, onFavorites, favoritesCount }) =
 );
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness }) => {
+const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, onLogoChange }) => {
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
   const [tab, setTab] = React.useState('all');
@@ -2320,9 +2489,27 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
   return (
     <section className="container mx-auto px-4 py-8">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-3xl font-extrabold">Panel de {business?.name}</h1>
-          <p className="text-muted-foreground">Gestiona tu catálogo y suscripción.</p>
+        <div className="flex items-center gap-4 min-w-0">
+          {business?.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={cdnThumb(business.logo, 200)}
+              alt={business.name}
+              width={64}
+              height={64}
+              loading="eager"
+              decoding="async"
+              className="h-16 w-16 rounded-2xl object-cover border border-border shadow-sm shrink-0"
+            />
+          ) : (
+            <div className="h-16 w-16 rounded-2xl brand-gradient flex items-center justify-center text-white text-2xl font-bold shrink-0">
+              {business?.name?.[0]?.toUpperCase() || '?'}
+            </div>
+          )}
+          <div className="min-w-0">
+            <h1 className="text-2xl md:text-3xl font-extrabold truncate">Panel de {business?.name}</h1>
+            <p className="text-muted-foreground text-sm">Gestiona tu catálogo y suscripción.</p>
+          </div>
         </div>
         <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio">
@@ -2336,6 +2523,20 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
           </Button>
         </div>
       </div>
+
+      {/* === Quick logo edit (owner self-edit) === */}
+      {onLogoChange && compressLogo && (
+        <Card className="mb-6">
+          <CardContent className="p-4">
+            <LogoUploader
+              value={business?.logo || ''}
+              onChange={onLogoChange}
+              compressLogo={compressLogo}
+              label="Logo del negocio (toca para cambiar)"
+            />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats — 4 cards instead of 3 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
@@ -2417,7 +2618,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo }) => {
   const [editBiz, setEditBiz] = useState(null);
   const { payments, users, products, stats, reports } = data;
   const pending = payments.filter((p) => p.status === 'pending');
@@ -2568,7 +2769,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
               </CardContent>
             </Card>
           ))}
-          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={(id, patch) => { onUpdateBusiness(id, patch); setEditBiz(null); }} />
+          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={(id, patch) => { onUpdateBusiness(id, patch); setEditBiz(null); }} compressLogo={compressLogo} />
         </TabsContent>
 
         <TabsContent value="products" className="mt-4">
@@ -2693,7 +2894,7 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
 );
 
 // ============ DIALOGS ============
-const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit, onForgot }) => (
+const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit, onForgot, compressLogo }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
       <DialogHeader>
@@ -2743,6 +2944,7 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
           {mode === 'register' && form.accountType === 'seller' && (
             <>
               <div><Label>Nombre del negocio *</Label><Input value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} required placeholder="Ej: Mi tienda" /></div>
+              <LogoUploader value={form.logo || ''} onChange={(v) => setForm({ ...form, logo: v })} compressLogo={compressLogo} />
               <div><Label>WhatsApp * (formato internacional)</Label><Input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} required placeholder="+5355555555" /></div>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label>Telegram (@usuario)</Label><Input value={form.telegram} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
@@ -2768,7 +2970,7 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
   </Dialog>
 );
 
-const UpgradeSellerDialog = ({ open, onOpenChange, form, setForm, onSubmit }) => (
+const UpgradeSellerDialog = ({ open, onOpenChange, form, setForm, onSubmit, compressLogo }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
       <DialogHeader>
@@ -2781,6 +2983,7 @@ const UpgradeSellerDialog = ({ open, onOpenChange, form, setForm, onSubmit }) =>
       </DialogHeader>
       <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }} className="space-y-3">
         <div><Label>Nombre del negocio *</Label><Input value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} required placeholder="Ej: Mi tienda" /></div>
+        <LogoUploader value={form.logo || ''} onChange={(v) => setForm({ ...form, logo: v })} compressLogo={compressLogo} />
         <div><Label>WhatsApp *</Label><Input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} required placeholder="+5355555555" /></div>
         <div className="grid grid-cols-2 gap-2">
           <div><Label>Telegram</Label><Input value={form.telegram} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
@@ -3212,7 +3415,7 @@ const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
   );
 };
 
-const BusinessEditDialog = ({ biz, onClose, onSave }) => {
+const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo }) => {
   const [form, setForm] = useState(null);
   useEffect(() => {
     if (biz) {
@@ -3249,6 +3452,7 @@ const BusinessEditDialog = ({ biz, onClose, onSave }) => {
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
+          <LogoUploader value={form.logo || ''} onChange={(v) => setForm({ ...form, logo: v })} compressLogo={compressLogo} />
           <div><Label>Nombre *</Label><Input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div><Label>Descripción</Label><Textarea value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
 

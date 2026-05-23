@@ -2526,13 +2526,21 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
 
       {/* === Quick logo edit (owner self-edit) === */}
       {onLogoChange && compressLogo && (
-        <Card className="mb-6">
+        <Card className={`mb-6 ${!business?.logo ? 'border-[#00A86B]/50 bg-[#00A86B]/5' : ''}`}>
           <CardContent className="p-4">
+            {!business?.logo && (
+              <div className="mb-3 flex items-start gap-2 text-sm">
+                <Sparkles className="h-4 w-4 text-[#00A86B] shrink-0 mt-0.5" />
+                <p>
+                  <b>Aún no tienes logo.</b> Súbelo ahora para que los compradores te encuentren más fácilmente y tu negocio se vea profesional. Se comprime y optimiza automáticamente.
+                </p>
+              </div>
+            )}
             <LogoUploader
               value={business?.logo || ''}
               onChange={onLogoChange}
               compressLogo={compressLogo}
-              label="Logo del negocio (toca para cambiar)"
+              label={business?.logo ? 'Logo del negocio (toca para cambiar)' : 'Subir logo del negocio'}
             />
           </CardContent>
         </Card>

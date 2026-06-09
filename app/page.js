@@ -261,12 +261,29 @@ const TRANSLATIONS = {
 const FLAGS = { es: '🇪🇸', en: '🇬🇧', it: '🇮🇹', ru: '🇷🇺' };
 const LANG_NAMES = { es: 'Español', en: 'English', it: 'Italiano', ru: 'Русский' };
 
+// Currency display map — flags + locales for prettier formatting.
+const CURRENCY_INFO = {
+  CUP:  { flag: '🇨🇺', label: 'CUP',  locale: 'es-ES', fractionDigits: 0 },
+  MLC:  { flag: '💳', label: 'MLC',  locale: 'es-ES', fractionDigits: 2 },
+  USD:  { flag: '🇺🇸', label: 'USD',  locale: 'en-US', fractionDigits: 2 },
+  EUR:  { flag: '🇪🇺', label: 'EUR',  locale: 'es-ES', fractionDigits: 2 },
+  GBP:  { flag: '🇬🇧', label: 'GBP',  locale: 'en-GB', fractionDigits: 2 },
+  CAD:  { flag: '🇨🇦', label: 'CAD',  locale: 'en-CA', fractionDigits: 2 },
+  MXN:  { flag: '🇲🇽', label: 'MXN',  locale: 'es-MX', fractionDigits: 2 },
+  USDT: { flag: '💎', label: 'USDT', locale: 'en-US', fractionDigits: 2 },
+  USDC: { flag: '💠', label: 'USDC', locale: 'en-US', fractionDigits: 2 },
+};
+const ALL_CURRENCIES = Object.keys(CURRENCY_INFO);
+
 const formatPrice = (n, currency = 'CUP') => {
   const num = Number(n || 0);
-  if (currency === 'USDC') {
-    return `${new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num)} USDC`;
-  }
-  return `${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 }).format(num)} CUP`;
+  const info = CURRENCY_INFO[currency] || CURRENCY_INFO.CUP;
+  const code = info.label;
+  const formatted = new Intl.NumberFormat(info.locale, {
+    minimumFractionDigits: info.fractionDigits,
+    maximumFractionDigits: info.fractionDigits,
+  }).format(num);
+  return `${formatted} ${code}`;
 };
 
 // === Cloudinary thumbnail helper ===
@@ -390,13 +407,14 @@ const App = () => {
   const [products, setProducts] = useState([]);
   const [featured, setFeatured] = useState([]);
   const [categories, setCategories] = useState([]);
-  const [stats, setStats] = useState({ productsCount: 0, businessesCount: 0, usersCount: 0 });
+  const [businessTypes, setBusinessTypes] = useState([]);
+  const [stats, setStats] = useState({ productsCount: 0, businessesCount: 0, usersCount: 0, servicesCount: 0, activeBusinessesCount: 0 });
   const [settings, setSettings] = useState(null);
 
   const [query, setQuery] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [category, setCategory] = useState('');
-  const [filters, setFilters] = useState({ location: '', businessName: '', province: '', municipality: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
+  const [filters, setFilters] = useState({ location: '', businessName: '', country: '', province: '', municipality: '', businessType: '', subcategory: '', currency: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
   const [loading, setLoading] = useState(false);
 
   // === Cuba/100K optimizations ===
@@ -433,7 +451,7 @@ const App = () => {
   const [productOpen, setProductOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const emptyProduct = {
-    name: '', price: '', description: '', category: 'electronica', stock: 1, image: '',
+    name: '', price: '', description: '', category: 'electronica', subcategory: '', stock: 1, image: '',
     available: true, featured: false, location: '', currency: 'CUP',
     showPublicContact: true, province: '', municipality: '', address: '', openingHours: '', closingHours: '',
   };
@@ -492,8 +510,19 @@ const App = () => {
         }
       } catch {}
     })();
-    api('/categories').then((d) => setCategories(d.categories || [])).catch(() => {});
+    api('/categories').then((d) => { setCategories(d.categories || []); setBusinessTypes(d.businessTypes || []); }).catch(() => {});
     api('/settings').then((d) => setSettings(d)).catch(() => {});
+  }, []);
+
+  // === Live stats: refresh every 30s while the tab is visible (cheap, cached endpoint) ===
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      api('/stats').then((d) => setStats(d)).catch(() => {});
+    };
+    const id = setInterval(tick, 30000);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -566,8 +595,12 @@ const App = () => {
     if (category) params.set('category', category);
     if (filters.location) params.set('location', filters.location);
     if (filters.businessName) params.set('businessName', filters.businessName);
+    if (filters.country) params.set('country', filters.country);
     if (filters.province) params.set('province', filters.province);
     if (filters.municipality) params.set('municipality', filters.municipality);
+    if (filters.businessType) params.set('businessType', filters.businessType);
+    if (filters.subcategory) params.set('subcategory', filters.subcategory);
+    if (filters.currency) params.set('currency', filters.currency);
     if (filters.physicalOnly) params.set('physicalOnly', 'true');
     if (filters.priceMin) params.set('priceMin', filters.priceMin);
     if (filters.priceMax) params.set('priceMax', filters.priceMax);
@@ -846,7 +879,7 @@ const App = () => {
   const openProductEdit = (p) => {
     setEditingProduct(p);
     setProductForm({
-      name: p.name, price: p.price, description: p.description || '', category: p.category,
+      name: p.name, price: p.price, description: p.description || '', category: p.category, subcategory: p.subcategory || '',
       stock: p.stock, image: p.image || '', available: p.available, featured: !!p.featured,
       location: p.location || '', currency: p.currency || 'CUP',
       showPublicContact: p.showPublicContact !== false, // default true for legacy products
@@ -1077,7 +1110,7 @@ const App = () => {
 
   const resetFilters = () => {
     setCategory('');
-    setFilters({ location: '', businessName: '', province: '', municipality: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
+    setFilters({ location: '', businessName: '', country: '', province: '', municipality: '', businessType: '', subcategory: '', currency: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true });
     setQuery('');
     setSearchInput('');
   };
@@ -1129,6 +1162,7 @@ const App = () => {
             hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
             suggestions={suggestions} suggestOpen={suggestOpen} setSuggestOpen={setSuggestOpen}
             suggestLoading={suggestLoading} onSuggestionClick={onSuggestionClick}
+            onFavorites={() => setView('favorites')}
           />
         )}
 
@@ -1191,6 +1225,7 @@ const App = () => {
             savingSettings={savingSettings}
             tab={adminTab} setTab={setAdminTab} onRefresh={loadAdmin}
             compressLogo={compressLogo}
+            businessTypes={businessTypes}
           />
         )}
       </main>
@@ -1206,11 +1241,13 @@ const App = () => {
         onSubmit={handleAuth}
         onForgot={() => { setAuthOpen(false); setForgotStep(1); setForgotOpen(true); }}
         compressLogo={compressLogo}
+        businessTypes={businessTypes}
       />
       <UpgradeSellerDialog
         open={upgradeOpen} onOpenChange={setUpgradeOpen}
         form={upgradeForm} setForm={setUpgradeForm} onSubmit={() => upgradeSeller(upgradeForm)}
         compressLogo={compressLogo}
+        businessTypes={businessTypes}
       />
       <ForgotDialog
         open={forgotOpen} onOpenChange={setForgotOpen}
@@ -1238,7 +1275,8 @@ const App = () => {
       <FiltersSheet
         open={filtersOpen} onOpenChange={setFiltersOpen}
         t={t} filters={filters} setFilters={setFilters} onApply={() => setFiltersOpen(false)}
-        onClear={() => { setFilters({ location: '', businessName: '', province: '', municipality: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true }); setFiltersOpen(false); }}
+        onClear={() => { setFilters({ location: '', businessName: '', country: '', province: '', municipality: '', businessType: '', subcategory: '', currency: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true }); setFiltersOpen(false); }}
+        categories={categories} category={category} businessTypes={businessTypes}
       />
       <LegalDialog open={!!legalOpen} onOpenChange={(v) => !v && setLegalOpen(null)} kind={legalOpen} settings={settings} />
     </div>
@@ -1605,8 +1643,49 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 };
 
 // ============ HOME ============
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
-  const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
+  const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
+
+  // Smooth scroll helper
+  const scrollToExplore = () => {
+    const el = document.getElementById('explore');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  // Quick nav actions
+  const navActions = [
+    { id: 'cats', label: 'Categorías', icon: '🗂️', onClick: () => {
+      const el = document.getElementById('categories-section');
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }},
+    { id: 'stores', label: 'Tiendas', icon: '🏬', onClick: () => {
+      setCategory('');
+      setFilters({ ...filters, businessType: 'tienda', physicalOnly: false, featuredOnly: false, subcategory: '' });
+      scrollToExplore();
+    }},
+    { id: 'fav', label: 'Favoritos', icon: '❤️', onClick: () => onFavorites?.() },
+    { id: 'featured', label: 'Destacados', icon: '⭐', onClick: () => {
+      setCategory('');
+      setFilters({ ...filters, featuredOnly: true, businessType: '', subcategory: '' });
+      scrollToExplore();
+    }},
+    { id: 'services', label: 'Servicios', icon: '🛠️', onClick: () => {
+      setCategory('servicios');
+      setFilters({ ...filters, featuredOnly: false, businessType: '', subcategory: '' });
+      scrollToExplore();
+    }},
+    { id: 'offers', label: 'Ofertas', icon: '🏷️', onClick: () => {
+      // Until a discount field exists, "Ofertas" muestra los más recientes con stock.
+      setCategory('');
+      setFilters({ ...filters, since: new Date(Date.now() - 7 * 86400000).toISOString(), featuredOnly: false, businessType: '', subcategory: '' });
+      scrollToExplore();
+    }},
+    { id: 'recent', label: 'Recientes', icon: '🕒', onClick: () => {
+      setCategory('');
+      setFilters({ ...filters, since: new Date(Date.now() - 30 * 86400000).toISOString(), featuredOnly: false, businessType: '', subcategory: '' });
+      scrollToExplore();
+    }},
+  ];
 
   return (
     <>
@@ -1691,9 +1770,30 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         </div>
       </section>
 
+      {/* QUICK NAV — visible always for fast access */}
+      <section className="container mx-auto px-4 -mt-6 relative z-20">
+        <div className="bg-card border border-border rounded-2xl shadow-xl p-3 md:p-4">
+          <div
+            className="flex md:grid md:grid-cols-7 gap-2 overflow-x-auto scroll-smooth"
+            style={{ scrollbarWidth: 'thin' }}
+          >
+            {navActions.map((a) => (
+              <button
+                key={a.id}
+                onClick={a.onClick}
+                className="flex flex-col items-center justify-center gap-1 min-w-[80px] md:min-w-0 px-3 py-2.5 rounded-xl border border-border bg-card hover:bg-[#1565C0]/5 hover:border-[#1565C0]/40 transition shrink-0"
+              >
+                <span className="text-2xl leading-none">{a.icon}</span>
+                <span className="text-[11px] font-semibold text-foreground whitespace-nowrap">{a.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* CATEGORIES - hidden when searching/filtering */}
       {!hasFiltersOrQuery && (
-        <section className="container mx-auto px-4 -mt-8 relative z-10">
+        <section id="categories-section" className="container mx-auto px-4 mt-6 relative z-10">
           <Card className="shadow-xl border-0">
             <CardContent className="p-4 md:p-6">
               <div className="flex items-center justify-between mb-3">
@@ -1812,16 +1912,20 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
       {/* STATS BANNER */}
       <section className="container mx-auto px-4 mb-12">
         <div className="rounded-2xl brand-gradient text-white p-6 md:p-10 text-center">
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/80 mb-3">{t.stats}</h3>
-          <div className="grid grid-cols-3 gap-4 mt-4">
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-white/80 mb-3">
+            {t.stats} · <span className="text-white/60 text-[10px]">en tiempo real</span>
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-4">
             {[
-              { v: stats.productsCount || 0, l: t.products },
-              { v: stats.businessesCount || 0, l: t.businesses },
-              { v: stats.usersCount || 0, l: t.sellers },
+              { v: stats.productsCount || 0, l: 'Productos activos' },
+              { v: stats.servicesCount || 0, l: 'Servicios' },
+              { v: stats.activeBusinessesCount || 0, l: 'Negocios activos' },
+              { v: stats.businessesCount || 0, l: 'Negocios totales' },
+              { v: stats.usersCount || 0, l: 'Usuarios' },
             ].map((s, i) => (
               <div key={i}>
-                <div className="text-3xl md:text-5xl font-extrabold">{s.v}+</div>
-                <div className="text-sm md:text-base text-white/90 mt-1 capitalize">{s.l}</div>
+                <div className="text-2xl md:text-4xl font-extrabold tabular-nums">{Number(s.v).toLocaleString('es-ES')}</div>
+                <div className="text-xs md:text-sm text-white/90 mt-1">{s.l}</div>
               </div>
             ))}
           </div>
@@ -2626,7 +2730,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes }) => {
   const [editBiz, setEditBiz] = useState(null);
   const { payments, users, products, stats, reports } = data;
   const pending = payments.filter((p) => p.status === 'pending');
@@ -2777,7 +2881,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
               </CardContent>
             </Card>
           ))}
-          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={(id, patch) => { onUpdateBusiness(id, patch); setEditBiz(null); }} compressLogo={compressLogo} />
+          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={(id, patch) => { onUpdateBusiness(id, patch); setEditBiz(null); }} compressLogo={compressLogo} businessTypes={businessTypes} />
         </TabsContent>
 
         <TabsContent value="products" className="mt-4">
@@ -2902,7 +3006,7 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
 );
 
 // ============ DIALOGS ============
-const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit, onForgot, compressLogo }) => (
+const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit, onForgot, compressLogo, businessTypes = [] }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
       <DialogHeader>
@@ -2953,6 +3057,18 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
             <>
               <div><Label>Nombre del negocio *</Label><Input value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} required placeholder="Ej: Mi tienda" /></div>
               <LogoUploader value={form.logo || ''} onChange={(v) => setForm({ ...form, logo: v })} compressLogo={compressLogo} />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label>Tipo de negocio</Label>
+                  <Select value={form.businessType || 'tienda'} onValueChange={(v) => setForm({ ...form, businessType: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {businessTypes.map((bt) => (<SelectItem key={bt.id} value={bt.id}>{bt.icon} {bt.name}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div><Label>País</Label><Input value={form.country || 'Cuba'} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="Cuba" /></div>
+              </div>
               <div><Label>WhatsApp * (formato internacional)</Label><Input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} required placeholder="+5355555555" /></div>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label>Telegram (@usuario)</Label><Input value={form.telegram} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
@@ -2978,7 +3094,7 @@ const AuthDialog = ({ open, onOpenChange, mode, setMode, form, setForm, onSubmit
   </Dialog>
 );
 
-const UpgradeSellerDialog = ({ open, onOpenChange, form, setForm, onSubmit, compressLogo }) => (
+const UpgradeSellerDialog = ({ open, onOpenChange, form, setForm, onSubmit, compressLogo, businessTypes = [] }) => (
   <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
       <DialogHeader>
@@ -2992,6 +3108,18 @@ const UpgradeSellerDialog = ({ open, onOpenChange, form, setForm, onSubmit, comp
       <form onSubmit={(e) => { e.preventDefault(); onSubmit(); }} className="space-y-3">
         <div><Label>Nombre del negocio *</Label><Input value={form.businessName} onChange={(e) => setForm({ ...form, businessName: e.target.value })} required placeholder="Ej: Mi tienda" /></div>
         <LogoUploader value={form.logo || ''} onChange={(v) => setForm({ ...form, logo: v })} compressLogo={compressLogo} />
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <Label>Tipo de negocio</Label>
+            <Select value={form.businessType || 'tienda'} onValueChange={(v) => setForm({ ...form, businessType: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {businessTypes.map((bt) => (<SelectItem key={bt.id} value={bt.id}>{bt.icon} {bt.name}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div><Label>País</Label><Input value={form.country || 'Cuba'} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="Cuba" /></div>
+        </div>
         <div><Label>WhatsApp *</Label><Input value={form.whatsapp} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} required placeholder="+5355555555" /></div>
         <div className="grid grid-cols-2 gap-2">
           <div><Label>Telegram</Label><Input value={form.telegram} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
@@ -3081,28 +3209,48 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
         <div className="grid grid-cols-3 gap-2">
           <div className="col-span-2">
             <Label>Precio *</Label>
-            <Input type="number" step={form.currency === 'USDC' ? '0.01' : '1'} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required placeholder={form.currency === 'USDC' ? 'Ej: 25.00' : 'Ej: 2500'} />
+            <Input type="number" step={form.currency === 'CUP' ? '1' : '0.01'} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required placeholder={form.currency === 'CUP' ? 'Ej: 2500' : 'Ej: 25.00'} />
           </div>
           <div>
             <Label>Moneda</Label>
             <Select value={form.currency || 'CUP'} onValueChange={(v) => setForm({ ...form, currency: v })}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="CUP">🇨🇺 CUP</SelectItem>
-                <SelectItem value="USDC">💎 USDC</SelectItem>
+                {ALL_CURRENCIES.map((code) => (
+                  <SelectItem key={code} value={code}>
+                    {CURRENCY_INFO[code].flag} {code}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
         </div>
         <div><Label>Stock</Label><Input type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></div>
         <div><Label>Categoría *</Label>
-          <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v })}>
+          <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v, subcategory: '' })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               {categories.map((c) => (<SelectItem key={c.id} value={c.id}>{c.icon} {c.name}</SelectItem>))}
             </SelectContent>
           </Select>
         </div>
+        {(() => {
+          const cat = categories.find((c) => c.id === form.category);
+          const subs = cat?.children || [];
+          if (subs.length === 0) return null;
+          return (
+            <div>
+              <Label>Subcategoría</Label>
+              <Select value={form.subcategory || '__none__'} onValueChange={(v) => setForm({ ...form, subcategory: v === '__none__' ? '' : v })}>
+                <SelectTrigger><SelectValue placeholder="Opcional — afina la búsqueda" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— Sin subcategoría —</SelectItem>
+                  {subs.map((s) => (<SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+          );
+        })()}
         <div><Label>Ubicación</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
         <div>
           <Label>Imagen del producto</Label>
@@ -3310,35 +3458,86 @@ const ReportDialog = ({ open, onOpenChange, form, setForm, onSubmit }) => (
   </Dialog>
 );
 
-const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onClear }) => (
+const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onClear, categories = [], category, businessTypes = [] }) => {
+  const selectedCat = categories.find((c) => c.id === category);
+  const subs = selectedCat?.children || [];
+  return (
   <Sheet open={open} onOpenChange={onOpenChange}>
-    <SheetContent>
+    <SheetContent className="overflow-y-auto">
       <SheetHeader>
         <SheetTitle className="flex items-center gap-2"><Filter className="h-5 w-5" /> {t.filters}</SheetTitle>
       </SheetHeader>
       <div className="space-y-4 mt-6">
-        <div>
-          <Label>Provincia / Municipio / Dirección</Label>
-          <Input value={filters.location} onChange={(e) => setFilters({ ...filters, location: e.target.value })} placeholder="La Habana, Santiago, Vedado..." />
-          <p className="text-[10px] text-muted-foreground mt-1">Busca por provincia, municipio o palabra clave de la ubicación.</p>
+        {/* ===== UBICACIÓN ===== */}
+        <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/30">
+          <div className="text-xs font-bold uppercase text-muted-foreground">📍 Ubicación</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs">País</Label><Input value={filters.country || ''} onChange={(e) => setFilters({ ...filters, country: e.target.value })} placeholder="Cuba" /></div>
+            <div><Label className="text-xs">Provincia</Label><Input value={filters.province || ''} onChange={(e) => setFilters({ ...filters, province: e.target.value })} placeholder="La Habana" /></div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div><Label className="text-xs">Municipio</Label><Input value={filters.municipality || ''} onChange={(e) => setFilters({ ...filters, municipality: e.target.value })} placeholder="Plaza" /></div>
+            <div><Label className="text-xs">Dirección / Zona</Label><Input value={filters.location} onChange={(e) => setFilters({ ...filters, location: e.target.value })} placeholder="Vedado..." /></div>
+          </div>
         </div>
-        <div>
-          <Label>Nombre del negocio</Label>
-          <Input value={filters.businessName || ''} onChange={(e) => setFilters({ ...filters, businessName: e.target.value })} placeholder="Ej: Cafetería La Esquina" />
+
+        {/* ===== NEGOCIO ===== */}
+        <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/30">
+          <div className="text-xs font-bold uppercase text-muted-foreground">🏪 Negocio</div>
+          <div><Label className="text-xs">Nombre del negocio</Label><Input value={filters.businessName || ''} onChange={(e) => setFilters({ ...filters, businessName: e.target.value })} placeholder="Ej: Cafetería La Esquina" /></div>
+          <div>
+            <Label className="text-xs">Tipo de negocio</Label>
+            <Select value={filters.businessType || '__all__'} onValueChange={(v) => setFilters({ ...filters, businessType: v === '__all__' ? '' : v })}>
+              <SelectTrigger><SelectValue placeholder="Cualquiera" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">— Cualquier tipo —</SelectItem>
+                {businessTypes.map((bt) => (<SelectItem key={bt.id} value={bt.id}>{bt.icon} {bt.name}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
+          <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 cursor-pointer hover:bg-muted/50 bg-card">
+            <input type="checkbox" checked={!!filters.physicalOnly} onChange={(e) => setFilters({ ...filters, physicalOnly: e.target.checked })} />
+            <Store className="h-4 w-4 text-[#1565C0]" /> Solo negocios físicos
+          </label>
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div><Label>Provincia</Label><Input value={filters.province || ''} onChange={(e) => setFilters({ ...filters, province: e.target.value })} placeholder="La Habana" /></div>
-          <div><Label>Municipio</Label><Input value={filters.municipality || ''} onChange={(e) => setFilters({ ...filters, municipality: e.target.value })} placeholder="Plaza" /></div>
+
+        {/* ===== CATEGORÍA / SUBCATEGORÍA ===== */}
+        {subs.length > 0 && (
+          <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/30">
+            <div className="text-xs font-bold uppercase text-muted-foreground">🗂️ Subcategoría · {selectedCat.icon} {selectedCat.name}</div>
+            <Select value={filters.subcategory || '__all__'} onValueChange={(v) => setFilters({ ...filters, subcategory: v === '__all__' ? '' : v })}>
+              <SelectTrigger><SelectValue placeholder="Todas las subcategorías" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">— Todas —</SelectItem>
+                {subs.map((s) => (<SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {/* ===== PRECIO / MONEDA ===== */}
+        <div className="rounded-lg border border-border p-3 space-y-2 bg-muted/30">
+          <div className="text-xs font-bold uppercase text-muted-foreground">💰 Precio</div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-2 grid grid-cols-2 gap-2">
+              <div><Label className="text-xs">{t.priceMin}</Label><Input type="number" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} placeholder="0" /></div>
+              <div><Label className="text-xs">{t.priceMax}</Label><Input type="number" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} placeholder="∞" /></div>
+            </div>
+            <div>
+              <Label className="text-xs">Moneda</Label>
+              <Select value={filters.currency || '__all__'} onValueChange={(v) => setFilters({ ...filters, currency: v === '__all__' ? '' : v })}>
+                <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Todas</SelectItem>
+                  {ALL_CURRENCIES.map((code) => (<SelectItem key={code} value={code}>{CURRENCY_INFO[code].flag} {code}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-[10px] text-muted-foreground">El rango se aplica en la moneda del producto.</p>
         </div>
-        <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 cursor-pointer hover:bg-muted/50">
-          <input type="checkbox" checked={!!filters.physicalOnly} onChange={(e) => setFilters({ ...filters, physicalOnly: e.target.checked })} />
-          <Store className="h-4 w-4 text-[#1565C0]" /> Solo negocios físicos (sin contacto online)
-        </label>
-        <div className="grid grid-cols-2 gap-2">
-          <div><Label>{t.priceMin}</Label><Input type="number" value={filters.priceMin} onChange={(e) => setFilters({ ...filters, priceMin: e.target.value })} placeholder="0" /></div>
-          <div><Label>{t.priceMax}</Label><Input type="number" value={filters.priceMax} onChange={(e) => setFilters({ ...filters, priceMax: e.target.value })} placeholder="∞" /></div>
-        </div>
-        <p className="text-[10px] text-muted-foreground -mt-1">Aplica en la moneda del producto (CUP o USDC).</p>
+
+        {/* ===== OTROS ===== */}
         <div className="grid grid-cols-2 gap-2">
           <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 cursor-pointer hover:bg-muted/50">
             <input type="checkbox" checked={!!filters.featuredOnly} onChange={(e) => setFilters({ ...filters, featuredOnly: e.target.checked })} />
@@ -3350,7 +3549,7 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
           </label>
         </div>
         <div>
-          <Label>{t.date}</Label>
+          <Label className="text-xs">{t.date}</Label>
           <Select value={filters.since || 'all'} onValueChange={(v) => setFilters({ ...filters, since: v === 'all' ? '' : new Date(Date.now() - Number(v) * 86400000).toISOString() })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -3368,7 +3567,8 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
       </div>
     </SheetContent>
   </Sheet>
-);
+  );
+};
 
 const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
   const titles = {
@@ -3423,7 +3623,7 @@ const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
   );
 };
 
-const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo }) => {
+const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes = [] }) => {
   const [form, setForm] = useState(null);
   useEffect(() => {
     if (biz) {
@@ -3462,6 +3662,18 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo }) => {
         <div className="space-y-3">
           <LogoUploader value={form.logo || ''} onChange={(v) => setForm({ ...form, logo: v })} compressLogo={compressLogo} />
           <div><Label>Nombre *</Label><Input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Tipo de negocio</Label>
+              <Select value={form.businessType || 'tienda'} onValueChange={(v) => setForm({ ...form, businessType: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {businessTypes.map((bt) => (<SelectItem key={bt.id} value={bt.id}>{bt.icon} {bt.name}</SelectItem>))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div><Label>País</Label><Input value={form.country || ''} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="Cuba" /></div>
+          </div>
           <div><Label>Descripción</Label><Textarea value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
 
           {/* === Privacy toggle === */}

@@ -153,6 +153,24 @@ async function ensureIndexes(db) {
     ]);
     _indexesEnsured = true;
     console.log('[MongoDB] Índices creados/verificados');
+
+    // === One-time soft migration: backfill businessType + country on existing businesses ===
+    // Only sets values where missing; safe to re-run.
+    try {
+      const m1 = await db.collection('businesses').updateMany(
+        { businessType: { $exists: false } },
+        { $set: { businessType: 'tienda' } },
+      );
+      const m2 = await db.collection('businesses').updateMany(
+        { country: { $exists: false } },
+        { $set: { country: 'Cuba' } },
+      );
+      if (m1.modifiedCount || m2.modifiedCount) {
+        console.log(`[MongoDB] Backfill negocios: businessType=${m1.modifiedCount}, country=${m2.modifiedCount}`);
+      }
+    } catch (e) {
+      console.warn('[MongoDB] Backfill negocios falló (no crítico):', e?.message);
+    }
   } catch (e) {
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
@@ -194,25 +212,142 @@ function jsonCached(data, status = 200, maxAge = 60) {
 }
 
 const CATEGORIES = [
-  { id: 'electronica', name: 'Electrónica', icon: '📱' },
-  { id: 'vehiculos', name: 'Vehículos y transporte', icon: '🚗' },
-  { id: 'juguetes', name: 'Juguetes', icon: '🧸' },
-  { id: 'higiene', name: 'Higiene', icon: '🧼' },
-  { id: 'tecnologia', name: 'Tecnología', icon: '💻' },
-  { id: 'hogar', name: 'Hogar', icon: '🏠' },
-  { id: 'herramientas', name: 'Herramientas', icon: '🔧' },
-  { id: 'mascotas', name: 'Mascotas', icon: '🐾' },
-  { id: 'salud', name: 'Salud', icon: '⚕️' },
-  { id: 'servicios', name: 'Servicios', icon: '🛠️' },
-  { id: 'empleo', name: 'Empleo', icon: '💼' },
-  { id: 'bienesraices', name: 'Bienes raíces', icon: '🏘️' },
-  { id: 'ropa', name: 'Ropa y accesorios', icon: '👕' },
-  { id: 'alimentos', name: 'Alimentos', icon: '🍴' },
-  { id: 'deportes', name: 'Deportes', icon: '⚽' },
-  { id: 'educacion', name: 'Educación', icon: '📚' },
-  { id: 'reparaciones', name: 'Reparaciones', icon: '🔨' },
-  { id: 'turismo', name: 'Turismo', icon: '✈️' },
-  { id: 'otros', name: 'Otros', icon: '📦' },
+  { id: 'electronica', name: 'Electrónica', icon: '📱', children: [
+    { id: 'smartphones', name: 'Smartphones' },
+    { id: 'audio', name: 'Audio y sonido' },
+    { id: 'tv-video', name: 'TV y video' },
+    { id: 'consolas', name: 'Consolas y videojuegos' },
+    { id: 'accesorios-electronica', name: 'Accesorios' },
+  ]},
+  { id: 'vehiculos', name: 'Vehículos y transporte', icon: '🚗', children: [
+    { id: 'autos', name: 'Autos' },
+    { id: 'motos', name: 'Motos' },
+    { id: 'bicicletas', name: 'Bicicletas' },
+    { id: 'repuestos', name: 'Repuestos y accesorios' },
+    { id: 'camiones', name: 'Camiones y maquinaria' },
+  ]},
+  { id: 'juguetes', name: 'Juguetes', icon: '🧸', children: [
+    { id: 'juguetes-ninos', name: 'Para niños' },
+    { id: 'juguetes-ninas', name: 'Para niñas' },
+    { id: 'didacticos', name: 'Didácticos' },
+    { id: 'peluches', name: 'Peluches' },
+  ]},
+  { id: 'higiene', name: 'Higiene', icon: '🧼', children: [
+    { id: 'higiene-personal', name: 'Personal' },
+    { id: 'limpieza-hogar', name: 'Limpieza del hogar' },
+    { id: 'cosmetica', name: 'Cosmética' },
+  ]},
+  { id: 'tecnologia', name: 'Tecnología', icon: '💻', children: [
+    { id: 'computadoras', name: 'Computadoras' },
+    { id: 'laptops', name: 'Laptops' },
+    { id: 'tablets', name: 'Tablets' },
+    { id: 'componentes', name: 'Componentes y partes' },
+    { id: 'accesorios-tec', name: 'Accesorios' },
+  ]},
+  { id: 'hogar', name: 'Hogar', icon: '🏠', children: [
+    { id: 'muebles', name: 'Muebles' },
+    { id: 'decoracion', name: 'Decoración' },
+    { id: 'electrodomesticos', name: 'Electrodomésticos' },
+    { id: 'cocina', name: 'Cocina y vajilla' },
+    { id: 'iluminacion', name: 'Iluminación' },
+  ]},
+  { id: 'herramientas', name: 'Herramientas', icon: '🔧', children: [
+    { id: 'manuales', name: 'Manuales' },
+    { id: 'electricas', name: 'Eléctricas' },
+    { id: 'industriales', name: 'Industriales' },
+    { id: 'jardineria', name: 'Jardinería' },
+  ]},
+  { id: 'mascotas', name: 'Mascotas', icon: '🐾', children: [
+    { id: 'perros', name: 'Perros' },
+    { id: 'gatos', name: 'Gatos' },
+    { id: 'aves', name: 'Aves' },
+    { id: 'accesorios-mascotas', name: 'Accesorios y alimentos' },
+  ]},
+  { id: 'salud', name: 'Salud', icon: '⚕️', children: [
+    { id: 'medicamentos', name: 'Medicamentos' },
+    { id: 'suplementos', name: 'Suplementos' },
+    { id: 'equipos-medicos', name: 'Equipos médicos' },
+  ]},
+  { id: 'servicios', name: 'Servicios', icon: '🛠️', children: [
+    { id: 'diseno', name: 'Diseño' },
+    { id: 'marketing', name: 'Marketing' },
+    { id: 'reparaciones-serv', name: 'Reparaciones' },
+    { id: 'consultoria', name: 'Consultoría' },
+    { id: 'eventos', name: 'Eventos y catering' },
+    { id: 'transporte-serv', name: 'Transporte' },
+  ]},
+  { id: 'empleo', name: 'Empleo', icon: '💼', children: [
+    { id: 'oferta-empleo', name: 'Ofertas de trabajo' },
+    { id: 'busco-empleo', name: 'Busco empleo' },
+    { id: 'freelance', name: 'Freelance / Por proyecto' },
+  ]},
+  { id: 'bienesraices', name: 'Bienes raíces', icon: '🏘️', children: [
+    { id: 'venta-casas', name: 'Venta de casas' },
+    { id: 'alquiler', name: 'Alquileres' },
+    { id: 'terrenos', name: 'Terrenos' },
+    { id: 'locales', name: 'Locales comerciales' },
+  ]},
+  { id: 'ropa', name: 'Ropa y accesorios', icon: '👕', children: [
+    { id: 'mujer', name: 'Mujer' },
+    { id: 'hombre', name: 'Hombre' },
+    { id: 'ninos', name: 'Niños' },
+    { id: 'calzado', name: 'Calzado' },
+    { id: 'accesorios-ropa', name: 'Accesorios' },
+  ]},
+  { id: 'alimentos', name: 'Alimentos', icon: '🍴', children: [
+    { id: 'restaurantes', name: 'Restaurantes' },
+    { id: 'cafeterias', name: 'Cafeterías' },
+    { id: 'comida-rapida', name: 'Comida rápida' },
+    { id: 'reposteria', name: 'Repostería y panadería' },
+    { id: 'productos-alimenticios', name: 'Productos alimenticios' },
+  ]},
+  { id: 'deportes', name: 'Deportes', icon: '⚽', children: [
+    { id: 'futbol', name: 'Fútbol' },
+    { id: 'baseball', name: 'Béisbol' },
+    { id: 'gym', name: 'Gimnasio y fitness' },
+    { id: 'outdoor', name: 'Aire libre' },
+  ]},
+  { id: 'educacion', name: 'Educación', icon: '📚', children: [
+    { id: 'clases-particulares', name: 'Clases particulares' },
+    { id: 'cursos', name: 'Cursos online' },
+    { id: 'libros', name: 'Libros' },
+    { id: 'idiomas', name: 'Idiomas' },
+  ]},
+  { id: 'reparaciones', name: 'Reparaciones', icon: '🔨', children: [
+    { id: 'rep-electronica', name: 'Electrónica' },
+    { id: 'rep-electrodomesticos', name: 'Electrodomésticos' },
+    { id: 'rep-vehiculos', name: 'Vehículos' },
+    { id: 'rep-hogar', name: 'Plomería / Electricidad' },
+  ]},
+  { id: 'turismo', name: 'Turismo', icon: '✈️', children: [
+    { id: 'hospedaje', name: 'Hospedaje' },
+    { id: 'tours', name: 'Tours y excursiones' },
+    { id: 'transporte-turismo', name: 'Transporte turístico' },
+  ]},
+  { id: 'otros', name: 'Otros', icon: '📦', children: [] },
+];
+
+// Business types (visible on biz cards & filters; never required for legacy biz).
+const BUSINESS_TYPES = [
+  { id: 'tienda', name: 'Tienda física', icon: '🏬' },
+  { id: 'online', name: 'Tienda online', icon: '🛒' },
+  { id: 'servicio', name: 'Servicio profesional', icon: '🛠️' },
+  { id: 'restaurante', name: 'Restaurante / Cafetería', icon: '🍴' },
+  { id: 'mayorista', name: 'Mayorista', icon: '📦' },
+  { id: 'particular', name: 'Particular / Persona', icon: '👤' },
+];
+
+// Allowed currencies (display labels only — no FX conversion in phase 1).
+const CURRENCIES = [
+  { id: 'CUP', name: 'CUP — Peso cubano', flag: '🇨🇺' },
+  { id: 'MLC', name: 'MLC — Moneda libremente convertible', flag: '💳' },
+  { id: 'USD', name: 'USD — Dólar', flag: '🇺🇸' },
+  { id: 'EUR', name: 'EUR — Euro', flag: '🇪🇺' },
+  { id: 'GBP', name: 'GBP — Libra', flag: '🇬🇧' },
+  { id: 'CAD', name: 'CAD — Dólar canadiense', flag: '🇨🇦' },
+  { id: 'MXN', name: 'MXN — Peso mexicano', flag: '🇲🇽' },
+  { id: 'USDT', name: 'USDT — Tether (cripto)', flag: '💎' },
+  { id: 'USDC', name: 'USDC — Dólar digital (cripto)', flag: '💠' },
 ];
 
 function json(data, status = 200) {
@@ -290,23 +425,32 @@ async function route(request, method, path) {
   // Categories
   if (path[0] === 'categories' && method === 'GET') {
     // Categories are static — cache aggressively for 1 hour
-    return jsonCached({ categories: CATEGORIES }, 200, 3600);
+    return jsonCached({ categories: CATEGORIES, businessTypes: BUSINESS_TYPES, currencies: CURRENCIES }, 200, 3600);
   }
 
   // Stats
   if (path[0] === 'stats' && method === 'GET') {
-    const productsCount = await db.collection('products').countDocuments();
-    const businessesCount = await db.collection('businesses').countDocuments();
-    const usersCount = await db.collection('users').countDocuments();
+    const [productsCount, businessesCount, usersCount, servicesCount, activeBusinessesAgg] = await Promise.all([
+      db.collection('products').countDocuments({ available: true, $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] }),
+      db.collection('businesses').countDocuments(),
+      db.collection('users').countDocuments(),
+      db.collection('products').countDocuments({ category: 'servicios', available: true }),
+      db.collection('products').aggregate([
+        { $match: { available: true, $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] } },
+        { $group: { _id: '$businessId' } },
+        { $count: 'n' },
+      ]).toArray(),
+    ]);
+    const activeBusinessesCount = activeBusinessesAgg[0]?.n || 0;
     // Cache shorter (15s) so business/user/product counts feel near-real-time
-    return jsonCached({ productsCount, businessesCount, usersCount }, 200, 15);
+    return jsonCached({ productsCount, businessesCount, usersCount, servicesCount, activeBusinessesCount }, 200, 15);
   }
 
   // ===== AUTH =====
   if (path[0] === 'auth') {
     if (path[1] === 'register' && method === 'POST') {
       const body = await request.json();
-      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook } = body || {};
+      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook, businessType, country } = body || {};
       const type = accountType === 'buyer' ? 'buyer' : 'seller';
       if (!email || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
       if (type === 'seller' && (!businessName || !whatsapp)) {
@@ -340,6 +484,8 @@ async function route(request, method, path) {
           location: location || '',
           instagram: instagram || '',
           facebook: facebook || '',
+          businessType: businessType || 'tienda',
+          country: country || 'Cuba',
           verified: false,
           createdAt: now,
         };
@@ -391,7 +537,7 @@ async function route(request, method, path) {
       if (error) return error;
       if (user.businessId) return json({ error: 'Ya tienes un negocio' }, 400);
       const body = await request.json();
-      const { businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook } = body || {};
+      const { businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook, businessType, country } = body || {};
       if (!businessName || !whatsapp) return json({ error: 'Nombre del negocio y WhatsApp requeridos' }, 400);
       // Cloudinary auto-upload for business logo if base64
       let finalLogo = logo || '';
@@ -406,6 +552,7 @@ async function route(request, method, path) {
         name: businessName, logo: finalLogo, description: description || '',
         whatsapp, telegram: telegram || '', sms: sms || whatsapp || '',
         location: location || '', instagram: instagram || '', facebook: facebook || '',
+        businessType: businessType || 'tienda', country: country || 'Cuba',
         verified: false, createdAt: now,
       };
       await db.collection('businesses').insertOne(business);
@@ -488,7 +635,8 @@ async function route(request, method, path) {
       if (business.userId !== user.id && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
       const body = await request.json();
       const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook',
-        'showContactsPublicly', 'province', 'municipality', 'address', 'openingHours', 'closingHours', 'messenger'];
+        'showContactsPublicly', 'province', 'municipality', 'address', 'openingHours', 'closingHours', 'messenger',
+        'businessType', 'country'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
 
@@ -562,16 +710,20 @@ async function route(request, method, path) {
     if (!path[1] && method === 'GET') {
       const q = url.searchParams.get('q') || '';
       const category = url.searchParams.get('category') || '';
+      const subcategory = url.searchParams.get('subcategory') || '';
       const featured = url.searchParams.get('featured');
       const excludeFeatured = url.searchParams.get('excludeFeatured') === 'true';
       const businessId = url.searchParams.get('businessId') || '';
       const businessName = url.searchParams.get('businessName') || '';
+      const businessType = url.searchParams.get('businessType') || '';
+      const country = url.searchParams.get('country') || '';
       const location = url.searchParams.get('location') || '';
       const province = url.searchParams.get('province') || '';
       const municipality = url.searchParams.get('municipality') || '';
       const physicalOnly = url.searchParams.get('physicalOnly') === 'true'; // only products with hidden contacts
       const priceMin = url.searchParams.get('priceMin');
       const priceMax = url.searchParams.get('priceMax');
+      const currency = url.searchParams.get('currency') || '';
       const since = url.searchParams.get('since'); // ISO date string
 
       // Pagination (Cuba/100K opt): default smaller page, support page/limit
@@ -595,14 +747,20 @@ async function route(request, method, path) {
         ];
       }
       if (category) filter.category = category;
+      if (subcategory) filter.subcategory = subcategory;
+      if (currency) filter.currency = currency;
       if (featured === 'true') filter.featured = true;
       if (excludeFeatured) filter.featured = { $ne: true };
       if (businessId) filter.businessId = businessId;
-      // Filter by business name (regex on businesses, then narrow by businessId)
-      if (businessName) {
+      // Filter by business name OR by business type / country (regex on businesses, then narrow by businessId)
+      if (businessName || businessType || country) {
+        const bizFilter = {};
+        if (businessName) bizFilter.name = { $regex: escapeRe(businessName), $options: 'i' };
+        if (businessType) bizFilter.businessType = businessType;
+        if (country) bizFilter.country = { $regex: escapeRe(country), $options: 'i' };
         const matchingBiz = await db.collection('businesses')
-          .find({ name: { $regex: escapeRe(businessName), $options: 'i' } }, { projection: { id: 1 } })
-          .limit(50)
+          .find(bizFilter, { projection: { id: 1 } })
+          .limit(500)
           .toArray();
         const ids = matchingBiz.map((b) => b.id);
         if (ids.length === 0) {
@@ -696,7 +854,7 @@ async function route(request, method, path) {
       const { user, error } = await requireUser(request);
       if (error) return error;
       const body = await request.json();
-      const { name, price, description, category, stock, image, available, featured, location, currency,
+      const { name, price, description, category, subcategory, stock, image, available, featured, location, currency,
         showPublicContact, province, municipality, address, openingHours, closingHours } = body || {};
       if (!name || price == null || !category) return json({ error: 'Faltan campos obligatorios' }, 400);
 
@@ -736,9 +894,10 @@ async function route(request, method, path) {
         businessId: user.businessId,
         name,
         price: Number(price),
-        currency: currency === 'USDC' ? 'USDC' : 'CUP',
+        currency: ['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC'].includes(currency) ? currency : 'CUP',
         description: description || '',
         category,
+        subcategory: subcategory || '',
         stock: stock != null ? Number(stock) : 0,
         image: finalImage,
         location: location || businessForLoc?.location || '',
@@ -765,13 +924,13 @@ async function route(request, method, path) {
       if (!product) return json({ error: 'No encontrado' }, 404);
       if (product.businessId !== user.businessId && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
       const body = await request.json();
-      const allowed = ['name', 'price', 'description', 'category', 'stock', 'image', 'available', 'featured', 'location', 'currency',
+      const allowed = ['name', 'price', 'description', 'category', 'subcategory', 'stock', 'image', 'available', 'featured', 'location', 'currency',
         'showPublicContact', 'province', 'municipality', 'address', 'openingHours', 'closingHours'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
       if (update.price != null) update.price = Number(update.price);
       if (update.stock != null) update.stock = Number(update.stock);
-      if (update.currency) update.currency = update.currency === 'USDC' ? 'USDC' : 'CUP';
+      if (update.currency) update.currency = ['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC'].includes(update.currency) ? update.currency : 'CUP';
       if (update.featured && user.plan !== 'premium' && user.role !== 'admin') update.featured = false;
 
       // Validation when hiding contacts (merge of existing product + business fallback)

@@ -428,6 +428,9 @@ const App = () => {
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [suggestLoading, setSuggestLoading] = useState(false);
 
+  // === Featured businesses for home ===
+  const [topBusinesses, setTopBusinesses] = useState([]);
+
   const PAGE_SIZE = 12;
 
   const [lang, setLang] = useState('es');
@@ -624,11 +627,13 @@ const App = () => {
     Promise.all([
       api(`/products?${mainQ}`),
       hasFiltersOrQuery ? Promise.resolve({ products: [], hasMore: false }) : api(featQ),
+      hasFiltersOrQuery ? Promise.resolve({ businesses: [] }) : api('/businesses?limit=12'),
     ])
-      .then(([all, feat]) => {
+      .then(([all, feat, biz]) => {
         setProducts(all.products || []);
         setHasMore(!!all.hasMore);
         setFeatured(feat.products || []);
+        setTopBusinesses(biz.businesses || []);
       })
       .catch((e) => toast.error(e.message))
       .finally(() => setLoading(false));
@@ -1143,6 +1148,7 @@ const App = () => {
             t={t} stats={stats} categories={categories}
             category={category} setCategory={setCategory}
             featured={featured} products={products} loading={loading}
+            topBusinesses={topBusinesses}
             filters={filters} setFilters={setFilters}
             onProduct={openProduct} onBusiness={openBusiness}
             favorites={favorites} toggleFav={toggleFav}
@@ -1643,7 +1649,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 };
 
 // ============ HOME ============
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
 
   // Smooth scroll helper
@@ -1689,63 +1695,28 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 
   return (
     <>
-      {/* HERO */}
+      {/* HERO - compact, mobile-app feel. Products + businesses visible in first viewport. */}
       <section className="relative overflow-hidden">
         <div className="absolute inset-0 brand-gradient opacity-95" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.15),transparent_50%)]" />
-        <div className="relative container mx-auto px-4 py-12 md:py-20 text-white">
+        <div className="relative container mx-auto px-4 pt-6 pb-10 md:pt-8 md:pb-12 text-white">
           <div className="max-w-3xl mx-auto text-center">
-            <div className="mx-auto mb-5 inline-flex items-center justify-center rounded-3xl bg-black/90 backdrop-blur-sm p-5 shadow-2xl ring-2 ring-white/20">
-              <LogoSVG size={96} />
-              <div className="ml-3 text-left">
-                <div className="text-3xl md:text-4xl font-extrabold tracking-tight brand-text-gradient leading-none">UBIK2 YEMG</div>
-                <div className="text-[10px] md:text-xs text-white/70 tracking-widest uppercase mt-1">Todo en un solo lugar</div>
+            {/* Compact brand bar */}
+            <div className="mx-auto mb-4 inline-flex items-center justify-center rounded-2xl bg-black/85 backdrop-blur-sm px-4 py-2 shadow-xl ring-1 ring-white/15">
+              <LogoSVG size={40} />
+              <div className="ml-2 text-left">
+                <div className="text-base md:text-lg font-extrabold tracking-tight brand-text-gradient leading-none">UBIK2 YEMG</div>
+                <div className="text-[9px] text-white/70 tracking-widest uppercase mt-0.5">Todo en un solo lugar</div>
               </div>
             </div>
-            <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight leading-tight drop-shadow-lg">
+
+            <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight leading-tight drop-shadow">
               {t.slogan}
             </h1>
-            <p className="text-white/90 mt-3 text-base md:text-lg">{t.subSlogan}</p>
+            <p className="text-white/90 mt-1 text-sm md:text-base">{t.subSlogan}</p>
 
-            {/* CTA buttons prominent for beginners */}
-            <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center max-w-xl mx-auto">
-              <Button
-                size="lg"
-                onClick={onPublish}
-                className="h-14 bg-[#00A86B] hover:bg-[#008F5B] text-white font-bold text-base shadow-2xl hover:scale-[1.02] transition-transform flex-1"
-              >
-                <Plus className="h-5 w-5 mr-2" /> Publicar gratis
-              </Button>
-              {!isLogged && (
-                <Button
-                  size="lg"
-                  variant="outline"
-                  onClick={onRegister}
-                  className="h-14 bg-white/10 backdrop-blur-md border-white/40 text-white hover:bg-white/20 font-bold text-base flex-1"
-                >
-                  <Store className="h-5 w-5 mr-2" /> Crear cuenta
-                </Button>
-              )}
-            </div>
-
-            {/* How it works - 3 steps */}
-            <div className="mt-7 grid grid-cols-3 gap-2 max-w-xl mx-auto text-white/95">
-              {[
-                { n: '1', t: 'Crea tu cuenta', s: 'Gratis en 1 minuto' },
-                { n: '2', t: 'Publica tu producto', s: 'Foto, precio, listo' },
-                { n: '3', t: 'Recibe contactos', s: 'WhatsApp directo' },
-              ].map((step, i) => (
-                <div key={i} className="rounded-xl bg-white/10 backdrop-blur-md border border-white/20 p-3 text-center">
-                  <div className="mx-auto h-7 w-7 rounded-full bg-white text-[#1565C0] font-extrabold flex items-center justify-center text-sm">{step.n}</div>
-                  <div className="text-xs font-semibold mt-1.5">{step.t}</div>
-                  <div className="text-[10px] text-white/80 hidden sm:block">{step.s}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-7 max-w-2xl mx-auto">
-              <div className="text-xs text-white/80 mb-2 uppercase tracking-wider font-semibold">¿Buscando algo?</div>
-              {/* Force dark text on the white hero card so search input is always visible in dark mode too */}
+            {/* Big prominent search — the main entry point */}
+            <div className="mt-4 max-w-2xl mx-auto">
               <div className="relative bg-white rounded-2xl shadow-2xl p-2 text-gray-900 [&_input]:!text-gray-900 [&_input]:placeholder:!text-gray-500">
                 <SearchBar
                   value={searchInput}
@@ -1761,10 +1732,32 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               </div>
             </div>
 
-            <div className="flex flex-wrap justify-center gap-6 mt-6 text-white/95 text-sm">
-              <div className="flex items-center gap-1.5"><ShieldCheck className="h-4 w-4" /> Seguro</div>
-              <div className="flex items-center gap-1.5"><TrendingUp className="h-4 w-4" /> Rápido</div>
-              <div className="flex items-center gap-1.5"><Sparkles className="h-4 w-4" /> Sin comisiones</div>
+            {/* CTA buttons compact */}
+            <div className="mt-3 flex gap-2 justify-center max-w-xl mx-auto">
+              <Button
+                size="sm"
+                onClick={onPublish}
+                className="h-10 bg-[#00A86B] hover:bg-[#008F5B] text-white font-bold shadow-lg flex-1 md:flex-initial md:px-6"
+              >
+                <Plus className="h-4 w-4 mr-1.5" /> Publicar gratis
+              </Button>
+              {!isLogged && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onRegister}
+                  className="h-10 bg-white/10 backdrop-blur-md border-white/40 text-white hover:bg-white/20 font-bold flex-1 md:flex-initial md:px-6"
+                >
+                  <Store className="h-4 w-4 mr-1.5" /> Crear cuenta
+                </Button>
+              )}
+            </div>
+
+            {/* Trust signals - tiny inline */}
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 mt-4 text-white/90 text-[11px] md:text-xs">
+              <div className="flex items-center gap-1"><ShieldCheck className="h-3.5 w-3.5" /> Seguro</div>
+              <div className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" /> Rápido</div>
+              <div className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Sin comisiones</div>
             </div>
           </div>
         </div>
@@ -1791,37 +1784,101 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         </div>
       </section>
 
-      {/* CATEGORIES - hidden when searching/filtering */}
+      {/* CATEGORIES - compact horizontal strip (mobile-first) */}
       {!hasFiltersOrQuery && (
         <section id="categories-section" className="container mx-auto px-4 mt-6 relative z-10">
-          <Card className="shadow-xl border-0">
-            <CardContent className="p-4 md:p-6">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-lg font-bold">{t.categories}</h2>
-                {category && (
-                  <Button variant="ghost" size="sm" onClick={() => setCategory('')}>
-                    <X className="h-3 w-3 mr-1" /> {t.clear}
-                  </Button>
-                )}
-              </div>
-              <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-2">
-                {categories.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => setCategory(category === c.id ? '' : c.id)}
-                    className={`group flex flex-col items-center justify-center gap-1 py-3 px-2 rounded-xl border transition-all hover-lift ${
-                      category === c.id
-                        ? 'border-[#1565C0] bg-[#1565C0]/5 shadow-md'
-                        : 'border-border bg-card hover:border-[#1565C0]/40'
-                    }`}
-                  >
-                    <span className="text-2xl">{c.icon}</span>
-                    <span className={`text-[11px] font-medium text-center leading-tight line-clamp-2 ${category === c.id ? 'text-[#1565C0]' : 'text-foreground'}`}>{c.name}</span>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{t.categories}</h2>
+            {category && (
+              <Button variant="ghost" size="sm" onClick={() => setCategory('')} className="h-7">
+                <X className="h-3 w-3 mr-1" /> {t.clear}
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4" style={{ scrollbarWidth: 'thin' }}>
+            {categories.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => setCategory(category === c.id ? '' : c.id)}
+                className={`shrink-0 flex flex-col items-center justify-center gap-1 min-w-[78px] py-2.5 px-3 rounded-2xl border-2 transition-all ${
+                  category === c.id
+                    ? 'border-[#1565C0] bg-[#1565C0]/10 shadow-md'
+                    : 'border-border bg-card hover:border-[#1565C0]/40'
+                }`}
+              >
+                <span className="text-2xl leading-none">{c.icon}</span>
+                <span className={`text-[10.5px] font-semibold text-center leading-tight line-clamp-2 ${category === c.id ? 'text-[#1565C0]' : 'text-foreground'}`}>{c.name}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* FEATURED PRODUCTS - PRIMARY HERO CONTENT (above everything else on home) */}
+      {!hasFiltersOrQuery && featured.length > 0 && (
+        <section className="container mx-auto px-4 mt-8 mb-8">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+              <Star className="h-5 w-5 text-amber-500 fill-amber-500" /> Destacados
+            </h2>
+            <span className="text-xs text-muted-foreground">{featured.length}</span>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
+            {featured.map((p) => (
+              <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* FEATURED BUSINESSES - horizontal carousel */}
+      {!hasFiltersOrQuery && topBusinesses.length > 0 && (
+        <section className="container mx-auto px-4 mb-10">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+              <Store className="h-5 w-5 text-[#00A86B]" /> Negocios destacados
+            </h2>
+            <span className="text-xs text-muted-foreground">{topBusinesses.length}</span>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-3 -mx-4 px-4 snap-x snap-mandatory" style={{ scrollbarWidth: 'thin' }}>
+            {topBusinesses.map((b) => (
+              <button
+                key={b.id}
+                onClick={() => onBusiness(b.id)}
+                className="snap-start shrink-0 w-[180px] md:w-[210px] rounded-2xl border border-border bg-card overflow-hidden text-left hover:border-[#1565C0]/50 hover:shadow-lg transition group"
+              >
+                <div className="h-24 brand-gradient relative">
+                  {b.logo ? (
+                    <img
+                      src={cdnThumb(b.logo, 240)}
+                      alt={b.name}
+                      loading="lazy"
+                      decoding="async"
+                      className="absolute left-1/2 -translate-x-1/2 -bottom-7 h-14 w-14 rounded-2xl object-cover border-4 border-card shadow-md bg-card"
+                    />
+                  ) : (
+                    <div className="absolute left-1/2 -translate-x-1/2 -bottom-7 h-14 w-14 rounded-2xl bg-card border-4 border-card flex items-center justify-center text-2xl font-bold text-[#1565C0]">
+                      {b.name?.[0]?.toUpperCase() || '?'}
+                    </div>
+                  )}
+                </div>
+                <div className="pt-9 px-3 pb-3 text-center">
+                  <div className="font-bold text-sm line-clamp-1 flex items-center justify-center gap-1">
+                    {b.name}
+                    {b.verified && <ShieldCheck className="h-3.5 w-3.5 text-[#1565C0] shrink-0" />}
+                  </div>
+                  {b.location && (
+                    <div className="text-[11px] text-muted-foreground line-clamp-1 mt-0.5 flex items-center justify-center gap-1">
+                      <MapPin className="h-3 w-3" /> {b.location}
+                    </div>
+                  )}
+                  <div className="mt-2 inline-flex items-center gap-1 text-[11px] bg-[#1565C0]/10 text-[#1565C0] font-semibold rounded-full px-2 py-0.5">
+                    <ShoppingBag className="h-3 w-3" /> {b.productsCount} productos
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
         </section>
       )}
 
@@ -1893,21 +1950,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         )}
       </section>
 
-      {/* FEATURED - only on default home view */}
-      {!hasFiltersOrQuery && featured.length > 0 && (
-        <section className="container mx-auto px-4 mb-12">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl md:text-2xl font-bold flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-amber-500" /> {t.recommended}
-            </h2>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-            {featured.slice(0, 10).map((p) => (
-              <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} highlight />
-            ))}
-          </div>
-        </section>
-      )}
+      {/* (Featured products were moved ABOVE the latest grid for better mobile UX) */}
 
       {/* STATS BANNER */}
       <section className="container mx-auto px-4 mb-12">

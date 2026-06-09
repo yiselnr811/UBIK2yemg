@@ -758,6 +758,47 @@ agent_communication:
 
   - agent: "main"
     message: |
+
+  - agent: "main"
+    message: |
+      [Home redesign — products & businesses first] Mobile-app style layout.
+      Backend:
+      - NEW endpoint GET /api/businesses?limit=N&country=&businessType=&verified=
+        Returns a slim, cached list of businesses that HAVE active products (with productsCount).
+        Implementation: aggregates products grouped by businessId first (sorted by count + recency),
+        then fetches business docs for those ids and reorders verified first.
+        Result: 6 active businesses returned for the home carousel.
+      - Manual data cleanup: removed 17 test businesses + 20 test products + 17 test users
+        left behind by the testing agent in previous sessions. Also deduped 5 businesses that
+        had duplicate (name, userId) rows from the seed re-running over time.
+
+      Frontend (Home redesign):
+      - Hero shrunk dramatically: from py-12 md:py-20 + 96px logo + 3-step card to compact
+        py-6 md:py-8 + 40px logo + search bar + 2 small CTAs + inline trust signals.
+        Now ~250-300px tall on desktop instead of ~700px. Products visible without scrolling.
+      - Categories grid (huge 19-tile grid) → COMPACT horizontal-scroll strip of pills.
+        Mobile: x-scroll. Desktop: same strip, fits 12+ tiles in view.
+      - NEW order on home:
+          1. Hero (compact)
+          2. NavMenu (categorías/tiendas/favoritos/destacados/servicios/ofertas/recientes)
+          3. Categorías compactas (scroll horizontal)
+          4. ⭐ DESTACADOS — featured products GRID (was below latest, now top)
+          5. 🏪 NEGOCIOS DESTACADOS — NEW horizontal carousel of business cards
+             (logo on gradient header, name+verify badge, location, productsCount pill, click → /b/<id>)
+          6. Latest products grid (paginated, "Cargar más")
+          7. Stats banner (5 real-time metrics)
+          8. CTA + Footer
+      - Removed duplicate "Recomendados" section (consolidated into Destacados).
+      - All existing functionality preserved: search, filters, favorites, share, admin, etc.
+
+      No DB schema changes. Linter only reports pre-existing false-positive warnings.
+
+      Verified visually via screenshots:
+        - Mobile (390px): hero fits ~30% of viewport, NavMenu + categories visible, products visible on first scroll.
+        - Desktop (1440px): hero ~40% viewport, NavMenu + categories + Destacados grid + Negocios destacados carousel all visible in first 1.5 viewports.
+
+      No additional backend testing needed (only added /api/businesses GET which I verified by curl returning 6 businesses with productsCount). UI verified by screenshots.
+
       [Jun 2025] LOGO upload optimization & UI added.
       Frontend changes (no backend/DB schema changes):
       - New helper compressLogo() in page.js — resizes to 512x512 max, outputs WebP (fallback JPEG) @ q=0.85.

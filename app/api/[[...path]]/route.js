@@ -627,6 +627,46 @@ async function route(request, method, path) {
       // Also strip business field from products that include nested business contact info
       return json({ business: safeBiz, products });
     }
+
+    // Public list endpoint — slim, cached. Powers home "Negocios destacados".
+    if (!path[1] && method === 'GET') {
+      const limit = Math.min(40, Math.max(1, parseInt(url.searchParams.get('limit') || '12', 10)));
+      const country = url.searchParams.get('country') || '';
+      const businessType = url.searchParams.get('businessType') || '';
+      const verifiedOnly = url.searchParams.get('verified') === 'true';
+      const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // 1) First, find businesses that HAVE active products (with counts).
+      const counts = await db.collection('products').aggregate([
+        { $match: { available: true, $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] } },
+        { $group: { _id: '$businessId', n: { $sum: 1 }, latest: { $max: '$createdAt' } } },
+        { $sort: { n: -1, latest: -1 } },
+        { $limit: limit * 3 },
+      ]).toArray();
+      const activeIds = counts.map((c) => c._id);
+      const countMap = Object.fromEntries(counts.map((c) => [c._id, c.n]));
+      if (activeIds.length === 0) {
+        return jsonCached({ businesses: [], total: 0 }, 200, 30);
+      }
+      // 2) Then fetch the actual business docs filtered by country/type/verified.
+      const f = { id: { $in: activeIds } };
+      if (country) f.country = { $regex: escapeRe(country), $options: 'i' };
+      if (businessType) f.businessType = businessType;
+      if (verifiedOnly) f.verified = true;
+      const docs = await db.collection('businesses')
+        .find(f, { projection: { name: 1, logo: 1, description: 1, location: 1, country: 1, businessType: 1, verified: 1, id: 1, showContactsPublicly: 1, createdAt: 1 } })
+        .toArray();
+      // 3) Preserve aggregation ordering (most products first) + boost verified to top.
+      const orderIndex = Object.fromEntries(activeIds.map((id, i) => [id, i]));
+      docs.sort((a, b) => {
+        if (a.verified !== b.verified) return a.verified ? -1 : 1;
+        return (orderIndex[a.id] ?? 999) - (orderIndex[b.id] ?? 999);
+      });
+      const enriched = docs
+        .map((b) => ({ ...b, productsCount: countMap[b.id] || 0 }))
+        .slice(0, limit);
+      return jsonCached({ businesses: enriched, total: enriched.length }, 200, 30);
+    }
+
     if (path[1] && method === 'PUT') {
       const { user, error } = await requireUser(request);
       if (error) return error;

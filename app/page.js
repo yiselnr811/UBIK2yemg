@@ -2044,7 +2044,7 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
             <MapPin className="h-3 w-3 flex-shrink-0" />
             <span className="truncate">{p.location || p.business?.location || 'Cuba'}</span>
           </span>
-          <span className="flex items-center gap-0.5 flex-shrink-0">
+          <span className="flex items-center gap-0.5 flex-shrink-0" suppressHydrationWarning>
             <Clock className="h-3 w-3" /> {timeAgo(p.createdAt)}
           </span>
         </div>
@@ -2120,7 +2120,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 
           <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-muted-foreground">
             {product.location && <span className="flex items-center gap-1"><MapPin className="h-4 w-4" /> {product.location}</span>}
-            <span className="flex items-center gap-1"><Clock className="h-4 w-4" /> {timeAgo(product.createdAt)}</span>
+            <span className="flex items-center gap-1" suppressHydrationWarning><Clock className="h-4 w-4" /> {timeAgo(product.createdAt)}</span>
           </div>
 
           <p className="mt-5 text-foreground/90 whitespace-pre-line leading-relaxed">{product.description}</p>
@@ -2482,7 +2482,7 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
                 </div>
                 <span className="font-semibold text-sm">{r.userName}</span>
                 <StarRating value={r.rating} size="sm" />
-                <span className="text-[10px] text-muted-foreground ml-auto">{timeAgo(r.createdAt)}</span>
+                <span className="text-[10px] text-muted-foreground ml-auto" suppressHydrationWarning>{timeAgo(r.createdAt)}</span>
               </div>
               {r.comment && <p className="text-sm mt-2 ml-10 text-foreground/90">{r.comment}</p>}
             </div>

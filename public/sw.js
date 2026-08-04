@@ -9,7 +9,7 @@
  *
  * Designed to be tiny and friendly to Cuban networks (intermittent, 2G/3G).
  */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const STATIC_CACHE = `ubik2-static-${VERSION}`;
 const RUNTIME_CACHE = `ubik2-runtime-${VERSION}`;
 const IMG_CACHE = `ubik2-images-${VERSION}`;
@@ -77,8 +77,24 @@ self.addEventListener('fetch', (event) => {
 
   if (!sameOrigin) return;
 
-  // === Static Next.js assets: cache-first ===
-  if (url.pathname.startsWith('/_next/static/') || url.pathname.endsWith('.svg') || url.pathname.endsWith('.png') || url.pathname.endsWith('.webmanifest')) {
+  // === Next.js JS/CSS chunks: NETWORK-FIRST with cache fallback ===
+  // IMPORTANT: never serve stale JS while online — stale chunks hydrating fresh
+  // HTML cause React hydration errors. Cache is only an offline fallback.
+  if (url.pathname.startsWith('/_next/')) {
+    event.respondWith(
+      fetch(req).then((resp) => {
+        if (resp && resp.status === 200) {
+          const clone = resp.clone();
+          caches.open(STATIC_CACHE).then((c) => c.put(req, clone));
+        }
+        return resp;
+      }).catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // === Small static assets (icons, manifest): cache-first ===
+  if (url.pathname.endsWith('.svg') || url.pathname.endsWith('.png') || url.pathname.endsWith('.webmanifest')) {
     event.respondWith(
       caches.match(req).then((cached) => {
         if (cached) return cached;

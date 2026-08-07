@@ -10,6 +10,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
 async function fetchBusiness(id) {
   try {
     const { MongoClient } = await import('mongodb');
+    if (!process.env.MONGO_URL) return null;
     const client = new MongoClient(process.env.MONGO_URL);
     await client.connect();
     const db = client.db(DB_NAME);

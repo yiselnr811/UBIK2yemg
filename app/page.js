@@ -1010,11 +1010,12 @@ const App = () => {
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
-      if (st) setStats({
-        productsCount: st.products ?? st.productsCount,
-        businessesCount: st.businesses ?? st.businessesCount,
-        usersCount: st.users ?? st.usersCount,
-      });
+      if (st) setStats((prev) => ({
+        ...prev,
+        productsCount: st.products ?? st.productsCount ?? prev.productsCount ?? 0,
+        businessesCount: st.businesses ?? st.businessesCount ?? prev.businessesCount ?? 0,
+        usersCount: st.users ?? st.usersCount ?? prev.usersCount ?? 0,
+      }));
     } catch (err) { toast.error(err.message); }
     finally { adminLoadingRef.current = false; setAdminLoading(false); }
   }, [token, user]);
@@ -1301,8 +1302,8 @@ const LogoUploader = ({ value, onChange, compressLogo, label = 'Logo del negocio
   const dims = size === 'sm' ? 'h-16 w-16' : size === 'lg' ? 'h-28 w-28' : 'h-20 w-20';
   const handleFile = async (file) => {
     if (!file) return;
-    if (!file.type.startsWith('image/')) { toast.error('Solo se permiten imágenes'); return; }
-    if (file.size > 5 * 1024 * 1024) { toast.error('El logo debe pesar menos de 5MB'); return; }
+    if (!(file.type || '').startsWith('image/')) { toast.error('Solo se permiten imágenes'); return; }
+    if ((file.size || 0) > 5 * 1024 * 1024) { toast.error('El logo debe pesar menos de 5MB'); return; }
     setBusy(true);
     try {
       const dataUrl = await compressLogo(file);
@@ -1491,7 +1492,7 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
               </span>
               {s.type === 'product' && s.price != null && (
                 <span className="text-xs font-bold text-[#1565C0] flex-shrink-0">
-                  {s.currency === 'USDC' ? '💎' : '🇨🇺'} {Number(s.price).toLocaleString()}
+                  {s.currency === 'USDC' ? '💎' : '🇨🇺'} {Number(s.price || 0).toLocaleString('es-ES')}
                 </span>
               )}
             </button>
@@ -2412,7 +2413,7 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
     setLoading(true);
     const q = productId ? `productId=${productId}` : `businessId=${businessId}`;
     api(`/reviews?${q}`)
-      .then((d) => setData(d))
+      .then((d) => setData({ reviews: Array.isArray(d?.reviews) ? d.reviews : [], average: d?.average || 0, count: d?.count || 0 }))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [productId, businessId]);

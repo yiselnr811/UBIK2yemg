@@ -215,7 +215,10 @@ async function getDb() {
     });
   }
 
-  return db;
+    return db;
+}
+
+function jsonCached(data, status = 200, maxAge = 60) {
                                                 }
 
 function jsonCached(data, status = 200, maxAge = 60) {

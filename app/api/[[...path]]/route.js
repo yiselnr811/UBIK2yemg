@@ -182,76 +182,27 @@ async function ensureIndexes(db) {
 }
 
 async function getDb() {
-  // Reutilizar conexión existente si sigue activa
-  if (_client) {
-    try {
-      if (_client.topology?.isConnected?.()) {
-        const db = _client.db(DB_NAME);
+  if (!_client) {
+    if (!_connectPromise) {
+      _client = new MongoClient(MONGO_URL, {
+        serverSelectionTimeoutMS: 5000,
+        connectTimeoutMS: 5000,
+        socketTimeoutMS: 10000,
+      });
 
-        if (!_indexesEnsured) {
-          ensureIndexes(db).catch((err) => {
-            console.warn(
-              '[MongoDB] Error asegurando índices:',
-              err?.message
-            );
-          });
-        }
-
-        return db;
-      }
-    } catch (err) {
-      console.warn(
-        '[MongoDB] Cliente MongoDB no válido:',
-        err?.message
-      );
-    }
-
-    // La conexión anterior está cerrada o no es válida
-    const oldClient = _client;
-    _client = null;
-    _connectPromise = null;
-    _indexesEnsured = false;
-
-    try {
-      await oldClient.close();
-    } catch (_) {}
-  }
-
-  // Evitar crear varias conexiones simultáneas
-  if (!_connectPromise) {
-    const client = new MongoClient(MONGO_URL, {
-      serverSelectionTimeoutMS: 5000,
-      connectTimeoutMS: 5000,
-      socketTimeoutMS: 10000,
-    });
-
-    _connectPromise = client.connect()
-      .then(() => {
-        _client = client;
-        return client;
-      })
-      .catch(async (err) => {
-        try {
-          await client.close();
-        } catch (_) {}
-
-        console.error(
-          '[MongoDB] connect error:',
-          err?.message || err
-        );
-
+      _connectPromise = _client.connect().catch((err) => {
+        console.error('[MongoDB] connect error:', err?.message || err);
         _client = null;
+        _connectPromise = null;
 
         throw new Error(
           'No se pudo conectar a la base de datos. Verifica la variable de entorno MONGO_URL.'
         );
-      })
-      .finally(() => {
-        _connectPromise = null;
       });
-  }
+    }
 
-  await _connectPromise;
+    await _connectPromise;
+  }
 
   const db = _client.db(DB_NAME);
 
@@ -265,7 +216,7 @@ async function getDb() {
   }
 
   return db;
-}
+                                                }
 
 function jsonCached(data, status = 200, maxAge = 60) {
   return NextResponse.json(data, {

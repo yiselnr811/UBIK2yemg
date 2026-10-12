@@ -4131,7 +4131,7 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
               </h3>
               <p className="text-sm">Tu hash <code className="font-mono break-all">{invoice.txHash}</code> ha sido enviado.</p>
               <p className="text-sm text-amber-600 dark:text-amber-400">
-                Un administrador lo verificará manualmente en el explorer ({invoice.network === 'TRC20' ? 'Tronscan' : 'Etherscan/Polygonscan/Basescan/Arbiscan'}). 
+                Un administrador lo verificará manualmente en el explorer ({invoice.network === 'TRC20' ? 'Tronscan' : 'Etherscan/Polygonscan/Basescan/Arbiscan'}).
                 Recibirás notificación cuando se apruebe o rechace.
               </p>
             </div>

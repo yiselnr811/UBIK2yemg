@@ -196,7 +196,6 @@ const TRANSLATIONS = {
     rejectedDesc: 'Reason: {reason}',
     stockRestored: 'Stock restored. You can create a new order.',
     invoiceExpiredDesc: 'Payment time expired. Stock restored.',
-  },
     priceMin: 'Min price',
     priceMax: 'Max price',
     date: 'Date',

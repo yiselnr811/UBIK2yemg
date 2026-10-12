@@ -2589,6 +2589,39 @@ return json({ payments: out });
       return json({ products: items.map((p) => ({ ...p, business: bm[p.businessId] || null })) });
     }
 
+    if (path[1] === 'products' && path[2] && method === 'GET') {
+      const product = await db.collection('products').findOne({
+        id: path[2],
+      });
+
+      if (!product) {
+        return json({ error: 'Producto no encontrado' }, 404);
+      }
+
+      const business = product.businessId
+        ? await db.collection('businesses').findOne(
+            { id: product.businessId },
+            {
+              projection: {
+                id: 1,
+                name: 1,
+                logo: 1,
+                location: 1,
+                whatsapp: 1,
+                telegram: 1,
+                sms: 1,
+                instagram: 1,
+                facebook: 1,
+              },
+            }
+          )
+        : null;
+
+      return json({
+        product: { ...product, business },
+      });
+    }
+
     if (path[1] === 'products' && path[2] && method === 'DELETE') {
       await db.collection('products').deleteOne({ id: path[2] });
       return json({ ok: true });

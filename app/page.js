@@ -17,6 +17,15 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
+import {
   Sheet,
   SheetContent,
   SheetHeader,
@@ -45,6 +54,7 @@ import {
   Heart, Share2, Flag, Filter, Globe, Sun, Moon, ShieldCheck, Phone, Mail,
   Send, Sparkles, ChevronRight, Tag, Clock, X, Menu, Star, TrendingUp,
   Leaf, ImageOff, ImageIcon,
+  AlertCircle, CheckCircle, XCircle, CreditCard, Wallet, Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -103,6 +113,29 @@ const TRANSLATIONS = {
     outOfStock: 'Agotado',
     featured: 'Destacado',
     new: 'Nuevo',
+    // Crypto
+    buyingWithCrypto: 'Comprar con Crypto',
+    invoiceExpired: 'Factura expirada',
+    pendingPayment: 'Pendiente de pago',
+    txHashSubmitted: 'TxHash enviado - En verificación',
+    paymentConfirmed: 'Pago confirmado y aprobado',
+    paymentRejected: 'Pago rechazado',
+    sendTxHash: 'Enviar hash de transacción',
+    txHashPlaceholder: '0x... o hash de Tron (64 hex)',
+    copyAddress: 'Copiar dirección',
+    receiverAddress: 'Dirección receptora (solo depósito)',
+    expectedAmount: 'Importe esperado',
+    paymentDetails: 'Detalles del pago',
+    orderSummary: 'Resumen del pedido',
+    verificationNote: 'El administrador verificará la transacción en el blockchain. No se marca pagado solo por enviar el hash.',
+    pendingVerification: 'En verificación',
+    verificationDesc: 'Un administrador lo verificará manualmente en el explorer. Recibirás notificación cuando se apruebe o rechace.',
+    paymentApproved: '¡Pago confirmado!',
+    approvedDesc: 'Tu pedido ha sido marcado como pagado. El vendedor preparará tu pedido.',
+    paymentRejectedDesc: 'Pago rechazado',
+    rejectedDesc: 'Motivo: {reason}',
+    stockRestored: 'El stock ha sido restaurado. Puedes crear un nuevo pedido.',
+    invoiceExpiredDesc: 'El tiempo para pagar ha terminado. El stock ha sido restaurado.',
   },
   en: {
     slogan: 'All in one place.',
@@ -140,6 +173,30 @@ const TRANSLATIONS = {
     officialContact: 'Official contact',
     filters: 'Filters',
     location: 'Location',
+    // Crypto
+    buyingWithCrypto: 'Buy with Crypto',
+    invoiceExpired: 'Invoice expired',
+    pendingPayment: 'Pending payment',
+    txHashSubmitted: 'TxHash submitted - Under verification',
+    paymentConfirmed: 'Payment confirmed and approved',
+    paymentRejected: 'Payment rejected',
+    sendTxHash: 'Send transaction hash',
+    txHashPlaceholder: '0x... or Tron hash (64 hex)',
+    copyAddress: 'Copy address',
+    receiverAddress: 'Receiver address (deposit only)',
+    expectedAmount: 'Expected amount',
+    paymentDetails: 'Payment details',
+    orderSummary: 'Order summary',
+    verificationNote: 'Admin will verify transaction on blockchain. Not marked paid just by sending hash.',
+    pendingVerification: 'Under verification',
+    verificationDesc: 'Admin will verify manually on explorer. You\'ll be notified when approved or rejected.',
+    paymentApproved: 'Payment confirmed!',
+    approvedDesc: 'Your order has been marked as paid. Seller will prepare your order.',
+    paymentRejectedDesc: 'Payment rejected',
+    rejectedDesc: 'Reason: {reason}',
+    stockRestored: 'Stock restored. You can create a new order.',
+    invoiceExpiredDesc: 'Payment time expired. Stock restored.',
+  },
     priceMin: 'Min price',
     priceMax: 'Max price',
     date: 'Date',
@@ -205,6 +262,29 @@ const TRANSLATIONS = {
     outOfStock: 'Esaurito',
     featured: 'In evidenza',
     new: 'Nuovo',
+    // Crypto
+    buyingWithCrypto: 'Compra con Crypto',
+    invoiceExpired: 'Fattura scaduta',
+    pendingPayment: 'Pagamento in attesa',
+    txHashSubmitted: 'TxHash inviato - In verifica',
+    paymentConfirmed: 'Pagamento confermato e approvato',
+    paymentRejected: 'Pagamento rifiutato',
+    sendTxHash: 'Invia hash transazione',
+    txHashPlaceholder: '0x... o hash Tron (64 hex)',
+    copyAddress: 'Copia indirizzo',
+    receiverAddress: 'Indirizzo ricevente (solo deposito)',
+    expectedAmount: 'Importo atteso',
+    paymentDetails: 'Dettagli pagamento',
+    orderSummary: 'Riepilogo ordine',
+    verificationNote: 'L\'admin verificherà la transazione sulla blockchain. Non segnato come pagato solo inviando l\'hash.',
+    pendingVerification: 'In verifica',
+    verificationDesc: 'L\'admin verificherà manualmente sull\'explorer. Sarai notificato quando approvato o rifiutato.',
+    paymentApproved: 'Pagamento confermato!',
+    approvedDesc: 'Il tuo ordine è stato segnato come pagato. Il venditore preparerà il tuo ordine.',
+    paymentRejectedDesc: 'Pagamento rifiutato',
+    rejectedDesc: 'Motivo: {reason}',
+    stockRestored: 'Stock ripristinato. Puoi creare un nuovo ordine.',
+    invoiceExpiredDesc: 'Tempo di pagamento scaduto. Stock ripristinato.',
   },
   ru: {
     slogan: 'Всё в одном месте.',
@@ -256,6 +336,29 @@ const TRANSLATIONS = {
     outOfStock: 'Нет в наличии',
     featured: 'Топ',
     new: 'Новый',
+    // Crypto
+    buyingWithCrypto: 'Купить криптой',
+    invoiceExpired: 'Счёт истёк',
+    pendingPayment: 'Оплата ожидается',
+    txHashSubmitted: 'TxHash отправлен — на проверке',
+    paymentConfirmed: 'Оплата подтверждена и одобрена',
+    paymentRejected: 'Оплата отклонена',
+    sendTxHash: 'Отправить хэш транзакции',
+    txHashPlaceholder: '0x... или хэш Tron (64 hex)',
+    copyAddress: 'Копировать адрес',
+    receiverAddress: 'Адрес получателя (только для депозита)',
+    expectedAmount: 'Ожидаемая сумма',
+    paymentDetails: 'Детали оплаты',
+    orderSummary: 'Сводка заказа',
+    verificationNote: 'Админ проверит транзакцию в блокчейне. Не помечается как оплачено просто отсылкой хэша.',
+    pendingVerification: 'На проверке',
+    verificationDesc: 'Админ проверит вручную в эксплорере. Вас уведомят при одобрении или отклонении.',
+    paymentApproved: 'Оплата подтверждена!',
+    approvedDesc: 'Ваш заказ помечен как оплаченный. Продавец подготовит заказ.',
+    paymentRejectedDesc: 'Оплата отклонена',
+    rejectedDesc: 'Причина: {reason}',
+    stockRestored: 'Склад восстановлен. Можно создать новый заказ.',
+    invoiceExpiredDesc: 'Время оплаты истекло. Склад восстановлен.',
   },
 };
 const FLAGS = { es: '🇪🇸', en: '🇬🇧', it: '🇮🇹', ru: '🇷🇺' };
@@ -473,6 +576,13 @@ const App = () => {
   const [detail, setDetail] = useState(null);
   const [bizDetail, setBizDetail] = useState(null);
   const [myProducts, setMyProducts] = useState([]);
+
+  // Crypto checkout
+  const [checkoutOrder, setCheckoutOrder] = useState(null);
+  const [checkoutInvoice, setCheckoutInvoice] = useState(null);
+  const [checkoutTxHash, setCheckoutTxHash] = useState('');
+  const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
+  const [cryptoConfig, setCryptoConfig] = useState(null);
 
   // Admin
   const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [] });
@@ -968,6 +1078,139 @@ const App = () => {
     } catch (err) { toast.error(err.message); }
   };
 
+  // === Crypto Checkout ===
+  const fetchCryptoConfig = async () => {
+    try {
+      const config = await api('/payments/crypto/config');
+      setCryptoConfig(config);
+      return config;
+    } catch (err) {
+      toast.error('Error cargando configuración crypto: ' + err.message);
+      return null;
+    }
+  };
+
+  const startCryptoCheckout = async (product) => {
+    if (!token) {
+      toast.error('Debes iniciar sesión para comprar');
+      setAuthMode('login');
+      setAuthOpen(true);
+      return;
+    }
+
+    if (!product.stock || product.stock <= 0) {
+      return toast.error('Producto sin stock');
+    }
+
+    setCheckoutSubmitting(true);
+    try {
+      // First fetch crypto config if not loaded
+      if (!cryptoConfig) {
+        await fetchCryptoConfig();
+      }
+
+      // For now, default to first available network (user can change in UI later)
+      // In a more advanced version, show a modal to select network
+      const config = cryptoConfig || await fetchCryptoConfig();
+      if (!config?.enabled?.length) {
+        return toast.error('No hay redes crypto configuradas');
+      }
+
+      const selectedNetwork = config.enabled[0]; // TODO: let user choose
+
+      // Create order with crypto payment
+      const orderRes = await api('/orders', {
+        method: 'POST',
+        token,
+        body: {
+          items: [{ productId: product.id, quantity: 1 }],
+          shippingName: user.name || '',
+          shippingPhone: user.businessId ? '' : 'N/A', // Will be required for shipping
+          shippingAddress: 'Pago crypto - Sin envío físico',
+          shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
+          paymentMethod: 'crypto',
+          cryptoCurrency: selectedNetwork.currency,
+          cryptoNetwork: selectedNetwork.network,
+        },
+      });
+
+      setCheckoutOrder(orderRes.order);
+      setCheckoutInvoice(orderRes.invoice);
+      setView('checkout');
+    } catch (err) {
+      toast.error('Error creando pedido: ' + err.message);
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const submitTxHash = async () => {
+    if (!checkoutTxHash.trim()) return toast.error('Ingresa el hash de transacción');
+    if (!checkoutOrder?.cryptoInvoiceId) return toast.error('No hay factura asociada');
+
+    setCheckoutSubmitting(true);
+    try {
+      const res = await api(`/orders/${checkoutOrder.id}/invoice/submit-tx`, {
+        method: 'POST',
+        token,
+        body: { txHash: checkoutTxHash.trim() },
+      });
+      setCheckoutInvoice(res.invoice);
+      toast.success('TxHash enviado. Pendiente de verificación.');
+    } catch (err) {
+      toast.error('Error enviando hash: ' + err.message);
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const cancelCheckout = () => {
+    setCheckoutOrder(null);
+    setCheckoutInvoice(null);
+    setCheckoutTxHash('');
+    setView('home');
+  };
+
+  // Admin crypto invoices
+  const [rejectCryptoInvoiceId, setRejectCryptoInvoiceId] = useState(null);
+  const [rejectCryptoReason, setRejectCryptoReason] = useState('');
+
+  const loadAdminCryptoInvoices = async () => {
+    try {
+      const res = await api('/admin/crypto-invoices', { token });
+      setAdminData((d) => ({ ...d, cryptoInvoices: res.invoices || [] }));
+    } catch (err) {
+      toast.error('Error cargando facturas crypto: ' + err.message);
+    }
+  };
+
+  const onApproveCryptoInvoice = async (invoiceId) => {
+    try {
+      await api(`/admin/crypto-invoices/${invoiceId}/approve`, { method: 'POST', token });
+      toast.success('Factura aprobada');
+      loadAdminCryptoInvoices();
+    } catch (err) {
+      toast.error('Error aprobando: ' + err.message);
+    }
+  };
+
+  const onRejectCryptoInvoice = async () => {
+    if (!rejectCryptoInvoiceId) return;
+    if (!rejectCryptoReason.trim()) return toast.error('Ingresa un motivo');
+    try {
+      await api(`/admin/crypto-invoices/${rejectCryptoInvoiceId}/reject`, {
+        method: 'POST', token,
+        body: { reason: rejectCryptoReason }
+      });
+      toast.success('Factura rechazada');
+      setRejectCryptoInvoiceId(null);
+      setRejectCryptoReason('');
+      loadAdminCryptoInvoices();
+    } catch (err) {
+      toast.error('Error rechazando: ' + err.message);
+    }
+  };
+
   // === Report ===
   const submitReport = async () => {
     if (!reportForm.reason) return toast.error('Selecciona un motivo');
@@ -996,17 +1239,19 @@ const App = () => {
     adminLoadingRef.current = true;
     setAdminLoading(true);
     try {
-      const [pays, usrs, prods, st, settingsRes, reps] = await Promise.all([
+      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
         api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
         api('/admin/stats', { token }),
         api('/admin/settings', { token }),
         api('/admin/reports', { token }).catch(() => ({ reports: [] })),
+        api('/admin/crypto-invoices', { token }).catch(() => ({ invoices: [] })),
       ]);
       setAdminData({
         payments: pays.payments || [], users: usrs.users || [],
         products: prods.products || [], stats: st, reports: reps.reports || [],
+        cryptoInvoices: cryptoInvoices.invoices || [],
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
@@ -1198,6 +1443,21 @@ const App = () => {
           <FavoritesView
             t={t} favorites={favorites} onProduct={openProduct} toggleFav={toggleFav}
             onShare={shareProduct} onReport={openReport}
+          />
+        )}
+
+        {view === 'checkout' && checkoutOrder && checkoutInvoice && (
+          <CryptoCheckout
+            t={t}
+            order={checkoutOrder}
+            invoice={checkoutInvoice}
+            config={cryptoConfig}
+            txHash={checkoutTxHash}
+            setTxHash={setCheckoutTxHash}
+            onSubmit={submitTxHash}
+            onCancel={cancelCheckout}
+            submitting={checkoutSubmitting}
+            onBack={() => setView('home')}
           />
         )}
 
@@ -2191,6 +2451,20 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
                 </a>
 
+                {/* Crypto Buy Button */}
+                {product.stock && product.stock > 0 && (
+                  <Button
+                    onClick={() => startCryptoCheckout(product)}
+                    disabled={checkoutSubmitting}
+                    className="w-full h-14 rounded-xl mt-3 bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
+                    aria-label="Comprar con criptomonedas"
+                  >
+                    {checkoutSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CreditCard className="h-5 w-5" />}
+                    Comprar con Crypto
+                    <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
+                  </Button>
+                )}
+
                 {/* Secondary channels — only shown if there are 2+ channels */}
                 {((!!waLink + !!tgLink + !!smsLink) > 1) && (
                   <>
@@ -2779,6 +3053,8 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
   const { payments, users, products, stats, reports } = data;
   const pending = payments.filter((p) => p.status === 'pending');
   const pendingReports = reports.filter((r) => r.status === 'pending');
+  const cryptoInvoices = data.cryptoInvoices || [];
+  const cryptoPending = cryptoInvoices.filter((i) => i.status === 'submitted' || i.status === 'pending').length;
   return (
     <section className="container mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
@@ -2810,6 +3086,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="payments">Pagos {pending.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pending.length}</Badge>}</TabsTrigger>
+          <TabsTrigger value="crypto-invoices">Crypto Invoices {cryptoPending > 0 && <Badge className="ml-2 bg-blue-500 text-white border-0">{cryptoPending}</Badge>}</TabsTrigger>
           <TabsTrigger value="reports">Reportes {pendingReports.length > 0 && <Badge className="ml-2 bg-red-500 text-white border-0">{pendingReports.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="users">Usuarios</TabsTrigger>
           <TabsTrigger value="products">Productos</TabsTrigger>
@@ -2854,6 +3131,82 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
               </CardContent>
             </Card>
           ))}
+        </TabsContent>
+
+        <TabsContent value="crypto-invoices" className="mt-4 space-y-3">
+          {cryptoInvoices.length === 0 ? <p className="text-muted-foreground text-center py-12">No hay facturas crypto.</p> : cryptoInvoices.map((inv) => (
+            <Card key={inv.id}>
+              <CardContent className="p-4 flex flex-col md:flex-row gap-3 md:items-center">
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">{inv.business?.name || '—'}</span>
+                    <span className="text-xs text-muted-foreground">{inv.buyer?.email}</span>
+                    <Badge variant={
+                      inv.status === 'pending' ? 'default' :
+                      inv.status === 'submitted' ? 'outline' :
+                      inv.status === 'approved' ? 'secondary' :
+                      inv.status === 'rejected' ? 'destructive' : 'default'
+                    }>{inv.status}</Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {inv.currency} {inv.network} · {Number(inv.expectedAmount).toLocaleString('es-ES', {minimumFractionDigits: 2})} {inv.currency} · {inv.txHash ? inv.txHash.slice(0, 16) + '...' : 'sin hash'}
+                  </div>
+                  {inv.txHash && (
+                    <a
+                      href={inv.network === 'TRC20' ? `https://tronscan.org/#/transaction/${inv.txHash}` : `https://etherscan.io/tx/${inv.txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Ver en explorer"
+                      className="inline-block mt-2 text-xs text-blue-600 hover:underline"
+                    >
+                      Ver transacción en explorer
+                    </a>
+                  )}
+                </div>
+                {(inv.status === 'pending' || inv.status === 'submitted') && (
+                  <div className="flex gap-2 flex-wrap">
+                    {inv.status === 'submitted' && (
+                      <Button size="sm" onClick={() => onApproveCryptoInvoice(inv.id)} className="bg-green-500 hover:bg-green-600 text-white">
+                        <Check className="h-3 w-3 mr-1" /> Aprobar
+                      </Button>
+                    )}
+                    {inv.status === 'submitted' && (
+                      <Button size="sm" variant="outline" onClick={() => { setRejectCryptoInvoiceId(inv.id); setRejectCryptoReason(''); }} className="text-destructive border-destructive/40">
+                        Rechazar
+                      </Button>
+                    )}
+                    {inv.status === 'pending' && (
+                      <Button size="sm" variant="outline" onClick={() => { setRejectCryptoInvoiceId(inv.id); setRejectCryptoReason(''); }} className="text-destructive border-destructive/40">
+                        Rechazar (expirada)
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+
+          {rejectCryptoInvoiceId && (
+            <AlertDialog open onOpenChange={(open) => { if (!open) { setRejectCryptoInvoiceId(null); setRejectCryptoReason(''); } }}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Rechazar factura crypto</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Ingresa el motivo del rechazo. El stock del pedido será restaurado.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <Textarea
+                  value={rejectCryptoReason}
+                  onChange={(e) => setRejectCryptoReason(e.target.value)}
+                  placeholder="Motivo (ej: hash no encontrado, importe incorrecto, red errónea)"
+                  rows={3}
+                  className="mb-4"
+                />
+                <AlertDialogAction onClick={onRejectCryptoInvoice}>Rechazar</AlertDialogAction>
+                <AlertDialogCancel onClick={() => { setRejectCryptoInvoiceId(null); setRejectCryptoReason(''); }}>Cancelar</AlertDialogCancel>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </TabsContent>
 
         <TabsContent value="reports" className="mt-4 space-y-3">
@@ -3611,6 +3964,212 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
       </div>
     </SheetContent>
   </Sheet>
+  );
+};
+
+const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit, onCancel, submitting, onBack }) => {
+  if (!order || !invoice) return null;
+
+  const timeLeft = new Date(invoice.expiresAt) - new Date();
+  const expired = timeLeft <= 0;
+  const minutes = Math.max(0, Math.ceil(timeLeft / 60000));
+  const seconds = Math.max(0, Math.floor((timeLeft % 60000) / 1000));
+
+  const formatAmount = (amount) => {
+    const num = Number(amount);
+    return num.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: invoice.decimals });
+  };
+
+  const copyToClipboard = (text, label) => {
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} copiado al portapapeles`);
+  };
+
+  return (
+    <section className="container mx-auto px-4 py-8 max-w-2xl">
+      <Button variant="ghost" onClick={onBack} className="mb-4">
+        <ArrowLeft className="h-4 w-4 mr-2" /> Volver
+      </Button>
+
+      <Card className="overflow-hidden shadow-xl">
+        <div className="brand-gradient p-6 text-white text-center">
+          <h1 className="text-2xl font-bold mb-2">Pago con Criptomonedas</h1>
+          <p className="opacity-90">Pedido #{order.id.slice(0, 8).toUpperCase()}</p>
+        </div>
+
+        <CardContent className="p-6 space-y-6">
+          {/* Status indicator */}
+          <div className={`p-4 rounded-xl text-center ${expired ? 'bg-red-50 dark:bg-red-950/30 border border-red-200' : invoice.status === 'submitted' ? 'bg-amber-50 dark:bg-amber-950/30 border border-amber-200' : 'bg-blue-50 dark:bg-blue-950/30 border border-blue-200'}`}>
+            {expired && (
+              <div className="flex items-center justify-center gap-2 text-red-700 dark:text-red-300">
+                <AlertCircle className="h-5 w-5" />
+                <span className="font-semibold">Factura expirada</span>
+              </div>
+            )}
+            {invoice.status === 'pending' && !expired && (
+              <div className="flex items-center justify-center gap-2 text-blue-700 dark:text-blue-300">
+                <Clock className="h-5 w-5 animate-pulse" />
+                <span className="font-semibold">Pendiente de pago</span>
+                <span className="font-mono bg-white/50 dark:bg-black/20 px-2 py-0.5 rounded">
+                  {minutes}:{seconds.toString().padStart(2, '0')}
+                </span>
+              </div>
+            )}
+            {invoice.status === 'submitted' && (
+              <div className="flex items-center justify-center gap-2 text-amber-700 dark:text-amber-300">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="font-semibold">TxHash enviado - En verificación</span>
+              </div>
+            )}
+            {invoice.status === 'approved' && (
+              <div className="flex items-center justify-center gap-2 text-green-700 dark:text-green-300">
+                <CheckCircle className="h-5 w-5" />
+                <span className="font-semibold">Pago confirmado y aprobado</span>
+              </div>
+            )}
+            {invoice.status === 'rejected' && (
+              <div className="flex items-center justify-center gap-2 text-red-700 dark:text-red-300">
+                <XCircle className="h-5 w-5" />
+                <span className="font-semibold">Pago rechazado</span>
+                {invoice.rejectReason && <span className="text-sm ml-2">{invoice.rejectReason}</span>}
+              </div>
+            )}
+          </div>
+
+          {/* Payment Details */}
+          <div className="space-y-4 border-t border-b border-border py-4">
+            <h3 className="font-semibold text-lg flex items-center gap-2">
+              <CreditCard className="h-5 w-5" /> Detalles del pago
+            </h3>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">Moneda</p>
+                <p className="font-semibold">{invoice.currency} ({invoice.network})</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Red</p>
+                <p className="font-semibold">{config?.enabled?.find(n => n.key === invoice.network + '_' + invoice.currency)?.label || invoice.network}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Importe esperado</p>
+                <p className="font-semibold text-xl">{formatAmount(invoice.expectedAmount)} {invoice.currency}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">En unidades mínimas</p>
+                <p className="font-mono text-xs break-all">{invoice.expectedAmountRaw}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Receiver Address */}
+          <div className="space-y-3 p-4 bg-muted/30 rounded-xl">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Wallet className="h-5 w-5" /> Dirección receptora (solo depósito)
+            </h3>
+            <div className="flex gap-2 flex-wrap">
+              <code className="flex-1 min-w-0 bg-background p-3 rounded border border-border text-sm font-mono break-all">{invoice.receiverAddress}</code>
+              <Button variant="outline" size="sm" onClick={() => copyToClipboard(invoice.receiverAddress, 'Dirección')}>
+                <Copy className="h-4 w-4 mr-1" /> Copiar
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Envía exactamente <b>{formatAmount(invoice.expectedAmount)} {invoice.currency}</b> a esta dirección en la red <b>{invoice.network}</b>.
+              <br />Contrato: <code className="text-xs font-mono break-all">{invoice.tokenContract}</code>
+            </p>
+          </div>
+
+          {/* Order Summary */}
+          <div className="space-y-2">
+            <h3 className="font-semibold flex items-center gap-2">
+              <ShoppingBag className="h-5 w-5" /> Resumen del pedido
+            </h3>
+            <div className="rounded-lg border border-border p-4">
+              {order.items.map((item, i) => (
+                <div key={i} className="flex justify-between text-sm py-1 border-b last:border-0">
+                  <span>{item.productName} x{item.quantity}</span>
+                  <span className="font-medium">{Number(item.lineTotal).toLocaleString('es-ES')} {item.currency}</span>
+                </div>
+              ))}
+              <div className="flex justify-between font-semibold text-lg pt-2 border-t">
+                <span>Total</span>
+                <span>{Number(order.total).toLocaleString('es-ES')} {order.currency}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Submit TxHash */}
+          {invoice.status === 'pending' && !expired && (
+            <div className="space-y-3 p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-green-700 dark:text-green-300">
+                <Send className="h-5 w-5" /> Enviar hash de transacción
+              </h3>
+              <p className="text-sm text-green-600 dark:text-green-400">
+                Después de enviar el pago desde tu wallet, copia el hash (TXID) del explorer y pégalo aquí.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={txHash}
+                  onChange={(e) => setTxHash(e.target.value)}
+                  placeholder="0x... o hash de Tron (64 hex)"
+                  className="flex-1 font-mono text-sm"
+                  disabled={submitting}
+                />
+                <Button onClick={onSubmit} disabled={submitting || !txHash.trim()} className="whitespace-nowrap">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 mr-1" />} Enviar
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                El administrador verificará la transacción en el blockchain. No se marca pagado solo por enviar el hash.
+              </p>
+            </div>
+          )}
+
+          {invoice.status === 'submitted' && (
+            <div className="space-y-2 p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                <Clock className="h-5 w-5" /> En verificación
+              </h3>
+              <p className="text-sm">Tu hash <code className="font-mono break-all">{invoice.txHash}</code> ha sido enviado.</p>
+              <p className="text-sm text-amber-600 dark:text-amber-400">
+                Un administrador lo verificará manualmente en el explorer ({invoice.network === 'TRC20' ? 'Tronscan' : 'Etherscan/Polygonscan/Basescan/Arbiscan'}). 
+                Recibirás notificación cuando se apruebe o rechace.
+              </p>
+            </div>
+          )}
+
+          {invoice.status === 'approved' && (
+            <div className="space-y-2 p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-green-700 dark:text-green-300">
+                <CheckCircle className="h-5 w-5" /> ¡Pago confirmado!
+              </h3>
+              <p className="text-sm">Tu pedido ha sido marcado como <b>pagado</b>. El vendedor preparará tu pedido.</p>
+              <p className="text-xs text-muted-foreground">Hash confirmado: <code className="font-mono break-all">{invoice.txHash}</code></p>
+            </div>
+          )}
+
+          {invoice.status === 'rejected' && (
+            <div className="space-y-2 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-red-700 dark:text-red-300">
+                <XCircle className="h-5 w-5" /> Pago rechazado
+              </h3>
+              <p className="text-sm">Motivo: {invoice.rejectReason || 'No especificado'}</p>
+              <p className="text-sm">El stock ha sido restaurado. Puedes crear un nuevo pedido.</p>
+              <Button variant="outline" onClick={onCancel}>Volver al inicio</Button>
+            </div>
+          )}
+
+          {expired && invoice.status === 'pending' && (
+            <div className="space-y-2 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-red-700 dark:text-red-300">
+                <AlertCircle className="h-5 w-5" /> Factura expirada
+              </h3>
+              <p className="text-sm">El tiempo para pagar ha terminado. El stock ha sido restaurado.</p>
+              <Button variant="outline" onClick={onCancel}>Volver al inicio</Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </section>
   );
 };
 

@@ -1154,9 +1154,10 @@ async function route(request, method, path) {
     if (path[1] === 'login' && method === 'POST') {
       const body = await request.json();
       const { email, password } = body || {};
-      if (!email || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
-      const user = await db.collection('users').findOne({ email: email.toLowerCase() });
-      if (!user) return json({ error: 'Credenciales inválidas' }, 401);
+      if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = await db.collection('users').findOne({ email: normalizedEmail });
+      if (!user || typeof user.password !== 'string' || !user.password) return json({ error: 'Credenciales inválidas' }, 401);
       const ok = await bcrypt.compare(password, user.password);
       if (!ok) return json({ error: 'Credenciales inválidas' }, 401);
       const business = await db.collection('businesses').findOne({ id: user.businessId });

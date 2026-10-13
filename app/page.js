@@ -1512,7 +1512,7 @@ const App = () => {
           />
         )}
         {view === 'dashboard' && user && !business && (
-          <BuyerDashboard user={user} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard user={user} token={token} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'dashboard' && !user && (
           <div className="container mx-auto py-32 text-center">
@@ -2810,66 +2810,300 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
 };
 
 // ============ BUYER DASHBOARD ============
-const BuyerDashboard = ({ user, onBecomeSeller, onFavorites, favoritesCount }) => (
-  <section className="container mx-auto px-4 py-8">
-    <div className="mb-6">
-      <h1 className="text-3xl font-extrabold">Hola, {user.name || user.email.split('@')[0]} 👋</h1>
-      <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
-    </div>
+const BuyerDashboard = ({ user, token, onBecomeSeller, onFavorites, favoritesCount }) => {
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState('');
+  const [openInvoiceId, setOpenInvoiceId] = useState(null);
+  const [invoices, setInvoices] = useState({});
+  const [invoiceLoading, setInvoiceLoading] = useState({});
+  const [invoiceErrors, setInvoiceErrors] = useState({});
 
-    {/* Upgrade banner */}
-    <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
-      <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
-        <div>
-          <Badge className="bg-white/20 text-white border-0 mb-2">Próximo: Plan PRO</Badge>
-          <h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2>
-          <p className="text-white/90 mt-1 max-w-lg">
-            Conviértete en vendedor gratis y publica hasta 10 productos. Cuando lo necesites, pásate a PRO para productos ilimitados.
-          </p>
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!token) {
+      setOrders([]);
+      setOrdersLoading(false);
+      setOrdersError('Inicia sesión para consultar tus pedidos.');
+      return () => { cancelled = true; };
+    }
+
+    setOrdersLoading(true);
+    setOrdersError('');
+
+    api('/my/orders', { token })
+      .then((data) => {
+        if (!cancelled) {
+          setOrders(Array.isArray(data.orders) ? data.orders : []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setOrdersError(error?.message || 'No se pudieron cargar tus pedidos.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOrdersLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const loadInvoice = async (order) => {
+    if (openInvoiceId === order.id) {
+      setOpenInvoiceId(null);
+      return;
+    }
+
+    setOpenInvoiceId(order.id);
+    if (invoices[order.id] || invoiceLoading[order.id]) return;
+
+    setInvoiceLoading((prev) => ({ ...prev, [order.id]: true }));
+    setInvoiceErrors((prev) => ({ ...prev, [order.id]: '' }));
+
+    try {
+      const data = await api(`/orders/${encodeURIComponent(order.id)}/invoice`, { token });
+      setInvoices((prev) => ({ ...prev, [order.id]: data.invoice }));
+    } catch (error) {
+      setInvoiceErrors((prev) => ({
+        ...prev,
+        [order.id]: error?.message || 'No se pudo cargar la factura.',
+      }));
+    } finally {
+      setInvoiceLoading((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  const formatMoney = (amount, currency = 'USD') => {
+    const value = Number(amount);
+    if (!Number.isFinite(value)) return `— ${currency}`;
+    try {
+      return new Intl.NumberFormat('es-ES', {
+        style: 'currency',
+        currency: currency || 'USD',
+      }).format(value);
+    } catch {
+      return `${value.toFixed(2)} ${currency || 'USD'}`;
+    }
+  };
+
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? '—'
+      : date.toLocaleString('es-ES');
+  };
+
+  return (
+    <section className="container mx-auto px-4 py-8">
+      <div className="mb-6">
+        <h1 className="text-3xl font-extrabold">
+          Hola, {user.name || user.email?.split('@')[0] || 'comprador'} 👋
+        </h1>
+        <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
+      </div>
+
+      <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
+        <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div>
+            <Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge>
+            <h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2>
+            <p className="text-white/90 mt-1 max-w-lg">
+              Conviértete en vendedor gratis y publica hasta 10 productos.
+            </p>
+          </div>
+          <Button
+            size="lg"
+            onClick={onBecomeSeller}
+            className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6"
+          >
+            <Store className="h-5 w-5 mr-2" /> Hazte vendedor
+          </Button>
+        </CardContent>
+      </Card>
+
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card className="hover-lift cursor-pointer" onClick={onFavorites}>
+          <CardContent className="p-6">
+            <Heart className="h-8 w-8 text-red-500 mb-2" />
+            <div className="text-2xl font-bold">{favoritesCount}</div>
+            <div className="text-sm text-muted-foreground">Productos guardados</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <Mail className="h-8 w-8 text-[#1565C0] mb-2" />
+            <div className="text-sm font-semibold break-all">{user.email}</div>
+            <div className="text-xs text-muted-foreground">Email de tu cuenta</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <Sparkles className="h-8 w-8 text-amber-500 mb-2" />
+            <div className="text-2xl font-bold capitalize">{user.plan || 'free'}</div>
+            <div className="text-xs text-muted-foreground">Tu plan actual</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="mt-8">
+        <h2 className="text-2xl font-bold mb-4">Mis pedidos y facturas</h2>
+
+        {ordersLoading && (
+          <Card><CardContent className="p-6">Cargando tus pedidos…</CardContent></Card>
+        )}
+
+        {!ordersLoading && ordersError && (
+          <Card>
+            <CardContent className="p-6">
+              <p className="text-sm text-red-600">{ordersError}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {!ordersLoading && !ordersError && orders.length === 0 && (
+          <Card>
+            <CardContent className="p-6 text-muted-foreground">
+              Todavía no tienes pedidos asociados a esta cuenta.
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="space-y-4">
+          {orders.map((order) => (
+            <Card key={order.id || order._id}>
+              <CardContent className="p-5 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold break-all">
+                      Pedido {order.id || order._id}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Fecha: {formatDate(order.createdAt)}
+                    </p>
+                    <p className="text-sm">
+                      Estado del pedido: <strong>{order.status || order.shippingStatus || 'Pendiente'}</strong>
+                    </p>
+                    <p className="text-sm">
+                      Estado del pago: <strong>{order.paymentStatus || 'Pendiente'}</strong>
+                    </p>
+                  </div>
+                  <div className="md:text-right">
+                    <div className="text-xl font-bold">
+                      {formatMoney(order.total, order.currency || 'USD')}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {order.businessName || 'Comercio'}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Productos</h4>
+                  {Array.isArray(order.items) && order.items.length > 0 ? (
+                    <ul className="list-disc pl-5 space-y-1">
+                      {order.items.map((item, index) => (
+                        <li key={item.productId || item.id || index} className="text-sm">
+                          {item.name || item.title || 'Producto'}
+                          {' · Cantidad: '}{item.quantity ?? 1}
+                          {' · '}{formatMoney(
+                            item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 1)),
+                            item.currency || order.currency || 'USD'
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No hay detalles de productos disponibles.</p>
+                  )}
+                </div>
+
+                {order.shipping && (
+                  <div className="rounded-lg border p-3">
+                    <h4 className="font-semibold mb-1">Datos de entrega</h4>
+                    {order.shipping.name && <p className="text-sm">Nombre: {order.shipping.name}</p>}
+                    {order.shipping.phone && <p className="text-sm">Teléfono: {order.shipping.phone}</p>}
+                    {order.shipping.address && <p className="text-sm">Dirección: {order.shipping.address}</p>}
+                    {order.shipping.notes && <p className="text-sm">Notas: {order.shipping.notes}</p>}
+                  </div>
+                )}
+
+                {order.trackingNumber && (
+                  <p className="text-sm">
+                    Seguimiento: {order.trackingNumber}
+                    {order.trackingCarrier ? ` · ${order.trackingCarrier}` : ''}
+                  </p>
+                )}
+
+                {order.cryptoInvoiceId && (
+                  <div className="pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => loadInvoice(order)}
+                      disabled={!!invoiceLoading[order.id]}
+                    >
+                      {invoiceLoading[order.id]
+                        ? 'Cargando factura…'
+                        : openInvoiceId === order.id
+                          ? 'Ocultar factura'
+                          : 'Ver factura de pago'}
+                    </Button>
+
+                    {openInvoiceId === order.id && invoiceErrors[order.id] && (
+                      <p className="text-sm text-red-600 mt-2">{invoiceErrors[order.id]}</p>
+                    )}
+
+                    {openInvoiceId === order.id && invoices[order.id] && (
+                      <div className="rounded-lg border p-4 mt-3 space-y-1 break-words">
+                        <h4 className="font-semibold">Factura de pago</h4>
+                        <p className="text-sm">
+                          Estado: <strong>{invoices[order.id].status || 'Pendiente'}</strong>
+                        </p>
+                        <p className="text-sm">
+                          Importe esperado: <strong>
+                            {formatMoney(
+                              invoices[order.id].expectedAmount,
+                              invoices[order.id].currency || 'USDT'
+                            )}
+                          </strong>
+                        </p>
+                        <p className="text-sm">Red: {invoices[order.id].network || '—'}</p>
+                        <p className="text-sm">
+                          Dirección de pago: {invoices[order.id].receiverAddress || '—'}
+                        </p>
+                        <p className="text-sm">
+                          Vence: {formatDate(invoices[order.id].expiresAt)}
+                        </p>
+                        {invoices[order.id].txHash && (
+                          <p className="text-sm break-all">
+                            Transacción enviada: {invoices[order.id].txHash}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
         </div>
-        <Button size="lg" onClick={onBecomeSeller} className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6">
-          <Store className="h-5 w-5 mr-2" /> Hazte vendedor
-        </Button>
-      </CardContent>
-    </Card>
+      </div>
 
-    {/* Grid de info */}
-    <div className="grid md:grid-cols-3 gap-4">
-      <Card className="hover-lift cursor-pointer" onClick={onFavorites}>
-        <CardContent className="p-6">
-          <Heart className="h-8 w-8 text-red-500 mb-2" />
-          <div className="text-2xl font-bold">{favoritesCount}</div>
-          <div className="text-sm text-muted-foreground">Productos guardados</div>
+      <Card className="mt-6 border-dashed">
+        <CardContent className="p-6 text-center">
+          <Crown className="h-10 w-10 mx-auto text-amber-500 mb-3" />
+          <h3 className="text-xl font-bold mb-2">UBIK2 YEMG PRO — Próximamente</h3>
+          <p className="text-muted-foreground max-w-lg mx-auto text-sm">
+            Funciones premium para compradores: alertas de precios, búsquedas guardadas,
+            contacto directo prioritario y mucho más.
+          </p>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent className="p-6">
-          <Mail className="h-8 w-8 text-[#1565C0] mb-2" />
-          <div className="text-sm font-semibold truncate">{user.email}</div>
-          <div className="text-xs text-muted-foreground">Email de tu cuenta</div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-6">
-          <Sparkles className="h-8 w-8 text-amber-500 mb-2" />
-          <div className="text-2xl font-bold capitalize">{user.plan || 'free'}</div>
-          <div className="text-xs text-muted-foreground">Tu plan actual</div>
-        </CardContent>
-      </Card>
-    </div>
-
-    {/* Próximamente PRO */}
-    <Card className="mt-6 border-dashed">
-      <CardContent className="p-6 text-center">
-        <Crown className="h-10 w-10 mx-auto text-amber-500 mb-3" />
-        <h3 className="text-xl font-bold mb-2">UBIK2 YEMG PRO — Próximamente</h3>
-        <p className="text-muted-foreground max-w-lg mx-auto text-sm">
-          Funciones premium para compradores: alertas de precios, búsquedas guardadas, contacto directo prioritario, comparador y mucho más.
-        </p>
-      </CardContent>
-    </Card>
-  </section>
-);
+    </section>
+  );
+};
 
 // ============ DASHBOARD (Seller) ============
 const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, onLogoChange }) => {

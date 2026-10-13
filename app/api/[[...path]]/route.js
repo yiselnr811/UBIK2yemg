@@ -1012,13 +1012,19 @@ function getUserFromToken(request) {
   }
 }
 
+function isConfiguredAdmin(user) {
+  const configuredEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  return Boolean(configuredEmail && user?.email?.trim().toLowerCase() === configuredEmail);
+}
+
 async function requireUser(request) {
   const tok = getUserFromToken(request);
   if (!tok) return { error: json({ error: 'No autorizado' }, 401) };
   const db = await getDb();
   const user = await db.collection('users').findOne({ id: tok.id });
   if (!user) return { error: json({ error: 'Usuario no encontrado' }, 401) };
-  return { user };
+  // ADMIN_EMAIL is a server-side allowlist; normal password authentication is still required.
+  return { user: isConfiguredAdmin(user) ? { ...user, role: 'admin' } : user };
 }
 
 async function requireAdmin(request) {
@@ -1161,8 +1167,9 @@ async function route(request, method, path) {
       const ok = await bcrypt.compare(password, user.password);
       if (!ok) return json({ error: 'Credenciales inválidas' }, 401);
       const business = await db.collection('businesses').findOne({ id: user.businessId });
-      const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
-      const { password: _, ...userOut } = user;
+      const effectiveUser = isConfiguredAdmin(user) ? { ...user, role: 'admin' } : user;
+      const token = jwt.sign({ id: effectiveUser.id, email: effectiveUser.email, role: effectiveUser.role }, JWT_SECRET, { expiresIn: '30d' });
+      const { password: _, ...userOut } = effectiveUser;
       return json({ token, user: userOut, business });
     }
 
@@ -1170,7 +1177,8 @@ async function route(request, method, path) {
       const { user, error } = await requireUser(request);
       if (error) return error;
       const business = user.businessId ? await db.collection('businesses').findOne({ id: user.businessId }) : null;
-      const { password: _, ...userOut } = user;
+      const effectiveUser = isConfiguredAdmin(user) ? { ...user, role: 'admin' } : user;
+      const { password: _, ...userOut } = effectiveUser;
       return json({ user: userOut, business });
     }
 
@@ -1179,11 +1187,12 @@ async function route(request, method, path) {
       if (error) return error;
       if (user.businessId) return json({ error: 'Ya tienes un negocio' }, 400);
       const body = await request.json();
-      const parsed = businessSchema.safeParse(body);
+      // The upgrade form sends businessName but businessSchema requires name.
+      const parsed = businessSchema.safeParse({ ...body, name: body?.name || body?.businessName });
       if (!parsed.success) {
         return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
       }
-      const { businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook, businessType, country } = parsed.data;
+      const { name: businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook, businessType, country } = parsed.data;
       // Cloudinary auto-upload for business logo if base64
       let finalLogo = logo || '';
       if (finalLogo && finalLogo.startsWith('data:') && CLOUDINARY_ENABLED) {
@@ -1882,11 +1891,9 @@ return json({ payments: out });
 
       await db.collection('crypto_invoices').insertOne(invoice);
 
-      // Update order with payment reference
-      await db.collection('orders').updateOne(
-        { id: order.id },
-        { $set: { paymentMethod: 'crypto', cryptoInvoiceId: invoice.id } }
-      );
+      // Save the invoice reference before inserting the order; updating before insert lost it.
+      order.paymentMethod = 'crypto';
+      order.cryptoInvoiceId = invoice.id;
     }
 
     await db.collection('orders').insertOne(order);

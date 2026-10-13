@@ -538,6 +538,7 @@ const App = () => {
   const [lang, setLang] = useState('es');
   const [dark, setDark] = useState(false);
   const [favorites, setFavorites] = useState([]);
+  const [cart, setCart] = useState([]);
 
   // Dialogs
   const [authOpen, setAuthOpen] = useState(false);
@@ -612,6 +613,10 @@ const App = () => {
       const fav = JSON.parse(localStorage.getItem('ubik2_favs') || '[]');
       setFavorites(Array.isArray(fav) ? fav : []);
     } catch {}
+    try {
+      const savedCart = JSON.parse(localStorage.getItem('ubik2_cart') || '[]');
+      setCart(Array.isArray(savedCart) ? savedCart.filter((item) => item?.product?.id && Number(item.quantity) > 0) : []);
+    } catch { setCart([]); }
     (async () => {
       try {
         const st = await api('/stats');
@@ -1089,58 +1094,64 @@ const App = () => {
     }
   };
 
-  const startCryptoCheckout = async (product) => {
+  const saveCart = (nextCart) => {
+    setCart(nextCart);
+    try { localStorage.setItem('ubik2_cart', JSON.stringify(nextCart)); } catch {}
+  };
+
+  const addToCart = (product) => {
+    if (!product?.id || !product.stock || product.stock <= 0) return toast.error('Producto sin stock');
+    setCart((current) => {
+      const currentBusiness = current[0]?.product?.businessId;
+      if (currentBusiness && product.businessId && currentBusiness !== product.businessId) {
+        toast.error('El carrito solo admite productos de una tienda por pedido.');
+        return current;
+      }
+      const existing = current.find((item) => item.product.id === product.id);
+      const next = existing
+        ? current.map((item) => item.product.id === product.id ? { ...item, quantity: Math.min(Number(product.stock) || 99, item.quantity + 1) } : item)
+        : [...current, { product, quantity: 1 }];
+      try { localStorage.setItem('ubik2_cart', JSON.stringify(next)); } catch {}
+      toast.success('Producto añadido al carrito');
+      return next;
+    });
+  };
+  const updateCartQuantity = (productId, quantity) => saveCart(cart.map((item) => item.product.id === productId ? { ...item, quantity: Math.max(1, Math.min(Number(item.product.stock) || 99, Number(quantity) || 1)) } : item));
+  const removeFromCart = (productId) => saveCart(cart.filter((item) => item.product.id !== productId));
+
+  const startCryptoCheckout = async (productOrItems) => {
     if (!token) {
-      toast.error('Debes iniciar sesión para comprar');
-      setAuthMode('login');
-      setAuthOpen(true);
-      return;
+      toast.error('Inicia sesión para pagar; tu carrito se conservará.');
+      setAuthMode('login'); setAuthOpen(true); return;
     }
-
-    if (!product.stock || product.stock <= 0) {
-      return toast.error('Producto sin stock');
+    const checkoutItems = Array.isArray(productOrItems) ? productOrItems : [{ product: productOrItems, quantity: 1 }];
+    if (!checkoutItems.length) return toast.error('El carrito está vacío');
+    for (const item of checkoutItems) {
+      if (!item?.product?.id || !item.product.stock || item.product.stock < item.quantity) return toast.error(`Stock insuficiente para ${item?.product?.name || 'un producto'}`);
     }
-
+    const businessIds = [...new Set(checkoutItems.map((item) => item.product.businessId).filter(Boolean))];
+    if (businessIds.length > 1) return toast.error('El carrito debe contener productos de una sola tienda.');
     setCheckoutSubmitting(true);
     try {
-      // First fetch crypto config if not loaded
-      if (!cryptoConfig) {
-        await fetchCryptoConfig();
-      }
-
-      // For now, default to first available network (user can change in UI later)
-      // In a more advanced version, show a modal to select network
       const config = cryptoConfig || await fetchCryptoConfig();
-      if (!config?.enabled?.length) {
-        return toast.error('No hay redes crypto configuradas');
-      }
-
-      const selectedNetwork = config.enabled[0]; // TODO: let user choose
-
-      // Create order with crypto payment
+      if (!config?.enabled?.length) return toast.error('No hay redes crypto configuradas');
+      const selectedNetwork = config.enabled[0];
       const orderRes = await api('/orders', {
-        method: 'POST',
-        token,
+        method: 'POST', token,
         body: {
-          items: [{ productId: product.id, quantity: 1 }],
-          shippingName: user.name || '',
-          shippingPhone: 'N/A', // Pago crypto sin envío físico
-          shippingAddress: 'Pago crypto - Sin envío físico',
+          items: checkoutItems.map(({ product, quantity }) => ({ productId: product.id, quantity })),
+          shippingName: user?.name || user?.email || 'Comprador',
+          shippingPhone: user?.whatsapp || 'N/A',
+          shippingAddress: 'Pago crypto - confirmar entrega con la tienda',
           shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
-          paymentMethod: 'crypto',
-          cryptoCurrency: selectedNetwork.currency,
-          cryptoNetwork: selectedNetwork.network,
+          paymentMethod: 'crypto', cryptoCurrency: selectedNetwork.currency, cryptoNetwork: selectedNetwork.network,
         },
       });
-
-      setCheckoutOrder(orderRes.order);
-      setCheckoutInvoice(orderRes.invoice);
+      setCheckoutOrder(orderRes.order); setCheckoutInvoice(orderRes.invoice);
+      if (Array.isArray(productOrItems)) saveCart([]);
       setView('checkout');
-    } catch (err) {
-      toast.error('Error creando pedido: ' + err.message);
-    } finally {
-      setCheckoutSubmitting(false);
-    }
+    } catch (err) { toast.error('Error creando pedido: ' + err.message); }
+    finally { setCheckoutSubmitting(false); }
   };
 
   const submitTxHash = async () => {
@@ -1411,6 +1422,7 @@ const App = () => {
       <Header
         t={t} lang={lang} setLang={setLang} dark={dark} setDark={setDark}
         user={user} business={business} onLogout={logout}
+        cartCount={cart.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)}
         onLogin={() => { setAuthMode('login'); setAuthOpen(true); }}
         onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
         onPublish={() => {
@@ -1465,6 +1477,7 @@ const App = () => {
             token={token} isLogged={!!user}
             onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
             startCryptoCheckout={startCryptoCheckout}
+            onAddToCart={addToCart}
             checkoutSubmitting={checkoutSubmitting}
           />
         )}
@@ -1479,6 +1492,8 @@ const App = () => {
             onReport={openReport}
           />
         )}
+
+        {view === 'cart' && <CartView items={cart} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
 
         {view === 'favorites' && (
           <FavoritesView
@@ -1512,7 +1527,10 @@ const App = () => {
           />
         )}
         {view === 'dashboard' && user && !business && (
-          <BuyerDashboard user={user} token={token} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard user={user} token={token} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+        )}
+        {view === 'buyer-orders' && user && (
+          <BuyerDashboard user={user} token={token} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'dashboard' && !user && (
           <div className="container mx-auto py-32 text-center">
@@ -1807,7 +1825,7 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
   );
 };
 
-const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
+const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, cartCount = 0, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
   const isBuyer = user && !business;
   return (
   <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
@@ -1847,6 +1865,10 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
               {favorites.length}
             </span>
           )}
+        </Button>
+        <Button variant="ghost" size="icon" onClick={() => setView('cart')} className="relative" aria-label="Abrir carrito" title="Carrito de compras">
+          <ShoppingBag className="h-5 w-5" />
+          {cartCount > 0 && <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[9px] rounded-full h-4 min-w-4 px-1 flex items-center justify-center font-bold">{cartCount}</span>}
         </Button>
 
         {/* Data saver toggle (ahorro de datos para conexiones lentas) */}
@@ -1906,6 +1928,9 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
                   <Store className="h-4 w-4 mr-2" /> Hazte vendedor
                 </DropdownMenuItem>
               )}
+              <DropdownMenuItem onClick={() => setView('buyer-orders')}>
+                <ShoppingBag className="h-4 w-4 mr-2" /> Mis compras y facturas
+              </DropdownMenuItem>
               {user.role === 'admin' && (
                 <DropdownMenuItem onClick={() => setView('admin')}>
                   <Crown className="h-4 w-4 mr-2 text-[#00A86B]" /> {t.admin}
@@ -2388,7 +2413,7 @@ const ProductGridSkeleton = () => (
 );
 
 // ============ PRODUCT DETAIL ============
-const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded, startCryptoCheckout, checkoutSubmitting }) => {
+const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded, startCryptoCheckout, onAddToCart, checkoutSubmitting }) => {
   if (!product) {
     return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   }
@@ -2491,6 +2516,12 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   Contactar vendedor
                   <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
                 </a>
+
+                {product.stock && product.stock > 0 && (
+                  <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-3 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
+                    <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
+                  </Button>
+                )}
 
                 {/* Crypto Buy Button */}
                 {product.stock && product.stock > 0 && (
@@ -2809,8 +2840,26 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
   );
 };
 
+// ============ SHOPPING CART ============
+const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting }) => {
+  const total = items.reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
+  return (
+    <section className="container mx-auto px-4 py-8 max-w-4xl">
+      <div className="flex items-center justify-between gap-3 mb-6"><div><h1 className="text-3xl font-extrabold">Mi carrito</h1><p className="text-muted-foreground">Revisa tus productos antes de pagar.</p></div><Button variant="outline" onClick={onBack}>Seguir comprando</Button></div>
+      {!items.length ? <Card><CardContent className="p-10 text-center"><ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/><h2 className="text-xl font-bold mb-2">Tu carrito está vacío</h2><p className="text-muted-foreground mb-4">Abre un producto y pulsa «Añadir al carrito».</p><Button onClick={onBack}>Ver productos</Button></CardContent></Card> : <>
+        <div className="space-y-3">{items.map(({ product, quantity }) => <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
+          {product.image ? <img src={product.image} alt={product.name || 'Producto'} className="w-20 h-20 rounded-lg object-cover bg-muted"/> : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
+          <div className="flex-1 min-w-0"><div className="font-bold truncate">{product.name || 'Producto'}</div><div className="text-sm text-muted-foreground">{product.price} {product.currency || 'CUP'} c/u</div><div className="flex items-center gap-2 mt-2"><Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button><span>{quantity}</span><Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>Quitar</Button></div></div>
+          <div className="font-bold whitespace-nowrap">{((Number(product.price) || 0) * quantity).toLocaleString('es-ES')} {product.currency || 'CUP'}</div>
+        </CardContent></Card>)}</div>
+        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">Subtotal estimado</div><div className="text-2xl font-extrabold">{total.toLocaleString('es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">El servidor calcula el importe definitivo al crear el pedido.</p></div><Button size="lg" disabled={submitting} onClick={() => onCheckout(items)} className="brand-gradient text-white font-bold">{submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}Pagar carrito con crypto</Button></CardContent></Card>
+      </>}
+    </section>
+  );
+};
+
 // ============ BUYER DASHBOARD ============
-const BuyerDashboard = ({ user, token, onBecomeSeller, onFavorites, favoritesCount }) => {
+const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount }) => {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState('');
@@ -2905,24 +2954,14 @@ const BuyerDashboard = ({ user, token, onBecomeSeller, onFavorites, favoritesCou
         <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
       </div>
 
-      <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
-        <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div>
-            <Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge>
-            <h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2>
-            <p className="text-white/90 mt-1 max-w-lg">
-              Conviértete en vendedor gratis y publica hasta 10 productos.
-            </p>
-          </div>
-          <Button
-            size="lg"
-            onClick={onBecomeSeller}
-            className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6"
-          >
-            <Store className="h-5 w-5 mr-2" /> Hazte vendedor
-          </Button>
-        </CardContent>
-      </Card>
+      {showBecomeSeller && (
+        <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
+          <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div><Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge><h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2><p className="text-white/90 mt-1 max-w-lg">Conviértete en vendedor gratis y publica hasta 10 productos.</p></div>
+            <Button size="lg" onClick={onBecomeSeller} className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6"><Store className="h-5 w-5 mr-2" /> Hazte vendedor</Button>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid md:grid-cols-3 gap-4">
         <Card className="hover-lift cursor-pointer" onClick={onFavorites}>

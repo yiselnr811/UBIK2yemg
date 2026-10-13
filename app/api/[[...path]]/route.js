@@ -246,7 +246,7 @@ const settingsSchema = z.object({
   plansEnabled: z.boolean().optional(),
   contactPhone: z.string().max(30).optional(),
   contactEmail: z.string().email().optional(),
-  usdRate: z.number().min(0.01).max(1000).optional(), // CUP per USD
+  usdRate: z.number().min(0.01).max(10000).optional(), // CUP per USD
 });
 
 // ===== ORDER SCHEMAS =====
@@ -1832,7 +1832,8 @@ return json({ payments: out });
 
       // Convert order total (CUP) to crypto amount using USD rate from settings
       const settings = await getSettings(db);
-      const usdRate = settings.usdRate || 120; // CUP per USD
+      const configuredUsdRate = Number(settings.usdRate);
+      const usdRate = Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120; // CUP per USD
       const totalUSD = Number(order.total) / usdRate;
 
       // Calculate expected amount in token (with 6 decimals for USDT/USDC)

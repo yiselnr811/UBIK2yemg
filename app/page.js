@@ -584,7 +584,7 @@ const App = () => {
   const [cryptoConfig, setCryptoConfig] = useState(null);
 
   // Admin
-  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [] });
+  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [] });
   const [adminTab, setAdminTab] = useState('payments');
   const [adminSettings, setAdminSettings] = useState(null);
 
@@ -1238,7 +1238,7 @@ const App = () => {
     adminLoadingRef.current = true;
     setAdminLoading(true);
     try {
-      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices] = await Promise.all([
+      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
         api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
@@ -1246,11 +1246,13 @@ const App = () => {
         api('/admin/settings', { token }),
         api('/admin/reports', { token }).catch(() => ({ reports: [] })),
         api('/admin/crypto-invoices', { token }).catch(() => ({ invoices: [] })),
+        api('/admin/orders', { token }).catch(() => ({ orders: [] })),
       ]);
       setAdminData({
         payments: pays.payments || [], users: usrs.users || [],
         products: prods.products || [], stats: st, reports: reps.reports || [],
         cryptoInvoices: cryptoInvoices.invoices || [],
+        orders: ordersRes.orders || [],
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
@@ -1267,6 +1269,44 @@ const App = () => {
 
   const approvePayment = async (id) => { try { await api(`/admin/payments/${id}/approve`, { method: 'POST', token }); toast.success('Aprobado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const rejectPayment = async (id) => { const r = prompt('Motivo') || ''; try { await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason: r } }); toast.success('Rechazado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
+
+  const adminUpdateOrder = async (order) => {
+    const allowed = ['pending_payment', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'payment_failed'];
+    const status = prompt(
+      'Nuevo estado del pedido:\n' + allowed.join(', '),
+      order.status || 'pending_payment'
+    );
+    if (status === null) return;
+    if (!allowed.includes(status.trim())) {
+      toast.error('Estado no válido. Usa uno de los estados indicados.');
+      return;
+    }
+
+    const trackingNumber = prompt('Número de seguimiento (deja vacío si no aplica):', order.trackingNumber || '');
+    if (trackingNumber === null) return;
+    const trackingCarrier = prompt('Transportista:', order.trackingCarrier || '');
+    if (trackingCarrier === null) return;
+    const adminNotes = prompt('Notas administrativas:', order.adminNotes || '');
+    if (adminNotes === null) return;
+
+    try {
+      await api(`/admin/orders/${order.id}`, {
+        method: 'PUT',
+        token,
+        body: {
+          status: status.trim(),
+          trackingNumber: trackingNumber.trim(),
+          trackingCarrier: trackingCarrier.trim(),
+          adminNotes: adminNotes.trim(),
+        },
+      });
+      toast.success('Pedido actualizado');
+      await loadAdmin();
+    } catch (e) {
+      toast.error('No se pudo actualizar el pedido: ' + e.message);
+    }
+  };
+
   // Optimistic UI: update local state immediately, then sync from server. Prevents UI freeze when changing plan.
   const adminUpdateUser = async (id, patch) => {
     setAdminData((d) => ({ ...d, users: (d.users || []).map((u) => u.id === id ? { ...u, ...patch } : u) }));
@@ -1484,7 +1524,7 @@ const App = () => {
         {view === 'admin' && user?.role === 'admin' && (
           <AdminDashboard
             data={adminData} settings={adminSettings} setSettings={setAdminSettings}
-            onApprove={approvePayment} onReject={rejectPayment}
+            onApprove={approvePayment} onReject={rejectPayment} onUpdateOrder={adminUpdateOrder}
             onUpdateUser={adminUpdateUser} onDeleteUser={adminDeleteUser}
             onUpdateBusiness={adminUpdateBusiness} onDeleteBusiness={adminDeleteBusiness}
             onDeleteProduct={adminDeleteProduct}
@@ -3049,7 +3089,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes }) => {
   const [editBiz, setEditBiz] = useState(null);
   const { payments, users, products, stats, reports } = data;
   const pending = payments.filter((p) => p.status === 'pending');
@@ -3088,6 +3128,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
         <TabsList>
           <TabsTrigger value="payments">Pagos {pending.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pending.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="crypto-invoices">Crypto Invoices {cryptoPending > 0 && <Badge className="ml-2 bg-blue-500 text-white border-0">{cryptoPending}</Badge>}</TabsTrigger>
+          <TabsTrigger value="orders">Pedidos ({(data.orders || []).length})</TabsTrigger>
           <TabsTrigger value="reports">Reportes {pendingReports.length > 0 && <Badge className="ml-2 bg-red-500 text-white border-0">{pendingReports.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="users">Usuarios</TabsTrigger>
           <TabsTrigger value="products">Productos</TabsTrigger>
@@ -3208,6 +3249,66 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
               </AlertDialogContent>
             </AlertDialog>
           )}
+        </TabsContent>
+
+        <TabsContent value="orders" className="mt-4 space-y-3">
+          {(data.orders || []).length === 0 ? (
+            <p className="text-muted-foreground text-center py-12">Todavía no hay pedidos.</p>
+          ) : (data.orders || []).map((order) => (
+            <Card key={order.id}>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold">Pedido #{String(order.id || '').slice(-12)}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {order.createdAt ? new Date(order.createdAt).toLocaleString('es-ES') : 'Fecha no disponible'}
+                    </p>
+                    <p className="text-sm mt-1">Comprador: {order.shipping?.name || order.buyerName || '—'}</p>
+                    <p className="text-sm">Correo: {order.buyerEmail || order.shipping?.email || '—'}</p>
+                    <p className="text-sm">Teléfono: {order.shipping?.phone || '—'}</p>
+                  </div>
+                  <div className="space-y-2 md:text-right">
+                    <Badge>{order.status || 'pending_payment'}</Badge>
+                    <p className="font-bold text-lg">
+                      {order.currency || 'USD'} {Number(order.total ?? order.subtotal ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <Button size="sm" onClick={() => onUpdateOrder(order)}>Actualizar pedido</Button>
+                  </div>
+                </div>
+
+                <div className="rounded-md border p-3">
+                  <h4 className="font-semibold mb-1">Dirección de entrega</h4>
+                  <p className="text-sm">{order.shipping?.address || 'No especificada'}</p>
+                  {order.shipping?.notes && <p className="text-sm text-muted-foreground mt-1">Indicaciones: {order.shipping.notes}</p>}
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Productos comprados</h4>
+                  {(order.items || []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">El pedido no contiene artículos visibles.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {order.items.map((item, index) => (
+                        <div key={item.productId || index} className="flex justify-between gap-3 text-sm border-b pb-2">
+                          <span>{item.productName || 'Producto'} × {Number(item.quantity || 0)}</span>
+                          <span className="font-medium">
+                            {order.currency || item.currency || 'USD'} {Number(item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 0))).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {(order.trackingNumber || order.trackingCarrier) && (
+                  <p className="text-sm">
+                    Seguimiento: {order.trackingCarrier || 'Transportista no indicado'} · {order.trackingNumber || 'Número pendiente'}
+                  </p>
+                )}
+                {order.adminNotes && <p className="text-sm text-muted-foreground">Notas: {order.adminNotes}</p>}
+              </CardContent>
+            </Card>
+          ))}
         </TabsContent>
 
         <TabsContent value="reports" className="mt-4 space-y-3">

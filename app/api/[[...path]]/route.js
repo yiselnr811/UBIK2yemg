@@ -273,6 +273,7 @@ const updateOrderStatusSchema = z.object({
 
 // ===== CRYPTO INVOICE SCHEMAS =====
 const createOrderCryptoSchema = createOrderSchema.extend({
+  shippingPhone: z.string().min(1).max(20),
   paymentMethod: z.literal('crypto'),
   cryptoCurrency: z.enum(['USDT', 'USDC']),
   cryptoNetwork: z.enum(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM']),
@@ -1719,7 +1720,10 @@ return json({ payments: out });
     const { user, error } = await requireUser(request);
     if (error) return error;
     const body = await request.json();
-    const parsed = createOrderSchema.safeParse(body);
+    const orderSchema = body.paymentMethod === 'crypto'
+      ? createOrderCryptoSchema
+      : createOrderSchema;
+    const parsed = orderSchema.safeParse(body);
     if (!parsed.success) {
       return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
     }

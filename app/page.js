@@ -1124,7 +1124,7 @@ const App = () => {
         body: {
           items: [{ productId: product.id, quantity: 1 }],
           shippingName: user.name || '',
-          shippingPhone: user.businessId ? '' : 'N/A', // Will be required for shipping
+          shippingPhone: 'N/A', // Pago crypto sin envío físico
           shippingAddress: 'Pago crypto - Sin envío físico',
           shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
           paymentMethod: 'crypto',

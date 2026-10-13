@@ -2515,7 +2515,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   />
                 ) : (
                   <div className="h-14 w-14 rounded-full brand-gradient flex items-center justify-center text-white font-bold text-xl">
-                    {product.business.name[0]?.toUpperCase()}
+                    {product.business?.name?.[0]?.toUpperCase() || "N"}
                   </div>
                 )}
                 <div className="flex-1 min-w-0">

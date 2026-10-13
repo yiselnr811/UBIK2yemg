@@ -773,7 +773,7 @@ async function ensureIndexes(db) {
       // Crypto Invoices (own wallet payments)
       db.collection('crypto_invoices').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
       db.collection('crypto_invoices').createIndex({ orderId: 1 }, { unique: true }).catch(() => {}),
-      db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, sparse: true }).catch(() => {}),
+      db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch((err) => { console.error('[MongoDB] Error creando índice txHashNormalized:', err); throw err; }),
       db.collection('crypto_invoices').createIndex({ buyerId: 1, createdAt: -1 }),
       db.collection('crypto_invoices').createIndex({ businessId: 1, status: 1 }),
       db.collection('crypto_invoices').createIndex({ status: 1, expiresAt: 1 }),

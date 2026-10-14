@@ -2976,6 +2976,9 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
   const [invoices, setInvoices] = useState({});
   const [invoiceLoading, setInvoiceLoading] = useState({});
   const [invoiceErrors, setInvoiceErrors] = useState({});
+  const [invoiceTxHashes, setInvoiceTxHashes] = useState({});
+  const [invoiceSubmitLoading, setInvoiceSubmitLoading] = useState({});
+  const [invoiceSubmitMessages, setInvoiceSubmitMessages] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -3030,6 +3033,57 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       }));
     } finally {
       setInvoiceLoading((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  const submitInvoiceTxHash = async (order) => {
+    const txHash = (invoiceTxHashes[order.id] || '').trim();
+
+    if (!txHash) {
+      setInvoiceSubmitMessages((prev) => ({
+        ...prev,
+        [order.id]: 'Introduce el hash de la transacción.',
+      }));
+      return;
+    }
+
+    setInvoiceSubmitLoading((prev) => ({ ...prev, [order.id]: true }));
+    setInvoiceSubmitMessages((prev) => ({ ...prev, [order.id]: '' }));
+
+    try {
+      const result = await api(
+        `/orders/${encodeURIComponent(order.id)}/invoice/submit-tx`,
+        {
+          method: 'POST',
+          token,
+          body: { txHash },
+        }
+      );
+
+      setInvoices((prev) => ({
+        ...prev,
+        [order.id]: result.invoice,
+      }));
+
+      setInvoiceTxHashes((prev) => ({
+        ...prev,
+        [order.id]: '',
+      }));
+
+      setInvoiceSubmitMessages((prev) => ({
+        ...prev,
+        [order.id]: result.message || 'Hash enviado. Pago pendiente de verificación.',
+      }));
+    } catch (error) {
+      setInvoiceSubmitMessages((prev) => ({
+        ...prev,
+        [order.id]: error?.message || 'No se pudo enviar el hash.',
+      }));
+    } finally {
+      setInvoiceSubmitLoading((prev) => ({
+        ...prev,
+        [order.id]: false,
+      }));
     }
   };
 
@@ -3228,6 +3282,55 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                           <p className="text-sm break-all">
                             Transacción enviada: {invoices[order.id].txHash}
                           </p>
+                        )}
+
+                        {!['approved', 'rejected', 'expired', 'submitted'].includes(
+                          String(invoices[order.id].status || '').toLowerCase()
+                        ) && (
+                          <div className="pt-3 space-y-2">
+                            <Label htmlFor={`invoice-tx-${order.id}`}>
+                              Hash de la transacción
+                            </Label>
+                            <Input
+                              id={`invoice-tx-${order.id}`}
+                              value={
+                                invoiceTxHashes[order.id] ??
+                                invoices[order.id].txHash ??
+                                ''
+                              }
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setInvoiceTxHashes((prev) => ({
+                                  ...prev,
+                                  [order.id]: value,
+                                }));
+                              }}
+                              placeholder="Pega aquí el hash de la operación"
+                              autoComplete="off"
+                              spellCheck={false}
+                              className="font-mono text-sm"
+                              disabled={!!invoiceSubmitLoading[order.id]}
+                            />
+                            <Button
+                              type="button"
+                              onClick={() => submitInvoiceTxHash(order)}
+                              disabled={
+                                !!invoiceSubmitLoading[order.id] ||
+                                !(invoiceTxHashes[order.id] ??
+                                  invoices[order.id].txHash ??
+                                  '').trim()
+                              }
+                            >
+                              {invoiceSubmitLoading[order.id]
+                                ? 'Enviando hash…'
+                                : 'Enviar hash'}
+                            </Button>
+                            {invoiceSubmitMessages[order.id] && (
+                              <p className="text-sm break-words" role="status">
+                                {invoiceSubmitMessages[order.id]}
+                              </p>
+                            )}
+                          </div>
                         )}
                       </div>
                     )}

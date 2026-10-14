@@ -583,6 +583,9 @@ const App = () => {
   const [checkoutTxHash, setCheckoutTxHash] = useState('');
   const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
   const [cryptoConfig, setCryptoConfig] = useState(null);
+  const [cryptoSelectorOpen, setCryptoSelectorOpen] = useState(false);
+  const [cryptoSelectedKey, setCryptoSelectedKey] = useState('');
+  const [cryptoPendingCheckout, setCryptoPendingCheckout] = useState(null);
 
   // Admin
   const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [] });
@@ -1131,27 +1134,69 @@ const App = () => {
     }
     const businessIds = [...new Set(checkoutItems.map((item) => item.product.businessId).filter(Boolean))];
     if (businessIds.length > 1) return toast.error('El carrito debe contener productos de una sola tienda.');
+
     setCheckoutSubmitting(true);
     try {
       const config = cryptoConfig || await fetchCryptoConfig();
       if (!config?.enabled?.length) return toast.error('No hay redes crypto configuradas');
-      const selectedNetwork = config.enabled[0];
+      setCryptoConfig(config);
+      setCryptoPendingCheckout({
+        items: checkoutItems,
+        clearCart: Array.isArray(productOrItems),
+      });
+      setCryptoSelectedKey(`${config.enabled[0].currency}:${config.enabled[0].network}`);
+      setCryptoSelectorOpen(true);
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const confirmCryptoCheckout = async () => {
+    if (!cryptoPendingCheckout) return;
+    const selectedNetwork = cryptoConfig?.enabled?.find(
+      (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
+    );
+    if (!selectedNetwork) {
+      toast.error('Selecciona una red crypto habilitada');
+      return;
+    }
+
+    setCheckoutSubmitting(true);
+    try {
       const orderRes = await api('/orders', {
         method: 'POST', token,
         body: {
-          items: checkoutItems.map(({ product, quantity }) => ({ productId: product.id, quantity })),
+          items: cryptoPendingCheckout.items.map(({ product, quantity }) => ({
+            productId: product.id,
+            quantity,
+          })),
           shippingName: user?.name || user?.email || 'Comprador',
           shippingPhone: user?.whatsapp || 'N/A',
           shippingAddress: 'Pago crypto - confirmar entrega con la tienda',
           shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
-          paymentMethod: 'crypto', cryptoCurrency: selectedNetwork.currency, cryptoNetwork: selectedNetwork.network,
+          paymentMethod: 'crypto',
+          cryptoCurrency: selectedNetwork.currency,
+          cryptoNetwork: selectedNetwork.network,
         },
       });
-      setCheckoutOrder(orderRes.order); setCheckoutInvoice(orderRes.invoice);
-      if (Array.isArray(productOrItems)) saveCart([]);
+      setCheckoutOrder(orderRes.order);
+      setCheckoutInvoice(orderRes.invoice);
+      if (cryptoPendingCheckout.clearCart) saveCart([]);
+      setCryptoSelectorOpen(false);
+      setCryptoPendingCheckout(null);
       setView('checkout');
-    } catch (err) { toast.error('Error creando pedido: ' + err.message); }
-    finally { setCheckoutSubmitting(false); }
+    } catch (err) {
+      toast.error('Error creando pedido: ' + err.message);
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const closeCryptoSelector = () => {
+    if (checkoutSubmitting) return;
+    setCryptoSelectorOpen(false);
+    setCryptoPendingCheckout(null);
+    setCryptoSelectedKey('');
   };
 
   const submitTxHash = async () => {
@@ -1610,6 +1655,64 @@ const App = () => {
         onClear={() => { setFilters({ location: '', businessName: '', country: '', province: '', municipality: '', businessType: '', subcategory: '', currency: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true }); setFiltersOpen(false); }}
         categories={categories} category={category} businessTypes={businessTypes}
       />
+      <Dialog
+        open={cryptoSelectorOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setCryptoSelectorOpen(true);
+          } else {
+            closeCryptoSelector();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Elige tu criptomoneda y red</DialogTitle>
+            <DialogDescription>
+              Selecciona cómo deseas pagar. El pedido se creará después de confirmar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Label htmlFor="crypto-network-select">Red de pago</Label>
+            <Select
+              value={cryptoSelectedKey}
+              onValueChange={setCryptoSelectedKey}
+              disabled={checkoutSubmitting}
+            >
+              <SelectTrigger id="crypto-network-select">
+                <SelectValue placeholder="Selecciona una red" />
+              </SelectTrigger>
+              <SelectContent>
+                {(cryptoConfig?.enabled || []).map((network) => {
+                  const key = `${network.currency}:${network.network}`;
+                  return (
+                    <SelectItem key={key} value={key}>
+                      {network.label || `${network.currency} (${network.network})`}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={checkoutSubmitting}
+              onClick={closeCryptoSelector}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={checkoutSubmitting || !cryptoSelectedKey}
+              onClick={confirmCryptoCheckout}
+            >
+              {checkoutSubmitting ? 'Procesando...' : 'Confirmar y crear pedido'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <LegalDialog open={!!legalOpen} onOpenChange={(v) => !v && setLegalOpen(null)} kind={legalOpen} settings={settings} />
     </div>
   );

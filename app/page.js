@@ -1552,6 +1552,12 @@ const App = () => {
             tab={adminTab} setTab={setAdminTab} onRefresh={loadAdmin}
             compressLogo={compressLogo}
             businessTypes={businessTypes}
+            onApproveCryptoInvoice={onApproveCryptoInvoice}
+            onRejectCryptoInvoice={onRejectCryptoInvoice}
+            rejectCryptoInvoiceId={rejectCryptoInvoiceId}
+            setRejectCryptoInvoiceId={setRejectCryptoInvoiceId}
+            rejectCryptoReason={rejectCryptoReason}
+            setRejectCryptoReason={setRejectCryptoReason}
           />
         )}
       </main>
@@ -3362,7 +3368,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason }) => {
   const [editBiz, setEditBiz] = useState(null);
   const { payments, users, products, stats, reports } = data;
   const pending = payments.filter((p) => p.status === 'pending');

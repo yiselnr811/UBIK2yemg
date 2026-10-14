@@ -769,11 +769,20 @@ async function ensureIndexes(db) {
       db.collection('orders').createIndex({ buyerId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ businessId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ status: 1, createdAt: -1 }),
-      db.collection('orders').createIndex({ idempotencyKey: 1 }, { unique: true, sparse: true }).catch(() => {}),
+      db.collection('orders').createIndex({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }).catch((err) => { console.error('[MongoDB] Error creando índice idempotencyKey:', err); throw err; }),
       // Crypto Invoices (own wallet payments)
       db.collection('crypto_invoices').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
       db.collection('crypto_invoices').createIndex({ orderId: 1 }, { unique: true }).catch(() => {}),
-      db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch((err) => { console.error('[MongoDB] Error creando índice txHashNormalized:', err); throw err; }),
+      db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch(async (err) => {
+        if ([85, 86].includes(err.code)) {
+          console.warn('[MongoDB] Se detectó un índice txHashNormalized incompatible; intentando reconstruirlo.');
+          await db.collection('crypto_invoices').dropIndex('txHashNormalized_1');
+          await db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } });
+          return;
+        }
+        console.error('[MongoDB] Error creando índice txHashNormalized:', err);
+        throw err;
+      }),
       db.collection('crypto_invoices').createIndex({ buyerId: 1, createdAt: -1 }),
       db.collection('crypto_invoices').createIndex({ businessId: 1, status: 1 }),
       db.collection('crypto_invoices').createIndex({ status: 1, expiresAt: 1 }),
@@ -1918,7 +1927,7 @@ return json({ payments: out });
   }
 
   // GET /api/orders/:id - Get order detail (buyer or admin)
-  if (path[0] === 'orders' && path[1] && method === 'GET') {
+  if (path[0] === 'orders' && path.length === 2 && path[1] && method === 'GET') {
     const { user, error } = await requireUser(request);
     if (error) return error;
     const order = await db.collection('orders').findOne({ id: path[1] });

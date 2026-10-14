@@ -1756,6 +1756,7 @@ const App = () => {
               </SelectContent>
             </Select>
           </div>
+          </div>
           <DialogFooter>
             <Button
               type="button"

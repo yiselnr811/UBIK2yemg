@@ -586,6 +586,9 @@ const App = () => {
   const [cryptoSelectorOpen, setCryptoSelectorOpen] = useState(false);
   const [cryptoSelectedKey, setCryptoSelectedKey] = useState('');
   const [cryptoPendingCheckout, setCryptoPendingCheckout] = useState(null);
+  const [cryptoRecipientData, setCryptoRecipientData] = useState({
+    recipientId: '', name: '', address: '', email: '', phone: '',
+  });
 
   // Admin
   const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [] });
@@ -1153,6 +1156,24 @@ const App = () => {
 
   const confirmCryptoCheckout = async () => {
     if (!cryptoPendingCheckout) return;
+
+    const recipient = {
+      recipientId: cryptoRecipientData.recipientId.trim(),
+      name: cryptoRecipientData.name.trim(),
+      address: cryptoRecipientData.address.trim(),
+      email: cryptoRecipientData.email.trim(),
+      phone: cryptoRecipientData.phone.trim(),
+    };
+
+    if (Object.values(recipient).some((value) => !value)) {
+      toast.error('Completa todos los datos del destinatario');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email)) {
+      toast.error('Introduce un correo electrónico válido');
+      return;
+    }
+
     const selectedNetwork = cryptoConfig?.enabled?.find(
       (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
     );
@@ -1170,9 +1191,11 @@ const App = () => {
             productId: product.id,
             quantity,
           })),
-          shippingName: user?.name || user?.email || 'Comprador',
-          shippingPhone: user?.whatsapp || 'N/A',
-          shippingAddress: 'Pago crypto - confirmar entrega con la tienda',
+          shippingRecipientId: recipient.recipientId,
+          shippingName: recipient.name,
+          shippingPhone: recipient.phone,
+          shippingAddress: recipient.address,
+          shippingEmail: recipient.email,
           shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
           paymentMethod: 'crypto',
           cryptoCurrency: selectedNetwork.currency,
@@ -1672,8 +1695,47 @@ const App = () => {
               Selecciona cómo deseas pagar. El pedido se creará después de confirmar.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2">
-            <Label htmlFor="crypto-network-select">Red de pago</Label>
+          <div className="max-h-[70vh] space-y-4 overflow-y-auto py-2 pr-1">
+            <div className="space-y-3">
+              <h3 className="font-semibold">Datos de la persona que recibirá el pedido</h3>
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-id">ID del destinatario</Label>
+                <Input id="crypto-recipient-id" autoComplete="off" maxLength={50}
+                  value={cryptoRecipientData.recipientId}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, recipientId: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="ID de identificación" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-name">Nombre y apellidos</Label>
+                <Input id="crypto-recipient-name" autoComplete="name" maxLength={100}
+                  value={cryptoRecipientData.name}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, name: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="Nombre completo" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-address">Dirección de entrega</Label>
+                <Input id="crypto-recipient-address" autoComplete="street-address" maxLength={500}
+                  value={cryptoRecipientData.address}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, address: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="Calle, número, ciudad y país" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-email">Correo electrónico</Label>
+                <Input id="crypto-recipient-email" type="email" autoComplete="email" maxLength={254}
+                  value={cryptoRecipientData.email}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, email: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="correo@ejemplo.com" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-phone">Teléfono</Label>
+                <Input id="crypto-recipient-phone" type="tel" autoComplete="tel" maxLength={20}
+                  value={cryptoRecipientData.phone}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, phone: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="+34 600 000 000" />
+              </div>
+            </div>
+            <div className="space-y-3 border-t pt-4">
+              <Label htmlFor="crypto-network-select">Red de pago</Label>
             <Select
               value={cryptoSelectedKey}
               onValueChange={setCryptoSelectedKey}
@@ -3225,7 +3287,9 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 {order.shipping && (
                   <div className="rounded-lg border p-3">
                     <h4 className="font-semibold mb-1">Datos de entrega</h4>
+                    {order.shipping.recipientId && <p className="text-sm">ID del destinatario: {order.shipping.recipientId}</p>}
                     {order.shipping.name && <p className="text-sm">Nombre: {order.shipping.name}</p>}
+                    {order.shipping.email && <p className="text-sm">Correo electrónico: {order.shipping.email}</p>}
                     {order.shipping.phone && <p className="text-sm">Teléfono: {order.shipping.phone}</p>}
                     {order.shipping.address && <p className="text-sm">Dirección: {order.shipping.address}</p>}
                     {order.shipping.notes && <p className="text-sm">Notas: {order.shipping.notes}</p>}

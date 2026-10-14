@@ -260,6 +260,8 @@ const createOrderSchema = z.object({
   shippingName: z.string().min(1).max(100),
   shippingPhone: z.string().min(8).max(20),
   shippingAddress: z.string().min(5).max(500),
+  shippingRecipientId: z.string().max(50).optional(),
+  shippingEmail: z.string().email().max(254).optional(),
   shippingNotes: z.string().max(1000).optional(),
   idempotencyKey: z.string().min(10).max(100).optional(), // for duplicate prevention
 });
@@ -274,6 +276,8 @@ const updateOrderStatusSchema = z.object({
 // ===== CRYPTO INVOICE SCHEMAS =====
 const createOrderCryptoSchema = createOrderSchema.extend({
   shippingPhone: z.string().min(1).max(20),
+  shippingRecipientId: z.string().min(1).max(50),
+  shippingEmail: z.string().email().max(254),
   paymentMethod: z.literal('crypto'),
   cryptoCurrency: z.enum(['USDT', 'USDC']),
   cryptoNetwork: z.enum(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM']),
@@ -1746,7 +1750,7 @@ return json({ payments: out });
     if (!parsed.success) {
       return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
     }
-    const { items, shippingName, shippingPhone, shippingAddress, shippingNotes, idempotencyKey } = parsed.data;
+    const { items, shippingName, shippingPhone, shippingAddress, shippingRecipientId, shippingEmail, shippingNotes, idempotencyKey } = parsed.data;
 
     // Idempotency: if key provided and order exists, return existing
     if (idempotencyKey) {
@@ -1809,7 +1813,9 @@ return json({ payments: out });
       total: subtotal, // no tax/shipping for now
       currency,
       shipping: {
+        recipientId: shippingRecipientId || '',
         name: shippingName,
+        email: shippingEmail || '',
         phone: shippingPhone,
         address: shippingAddress,
         notes: shippingNotes || '',

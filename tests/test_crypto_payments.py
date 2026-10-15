@@ -302,8 +302,10 @@ class TestSecurity(unittest.TestCase):
         # Should have unique index on txHashNormalized
         self.assertIn('txHashNormalized', content)
         self.assertIn('unique', content)
-        # Should be sparse (allow null)
-        self.assertIn('sparse', content)
+        # A partial unique index allows invoices without a submitted hash
+        # while enforcing uniqueness for string-valued normalized hashes.
+        self.assertIn('partialFilterExpression', content)
+        self.assertIn("$type: 'string'", content)
 
     def test_order_invoice_unique_index(self):
         """Test that orderId unique index is created"""

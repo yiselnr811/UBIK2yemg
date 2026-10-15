@@ -744,9 +744,27 @@ async function sendPaymentFailedEmail(toEmail, name, order, reason) {
 let _client = null;
 let _connectPromise = null;
 let _indexesEnsured = false;
+let _indexesPromise = null;
 async function ensureIndexes(db) {
   if (_indexesEnsured) return;
   try {
+    await db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch(async (err) => {
+        if ([85, 86].includes(err.code)) {
+          console.warn('[MongoDB] Se detectó un índice txHashNormalized incompatible; intentando reconstruirlo.');
+          await db.collection('crypto_invoices').dropIndex('txHashNormalized_1').catch((criticalErr) => {
+            criticalErr.criticalTxHashIndex = true;
+            throw criticalErr;
+          });
+          await db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch((criticalErr) => {
+            criticalErr.criticalTxHashIndex = true;
+            throw criticalErr;
+          });
+          return;
+        }
+        console.error('[MongoDB] Error creando índice txHashNormalized:', err);
+        err.criticalTxHashIndex = true;
+        throw err;
+      });
     await Promise.all([
       // Products
       db.collection('products').createIndex({ available: 1, featured: -1, createdAt: -1 }),
@@ -777,16 +795,6 @@ async function ensureIndexes(db) {
       // Crypto Invoices (own wallet payments)
       db.collection('crypto_invoices').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
       db.collection('crypto_invoices').createIndex({ orderId: 1 }, { unique: true }).catch(() => {}),
-      db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch(async (err) => {
-        if ([85, 86].includes(err.code)) {
-          console.warn('[MongoDB] Se detectó un índice txHashNormalized incompatible; intentando reconstruirlo.');
-          await db.collection('crypto_invoices').dropIndex('txHashNormalized_1');
-          await db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } });
-          return;
-        }
-        console.error('[MongoDB] Error creando índice txHashNormalized:', err);
-        throw err;
-      }),
       db.collection('crypto_invoices').createIndex({ buyerId: 1, createdAt: -1 }),
       db.collection('crypto_invoices').createIndex({ businessId: 1, status: 1 }),
       db.collection('crypto_invoices').createIndex({ status: 1, expiresAt: 1 }),
@@ -812,6 +820,7 @@ async function ensureIndexes(db) {
       console.warn('[MongoDB] Backfill negocios falló (no crítico):', e?.message);
     }
   } catch (e) {
+    if (e?.criticalTxHashIndex) throw e;
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
 }
@@ -842,15 +851,19 @@ async function getDb() {
   const db = _client.db(DB_NAME);
 
   if (!_indexesEnsured) {
-    ensureIndexes(db).catch((err) => {
-      console.warn(
-        '[MongoDB] Error asegurando índices:',
-        err?.message
-      );
-    });
+    if (!_indexesPromise) {
+      _indexesPromise = ensureIndexes(db).catch((err) => {
+        _indexesPromise = null;
+        throw err;
+      });
+    }
+    await _indexesPromise;
+    if (!_indexesEnsured) {
+      _indexesPromise = null;
+    }
   }
 
-    return db;
+  return db;
 }
 function jsonCached(data, status = 200, maxAge = 60) {
   return NextResponse.json(data, {
@@ -1770,13 +1783,20 @@ return json({ payments: out });
     let subtotal = 0;
     const currency = 'CUP'; // single currency per order for now; could be per-item
     const orderItems = [];
+    const requestedQuantities = new Map();
+    for (const item of items) {
+      requestedQuantities.set(
+        item.productId,
+        (requestedQuantities.get(item.productId) || 0) + item.quantity
+      );
+    }
     for (const item of items) {
       const product = productMap[item.productId];
       if (!product) {
         return json({ error: `Producto no encontrado o no disponible: ${item.productId}` }, 400);
       }
       // Validate stock
-      if (product.stock != null && product.stock < item.quantity) {
+      if (product.stock != null && product.stock < requestedQuantities.get(item.productId)) {
         return json({ error: `Stock insuficiente para ${product.name} (disponible: ${product.stock})` }, 400);
       }
       // Use server-side price (not client-provided)
@@ -1829,13 +1849,6 @@ return json({ payments: out });
       updatedAt: now,
     };
 
-    // Decrement stock atomically
-    for (const item of orderItems) {
-      await db.collection('products').updateOne(
-        { id: item.productId },
-        { $inc: { stock: -item.quantity } }
-      );
-    }
 
     // If paymentMethod is crypto, create crypto_invoice
     let invoice = null;
@@ -1904,14 +1917,82 @@ return json({ payments: out });
         updatedAt: now,
       };
 
-      await db.collection('crypto_invoices').insertOne(invoice);
 
       // Save the invoice reference before inserting the order; updating before insert lost it.
       order.paymentMethod = 'crypto';
       order.cryptoInvoiceId = invoice.id;
     }
 
-    await db.collection('orders').insertOne(order);
+    const reservedStock = [];
+
+    for (const [productId, quantity] of requestedQuantities) {
+      const product = productMap[productId];
+      if (product.stock == null) continue;
+
+      const reservation = await db.collection('products').updateOne(
+        {
+          id: productId,
+          available: true,
+          stock: { $type: 'number', $gte: quantity }
+        },
+        { $inc: { stock: -quantity } }
+      );
+
+      if (reservation.modifiedCount !== 1) {
+        for (const reserved of [...reservedStock].reverse()) {
+          try {
+            await db.collection('products').updateOne(
+              { id: reserved.productId },
+              { $inc: { stock: reserved.quantity } }
+            );
+          } catch (rollbackError) {
+            console.error('[Inventory] Falló la reversión:', reserved.productId, rollbackError?.message || rollbackError);
+          }
+        }
+        return json({
+          error: 'Stock insuficiente o producto no disponible. Actualiza el carrito e inténtalo de nuevo.',
+          productId
+        }, 409);
+      }
+
+      reservedStock.push({ productId, quantity });
+    }
+
+    try {
+      if (invoice) {
+        await db.collection('crypto_invoices').insertOne(invoice);
+      }
+      await db.collection('orders').insertOne(order);
+    } catch (creationError) {
+      if (invoice) {
+        try {
+          await db.collection('crypto_invoices').deleteOne({ id: invoice.id });
+        } catch (cleanupError) {
+          console.error('[Orders] Falló la limpieza de factura:', invoice.id, cleanupError?.message || cleanupError);
+        }
+      }
+
+      for (const reserved of [...reservedStock].reverse()) {
+        try {
+          await db.collection('products').updateOne(
+            { id: reserved.productId },
+            { $inc: { stock: reserved.quantity } }
+          );
+        } catch (rollbackError) {
+          console.error('[Inventory] Falló la reversión:', reserved.productId, rollbackError?.message || rollbackError);
+        }
+      }
+
+      if (creationError?.code === 11000 && idempotencyKey) {
+        const existing = await db.collection('orders').findOne({
+          idempotencyKey,
+          buyerId: user.id
+        });
+        if (existing) return json({ order: existing, duplicate: true });
+      }
+
+      throw creationError;
+    }
 
     // Send order confirmation email (async, don't block response)
     sendOrderConfirmationEmail(user.email, user.name || '', order).catch((e) =>
@@ -2060,9 +2141,32 @@ return json({ payments: out });
     // Check status
     if (invoice.status === 'approved') return json({ error: 'Factura ya aprobada' }, 400);
     if (invoice.status === 'rejected') return json({ error: 'Factura rechazada' }, 400);
-    if (new Date(invoice.expiresAt) < new Date()) {
-      await db.collection('crypto_invoices').updateOne({ id: invoice.id }, { $set: { status: 'expired', updatedAt: new Date().toISOString() } });
-      return json({ error: 'Factura expirada' }, 400);
+    if (new Date(invoice.expiresAt) < new Date() && !invoice.txHash) {
+      const expiredAt = new Date().toISOString();
+      const expiry = await db.collection('crypto_invoices').updateOne(
+        {
+          id: invoice.id,
+          status: { $in: ['pending', 'submitted'] },
+          txHash: null,
+          expiresAt: { $lt: expiredAt }
+        },
+        { $set: { status: 'expired', updatedAt: expiredAt } }
+      );
+
+      if (expiry.modifiedCount === 1 && order.items) {
+        for (const item of order.items) {
+          await db.collection('products').updateOne(
+            { id: item.productId },
+            { $inc: { stock: item.quantity } }
+          );
+        }
+      }
+
+      return json({
+        error: expiry.modifiedCount === 1
+          ? 'Factura expirada'
+          : 'La factura cambió de estado; recarga e inténtalo de nuevo'
+      }, expiry.modifiedCount === 1 ? 400 : 409);
     }
 
     // Normalize txHash for uniqueness check
@@ -2075,10 +2179,21 @@ return json({ payments: out });
     }
 
     const now = new Date().toISOString();
-    await db.collection('crypto_invoices').updateOne(
-      { id: invoice.id },
-      { $set: { status: 'submitted', txHash, txHashNormalized, submittedAt: now, updatedAt: now } }
-    );
+    let submitted;
+    try {
+      submitted = await db.collection('crypto_invoices').updateOne(
+        { id: invoice.id, status: { $in: ['pending', 'submitted'] }, expiresAt: { $gt: now } },
+        { $set: { status: 'submitted', txHash, txHashNormalized, submittedAt: now, updatedAt: now } }
+      );
+    } catch (writeError) {
+      if (writeError?.code === 11000) {
+        return json({ error: 'Este hash de transacción ya fue utilizado en otra factura' }, 409);
+      }
+      throw writeError;
+    }
+    if (submitted.modifiedCount !== 1) {
+      return json({ error: 'La factura expiró o cambió de estado. Actualiza la página.' }, 409);
+    }
 
     // Update order status
     await db.collection('orders').updateOne(
@@ -2157,10 +2272,13 @@ return json({ payments: out });
     const now = new Date().toISOString();
 
     // Update invoice
-    await db.collection('crypto_invoices').updateOne(
-      { id: invoice.id },
+    const approval = await db.collection('crypto_invoices').updateOne(
+      { id: invoice.id, status: { $in: ['pending', 'submitted'] } },
       { $set: { status: 'approved', approvedBy: user.id, approvedAt: now, updatedAt: now, verification: { ...invoice.verification, lastCheckedAt: now } } }
     );
+    if (approval.modifiedCount !== 1) {
+      return json({ error: 'La factura cambió de estado. Recarga e inténtalo de nuevo.' }, 409);
+    }
 
     // Update order
     const order = await db.collection('orders').findOne({ id: invoice.orderId });
@@ -2201,10 +2319,13 @@ return json({ payments: out });
     const now = new Date().toISOString();
 
     // Update invoice
-    await db.collection('crypto_invoices').updateOne(
-      { id: invoice.id },
+    const rejection = await db.collection('crypto_invoices').updateOne(
+      { id: invoice.id, status: { $in: ['pending', 'submitted'] } },
       { $set: { status: 'rejected', rejectedBy: user.id, rejectedAt: now, rejectReason: reason, updatedAt: now } }
     );
+    if (rejection.modifiedCount !== 1) {
+      return json({ error: 'La factura cambió de estado. Recarga e inténtalo de nuevo.' }, 409);
+    }
 
     // Update order and RESTORE STOCK
     const order = await db.collection('orders').findOne({ id: invoice.orderId });

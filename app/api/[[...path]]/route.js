@@ -1781,7 +1781,7 @@ return json({ payments: out });
     const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
 
     let subtotal = 0;
-    const currency = 'CUP'; // single currency per order for now; could be per-item
+    const currency = products.length ? String(products[0].currency || 'CUP').toUpperCase() : 'CUP';
     const orderItems = [];
     const requestedQuantities = new Map();
     for (const item of items) {
@@ -1792,6 +1792,9 @@ return json({ payments: out });
     }
     for (const item of items) {
       const product = productMap[item.productId];
+    if (product && String(product.currency || 'CUP').toUpperCase() !== currency) {
+      return json({ error: 'No se pueden combinar productos con monedas diferentes en un mismo pedido.' }, 400);
+    }
       if (!product) {
         return json({ error: `Producto no encontrado o no disponible: ${item.productId}` }, 400);
       }
@@ -1868,15 +1871,33 @@ return json({ payments: out });
         return json({ error: `Combinación no habilitada: ${cryptoCurrency} en ${cryptoNetwork}` }, 400);
       }
 
-      // Convert order total (CUP) to crypto amount using USD rate from settings
+      // Convertir según la moneda original del pedido.
+      // usdRate representa CUP por 1 USD; USD, USDT y USDC usan paridad 1:1.
       const settings = await getSettings(db);
       const configuredUsdRate = Number(settings.usdRate);
-      const usdRate = Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120; // CUP per USD
-      const totalUSD = Number(order.total) / usdRate;
+      const usdRate = Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120;
+      const orderCurrency = String(order.currency || 'CUP').toUpperCase();
+      let amountInCrypto;
 
-      // Calculate expected amount in token (with 6 decimals for USDT/USDC)
-      const expectedAmount = Number(totalUSD.toFixed(2));
-      const expectedAmountRaw = Math.round(expectedAmount * Math.pow(10, networkConfig.decimals)).toString();
+      if (orderCurrency === 'CUP') {
+        amountInCrypto = Number(order.total) / usdRate;
+      } else if (['USD', 'USDT', 'USDC'].includes(orderCurrency)) {
+        amountInCrypto = Number(order.total);
+      } else {
+        return json({
+          error: `No hay una conversión configurada de ${orderCurrency} a ${cryptoCurrency}.`
+        }, 400);
+      }
+
+      if (!Number.isFinite(amountInCrypto) || amountInCrypto <= 0) {
+        return json({ error: 'No se pudo calcular un importe de pago válido.' }, 400);
+      }
+
+      // Cuantizar al número de decimales admitido por el token y derivar
+      // el importe visible del mismo valor entero usado para verificar la cadena.
+      const amountFactor = 10 ** networkConfig.decimals;
+      const expectedAmountRaw = Math.round(amountInCrypto * amountFactor).toString();
+      const expectedAmount = Number(expectedAmountRaw) / amountFactor;
 
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + config.expiryMinutes);
@@ -2201,9 +2222,25 @@ return json({ payments: out });
       { $set: { paymentStatus: 'pending_payment', status: 'pending_payment', updatedAt: now }, $push: { statusHistory: { status: 'pending_payment', at: now, by: user.id, notes: `TxHash enviado: ${txHash}` } } }
     );
 
+    // Intentar verificar automáticamente la factura recién enviada.
+    // Si el explorador/RPC falla temporalmente, el hash queda guardado
+    // y la factura continúa pendiente para un nuevo intento.
+    try {
+      await verifyPendingInvoices(db, 1, invoice.id);
+    } catch (verificationError) {
+      console.error('[Crypto] Error en verificación automática:', verificationError?.message || verificationError);
+    }
+
     const updatedInvoice = await db.collection('crypto_invoices').findOne({ id: invoice.id });
-    const { verification, ...invOut } = updatedInvoice;
-    return json({ invoice: invOut, message: 'TxHash enviado. Pendiente de verificación por administrador.' });
+    const { verification, ...invOut } = updatedInvoice || {};
+    const isApproved = updatedInvoice?.status === 'approved';
+
+    return json({
+      invoice: invOut,
+      message: isApproved
+        ? 'Transacción verificada y pago confirmado.'
+        : 'Hash recibido. La transacción se comprobará de nuevo hasta alcanzar las confirmaciones requeridas.'
+    });
   }
 
   // GET /api/admin/crypto-invoices - Admin list crypto invoices
@@ -2381,6 +2418,20 @@ return json({ payments: out });
     const updatedInvoice = await db.collection('crypto_invoices').findOne({ id: invoice.id });
     const { verification: v, ...invOut } = updatedInvoice;
     return json({ invoice: invOut, verification });
+  }
+
+  // POST /api/cron/crypto-verify - Verificación programada protegida por secreto
+  if (path[0] === 'cron' && path[1] === 'crypto-verify' && method === 'POST') {
+    const cronSecret = process.env.CRON_SECRET;
+    const auth = request.headers.get('authorization') || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+
+    if (!cronSecret || !token || token !== cronSecret) {
+      return json({ error: 'No autorizado' }, 401);
+    }
+
+    const results = await verifyPendingInvoices(db, 50);
+    return json({ results, message: `Verificadas ${results.length} facturas` });
   }
 
   // POST /api/admin/crypto-invoices/verify-pending - Batch verify all pending (for cron/scheduler)

@@ -54,7 +54,7 @@ const CRYPTO_TOKEN_CONTRACTS = {
   ERC20_USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
   ERC20_USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
   POLYGON_USDT: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
-  POLYGON_USDC: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+  POLYGON_USDC: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
   BASE_USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
   BASE_USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   ARBITRUM_USDT: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
@@ -2294,7 +2294,18 @@ return json({ payments: out });
     const { user, error } = await requireAdmin(request);
     if (error) return error;
 
-    const body = await request.json();
+    // El panel puede enviar un POST sin cuerpo. Aceptar JSON vacío,
+    // pero rechazar un cuerpo JSON malformado.
+    let body = {};
+    const rawBody = await request.text();
+    if (rawBody.trim()) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return json({ error: 'El cuerpo de la solicitud no contiene JSON válido' }, 400);
+      }
+    }
+
     const parsed = approveInvoiceSchema.safeParse(body);
     if (!parsed.success) {
       return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
@@ -2305,35 +2316,138 @@ return json({ payments: out });
     if (!invoice) return json({ error: 'Factura no encontrada' }, 404);
     if (invoice.status === 'approved') return json({ error: 'Factura ya aprobada' }, 400);
     if (invoice.status === 'rejected') return json({ error: 'Factura rechazada, no se puede aprobar' }, 400);
-
-    const now = new Date().toISOString();
-
-    // Update invoice
-    const approval = await db.collection('crypto_invoices').updateOne(
-      { id: invoice.id, status: { $in: ['pending', 'submitted'] } },
-      { $set: { status: 'approved', approvedBy: user.id, approvedAt: now, updatedAt: now, verification: { ...invoice.verification, lastCheckedAt: now } } }
-    );
-    if (approval.modifiedCount !== 1) {
-      return json({ error: 'La factura cambió de estado. Recarga e inténtalo de nuevo.' }, 409);
+    if (invoice.status !== 'submitted' || !invoice.txHash) {
+      return json({ error: 'El comprador debe enviar el hash de la transacción antes de aprobar la factura' }, 409);
     }
 
-    // Update order
     const order = await db.collection('orders').findOne({ id: invoice.orderId });
-    if (order) {
-      await db.collection('orders').updateOne(
-        { id: order.id },
-        { $set: { paymentStatus: 'paid', status: 'paid', updatedAt: now, 'paymentRef.txHash': invoice.txHash, 'paymentRef.confirmedAt': now }, $push: { statusHistory: { status: 'paid', at: now, by: user.id, notes: notes || 'Pago verificado y aprobado por administrador' } } }
-      );
+    if (!order) return json({ error: 'No se encontró el pedido asociado a la factura' }, 404);
+
+    // Usar los mismos mínimos de confirmaciones que el verificador automático.
+    const confirmationRequirements = {
+      TRC20: 1,
+      ERC20: 12,
+      POLYGON: 20,
+      BASE: 2,
+      ARBITRUM: 20,
+    };
+    const requiredConfirmations = confirmationRequirements[invoice.network];
+    if (!requiredConfirmations) {
+      return json({ error: 'Red de pago no admitida para la verificación' }, 400);
     }
 
-    // Send confirmation email
-    if (order) {
-      sendOrderConfirmationEmail(order.buyerEmail, '', { ...order, paymentStatus: 'paid', paymentRef: { txHash: invoice.txHash, confirmedAt: now } }).catch(e => console.error('[Email] failed to send payment confirmed:', e?.message || e));
+    // Verificar la transferencia real antes de aprobar.
+    let verification;
+    try {
+      verification = await verifyCryptoInvoice(invoice);
+    } catch (verificationError) {
+      console.error('[Crypto] Error verificando factura:', verificationError?.message || verificationError);
+      verification = {
+        success: false,
+        confirmations: 0,
+        error: 'Error al consultar el verificador de blockchain',
+        verifiedAt: new Date().toISOString(),
+      };
+    }
+
+    const checkedAt = new Date().toISOString();
+    const verificationUpdate = {
+      ...(invoice.verification || {}),
+      lastCheckedAt: checkedAt,
+      confirmations: Number(verification.confirmations) || 0,
+      txData: verification.txData || null,
+      error: verification.success ? null : (verification.error || 'No se pudo verificar la transferencia'),
+      requiredConfirmations,
+      retryCount: (invoice.verification?.retryCount || 0) + 1,
+    };
+
+    // Guardar el resultado, pero mantener la factura sin aprobar si falla
+    // la verificación o si todavía faltan confirmaciones.
+    if (!verification.success || verification.confirmations < requiredConfirmations) {
+      await db.collection('crypto_invoices').updateOne(
+        { id: invoice.id, status: 'submitted', txHash: invoice.txHash },
+        { $set: { verification: verificationUpdate, updatedAt: checkedAt } }
+      );
+
+      return json({
+        error: verification.success
+          ? `La transacción todavía no tiene las ${requiredConfirmations} confirmaciones requeridas`
+          : 'No se pudo verificar el pago en la blockchain. La factura sigue pendiente de verificación.',
+        status: 'submitted',
+        confirmations: Number(verification.confirmations) || 0,
+        requiredConfirmations,
+      }, 409);
+    }
+
+    // Actualización atómica: si el verificador automático ya ganó la carrera,
+    // esta operación no puede volver a aprobar la factura.
+    const now = new Date().toISOString();
+    const approval = await db.collection('crypto_invoices').updateOne(
+      { id: invoice.id, status: 'submitted', txHash: invoice.txHash },
+      {
+        $set: {
+          status: 'approved',
+          approvedBy: user.id,
+          approvedAt: now,
+          confirmedAt: now,
+          updatedAt: now,
+          verification: {
+            ...verificationUpdate,
+            lastCheckedAt: verification.verifiedAt || now,
+            error: null,
+          },
+        },
+      }
+    );
+
+    if (approval.modifiedCount !== 1) {
+      return json({
+        error: 'La factura cambió de estado durante la verificación. Recarga para comprobar su estado actual.',
+      }, 409);
+    }
+
+    // Marcar el pedido como pagado solo después de ganar la actualización
+    // atómica de la factura. No duplicar el historial ni el correo.
+    const orderUpdate = await db.collection('orders').updateOne(
+      { id: order.id, paymentStatus: { $ne: 'paid' } },
+      {
+        $set: {
+          paymentStatus: 'paid',
+          status: 'paid',
+          updatedAt: now,
+          'paymentRef.txHash': invoice.txHash,
+          'paymentRef.confirmedAt': now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'paid',
+            at: now,
+            by: user.id,
+            notes: notes || `Pago verificado en ${invoice.network} con ${verification.confirmations} confirmaciones`,
+          },
+        },
+      }
+    );
+
+    if (orderUpdate.modifiedCount === 1) {
+      sendOrderConfirmationEmail(
+        order.buyerEmail,
+        '',
+        {
+          ...order,
+          paymentStatus: 'paid',
+          status: 'paid',
+          paymentRef: { txHash: invoice.txHash, confirmedAt: now },
+        }
+      ).catch(e => console.error('[Email] failed to send payment confirmed:', e?.message || e));
     }
 
     const updatedInvoice = await db.collection('crypto_invoices').findOne({ id: invoice.id });
-    const { verification, ...invOut } = updatedInvoice;
-    return json({ invoice: invOut, message: 'Factura aprobada y pedido marcado como pagado.' });
+    const { verification: _verification, ...invOut } = updatedInvoice;
+    return json({
+      invoice: invOut,
+      message: 'Factura verificada y aprobada. Pedido actualizado.',
+    });
   }
 
   // POST /api/admin/crypto-invoices/:id/reject - Admin rejects invoice

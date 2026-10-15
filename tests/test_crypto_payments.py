@@ -198,29 +198,62 @@ class TestCryptoPayments(unittest.TestCase):
         self.assertEqual(confirmations['ARBITRUM'], 20)
 
     def test_token_contracts_exist(self):
-        """Test that token contracts are defined for all supported networks"""
-        contracts = {
-            'TRC20_USDT': 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
-            'ERC20_USDT': '0xdAC17F958D2ee523a2206206994597C13D831ec7',
-            'ERC20_USDC': '0xA0b86a33E6441b8C4505B0e4d0fF7D6E6F7a7F2F',
-            'POLYGON_USDT': '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
-            'POLYGON_USDC': '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
-            'BASE_USDT': '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
-            'BASE_USDC': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-            'ARBITRUM_USDT': '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
-            'ARBITRUM_USDC': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+        """Verify the configured token contracts in the actual server source."""
+        import re
+        from pathlib import Path
+
+        route_path = (
+            Path(BASE_DIR) / "app" / "api" / "[[...path]]" / "route.js"
+        )
+        route_text = route_path.read_text()
+
+        match = re.search(
+            r"const\s+CRYPTO_TOKEN_CONTRACTS\s*=\s*\{(.*?)\};",
+            route_text,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            match, "CRYPTO_TOKEN_CONTRACTS was not found in route.js"
+        )
+
+        actual = dict(
+            re.findall(
+                r"""([A-Z0-9_]+)\s*:\s*['"]([^'"]+)['"]""",
+                match.group(1),
+            )
+        )
+
+        expected = {
+            "TRC20_USDT": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+            "ERC20_USDT": "0xdAC17F958D2ee523a2206206994597C13D831ec7",
+            "ERC20_USDC": "0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            "POLYGON_USDT": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F",
+            "POLYGON_USDC": "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
+            "BASE_USDT": "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2",
+            "BASE_USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "ARBITRUM_USDT": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
+            "ARBITRUM_USDC": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
         }
 
-        # All should be non-empty strings
-        for key, contract in contracts.items():
-            self.assertIsInstance(contract, str)
-            self.assertGreater(len(contract), 10)
-            # Tron addresses start with T, EVM with 0x
-            if key.startswith('TRC20'):
-                self.assertTrue(contract.startswith('T'))
-            else:
-                self.assertTrue(contract.startswith('0x'))
+        self.assertEqual(
+            set(actual),
+            set(expected),
+            "Server token contract keys do not match the expected configuration",
+        )
 
+        for key, expected_address in expected.items():
+            with self.subTest(contract=key):
+                self.assertEqual(
+                    actual[key].lower(),
+                    expected_address.lower(),
+                    f"Incorrect contract address for {key}",
+                )
+
+        self.assertNotIn(
+            "0x2791bca1f2de4661ed88a30c99a7a9449aa84174",
+            [address.lower() for address in actual.values()],
+            "The old Polygon USDC.e address must not be configured as native USDC",
+        )
 
 class TestSecurity(unittest.TestCase):
     """Security-focused tests"""

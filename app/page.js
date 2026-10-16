@@ -1617,7 +1617,7 @@ const App = () => {
 
         {view === 'dashboard' && user && business && (
           <Dashboard
-            user={user} business={business} products={myProducts}
+            user={user} business={business} products={myProducts} token={token}
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
             onShareBusiness={() => shareBusiness(business)}
@@ -3388,6 +3388,78 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                   </p>
                 )}
 
+                {/* Seguimiento del envío visible para el comprador */}
+                {(order.shippingStatus || order.trackingNumber || order.trackingCarrier ||
+                  (Array.isArray(order.statusHistory) && order.statusHistory.length > 0) ||
+                  (Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0)) && (
+                  <div className="rounded-lg border p-3 space-y-3">
+                    <h3 className="font-semibold">Seguimiento del envío</h3>
+                    {order.shippingStatus && (
+                      <p className="text-sm">
+                        Estado:
+                        <strong className="ml-1">
+                          {{
+                            processing: 'Preparando pedido',
+                            shipped: 'Enviado',
+                            delivered: 'Entregado'
+                          }[order.shippingStatus] || order.shippingStatus}
+                        </strong>
+                      </p>
+                    )}
+                    {(order.trackingNumber || order.trackingCarrier) && (
+                      <p className="text-sm">
+                        Transportista: {order.trackingCarrier || 'No indicado'}
+                        {' · '}Seguimiento: {order.trackingNumber || 'Pendiente'}
+                      </p>
+                    )}
+                    {Array.isArray(order.statusHistory) && order.statusHistory.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Historial del envío</h4>
+                        {[...order.statusHistory].reverse().map((entry, index) => (
+                          <div key={entry.id || `${entry.at || entry.createdAt || 'evento'}-${index}`}
+                               className="border-l-2 pl-3 py-1 space-y-1">
+                            <p className="text-sm font-medium">
+                              {{
+                                processing: 'Preparando pedido',
+                                shipped: 'Enviado',
+                                delivered: 'Entregado'
+                              }[entry.status] || entry.status || 'Actualización'}
+                            </p>
+                            {(entry.at || entry.createdAt) && (
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(entry.at || entry.createdAt).toLocaleString()}
+                              </p>
+                            )}
+                            {entry.trackingCarrier && (
+                              <p className="text-sm">Transportista: {entry.trackingCarrier}</p>
+                            )}
+                            {entry.trackingNumber && (
+                              <p className="text-sm">Seguimiento: {entry.trackingNumber}</p>
+                            )}
+                            {entry.notes && <p className="text-sm">{entry.notes}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Fotos de entrega</h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {order.deliveryPhotos.map((photo, index) => (
+                            <a key={`${photo}-${index}`} href={photo}
+                               target="_blank" rel="noopener noreferrer"
+                               className="block">
+                              <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                                   loading="lazy"
+                                   className="w-full h-28 object-cover rounded-md border" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {order.cryptoInvoiceId && (
                   <div className="pt-2">
                     <Button
@@ -3506,11 +3578,38 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, onLogoChange }) => {
+const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, onLogoChange, token }) => {
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
   const [tab, setTab] = React.useState('all');
   const [groupByCategory, setGroupByCategory] = React.useState(false);
+  const [sellerOrders, setSellerOrders] = React.useState([]);
+  const [sellerOrdersLoading, setSellerOrdersLoading] = React.useState(true);
+  const [sellerOrdersError, setSellerOrdersError] = React.useState('');
+  const [sellerOrderForms, setSellerOrderForms] = React.useState({});
+  const [sellerOrderSaving, setSellerOrderSaving] = React.useState({});
+  const [sellerOrderMessage, setSellerOrderMessage] = React.useState({});
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSellerOrdersLoading(true);
+      setSellerOrdersError('');
+      try {
+        const result = await api('/seller/orders', { token });
+        if (!cancelled) {
+          setSellerOrders(Array.isArray(result?.orders) ? result.orders : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+        }
+      } finally {
+        if (!cancelled) setSellerOrdersLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, business?.id]);
 
   // Stats derived once
   const stats = React.useMemo(() => {
@@ -3718,6 +3817,295 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
           {visibleProducts.map(renderProductCard)}
         </div>
       )}
+
+      {/* Seguimiento de pedidos del vendedor - Fase 5 */}
+      <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-4">
+        <div>
+          <h2 className="text-xl font-bold">Pedidos y entregas</h2>
+          <p className="text-sm text-muted-foreground">
+            Actualiza el envío de los pedidos de tu comercio. Solo puedes gestionar pedidos con el pago confirmado.
+          </p>
+        </div>
+
+        {sellerOrdersLoading && (
+          <Card><CardContent className="p-4 text-sm">Cargando pedidos...</CardContent></Card>
+        )}
+
+        {sellerOrdersError && (
+          <Card className="border-destructive">
+            <CardContent className="p-4 text-sm text-destructive">
+              {sellerOrdersError}
+              <Button size="sm" variant="outline" className="ml-3"
+                onClick={async () => {
+                  setSellerOrdersLoading(true);
+                  setSellerOrdersError('');
+                  try {
+                    const result = await api('/seller/orders', { token });
+                    setSellerOrders(Array.isArray(result?.orders) ? result.orders : []);
+                  } catch (error) {
+                    setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+                  } finally {
+                    setSellerOrdersLoading(false);
+                  }
+                }}>
+                Reintentar
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {!sellerOrdersLoading && !sellerOrdersError && sellerOrders.length === 0 && (
+          <Card><CardContent className="p-5 text-sm text-muted-foreground">
+            Todavía no hay pedidos para este comercio.
+          </CardContent></Card>
+        )}
+
+        <div className="space-y-4">
+          {sellerOrders.map((order) => {
+            const form = sellerOrderForms[order.id] || {};
+            const saving = Boolean(sellerOrderSaving[order.id]);
+            const message = sellerOrderMessage[order.id];
+            const photos = Array.isArray(order.deliveryPhotos) ? order.deliveryPhotos : [];
+            const history = Array.isArray(order.statusHistory) ? [...order.statusHistory].reverse() : [];
+            const paid = (order.paymentStatus || (order.status === 'paid' ? 'paid' : '')) === 'paid';
+            const currentStatus = ['processing', 'shipped', 'delivered'].includes(order.shippingStatus)
+              ? order.shippingStatus
+              : (['processing', 'shipped', 'delivered'].includes(order.status) ? order.status : 'processing');
+            const deliveryMethod = order.deliveryMethod || order.shipping?.deliveryMethod || 'pickup';
+            const availableStatuses = currentStatus === 'delivered'
+              ? ['delivered']
+              : deliveryMethod === 'pickup'
+                ? (currentStatus === 'processing' ? ['processing', 'delivered'] : [currentStatus, 'delivered'])
+                : (currentStatus === 'processing' ? ['processing', 'shipped'] : ['shipped', 'delivered']);
+
+            return (
+              <Card key={order.id}>
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-bold">Pedido #{String(order.id || '').slice(-10)}</h3>
+                      <p className="text-xs text-muted-foreground">
+                        {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Fecha no disponible'}
+                      </p>
+                    </div>
+                    <Badge variant={paid ? 'default' : 'outline'}>
+                      {paid ? 'Pago confirmado' : 'Pago pendiente'}
+                    </Badge>
+                  </div>
+
+                  <div className="text-sm space-y-1">
+                    {(Array.isArray(order.items) ? order.items : []).map((item, index) => (
+                      <div key={item.id || item.productId || index} className="flex justify-between gap-3">
+                        <span>{item.name || item.title || 'Producto'} × {item.quantity || item.qty || 1}</span>
+                      </div>
+                    ))}
+                    <div className="font-semibold pt-1">
+                      Total: {formatMoney(Number(order.total || order.totalCUP || 0))}
+                    </div>
+                  </div>
+
+                  {order.trackingNumber && (
+                    <p className="text-sm">
+                      Seguimiento actual: <b>{order.trackingCarrier || 'Transportista no indicado'}</b>
+                      {' · '}{order.trackingNumber}
+                    </p>
+                  )}
+
+                  {!paid && (
+                    <p className="text-sm text-amber-700 dark:text-amber-400">
+                      No puedes actualizar el envío hasta que el pago esté confirmado.
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Estado del envío</Label>
+                      <select
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                        value={form.status || currentStatus}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], status: e.target.value }
+                        }))}
+                      >
+                        {availableStatuses.map((statusOption) => (
+                          <option key={statusOption} value={statusOption}>
+                            {{
+                              processing: 'En preparación',
+                              shipped: 'Enviado',
+                              delivered: 'Entregado',
+                            }[statusOption] || statusOption}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Transportista</Label>
+                      <Input
+                        maxLength={50}
+                        placeholder="Ej. transportista local"
+                        value={form.trackingCarrier ?? order.trackingCarrier ?? ''}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], trackingCarrier: e.target.value }
+                        }))}
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label>Número de seguimiento</Label>
+                      <Input
+                        maxLength={100}
+                        placeholder="Código o referencia del envío"
+                        value={form.trackingNumber ?? order.trackingNumber ?? ''}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], trackingNumber: e.target.value }
+                        }))}
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label>Notas para el comprador</Label>
+                      <textarea
+                        className="w-full min-h-20 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        maxLength={1000}
+                        placeholder="Información sobre la preparación o entrega"
+                        value={form.notes ?? ''}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], notes: e.target.value }
+                        }))}
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label>Fotos de entrega (máximo 4 por actualización)</Label>
+                      <Input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        multiple
+                        disabled={!paid || saving}
+                        onChange={async (e) => {
+                          const files = Array.from(e.target.files || []).slice(0, 4);
+                          if (e.target.files?.length > 4) {
+                            toast.error('Selecciona como máximo 4 fotos por actualización.');
+                          }
+                          try {
+                            const converted = await Promise.all(
+                              files.map((file) => compressImage(file, 1000, 0.72))
+                            );
+                            const size = converted.reduce((sum, photo) => sum + photo.length, 0);
+                            if (size > 3 * 1024 * 1024) {
+                              throw new Error('Las fotos comprimidas superan 3 MB en total. Selecciona menos fotos.');
+                            }
+                            setSellerOrderForms((old) => ({
+                              ...old,
+                              [order.id]: { ...old[order.id], deliveryPhotos: converted }
+                            }));
+                          } catch (error) {
+                            toast.error(error?.message || 'No se pudieron procesar las fotos.');
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Las fotos seleccionadas se subirán al guardar. Fotos ya registradas: {photos.length}/12.
+                      </p>
+                      {(form.deliveryPhotos || []).length > 0 && (
+                        <p className="text-xs">{form.deliveryPhotos.length} foto(s) nuevas seleccionadas.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {message && (
+                    <p className={`text-sm ${message.type === 'error' ? 'text-destructive' : 'text-green-600'}`}>
+                      {message.text}
+                    </p>
+                  )}
+
+                  <Button
+                    className="bg-[#00A86B] hover:bg-[#008F5B] text-white"
+                    disabled={!paid || saving}
+                    onClick={async () => {
+                      setSellerOrderSaving((old) => ({ ...old, [order.id]: true }));
+                      setSellerOrderMessage((old) => ({ ...old, [order.id]: null }));
+                      try {
+                        const payload = {
+                          status: form.status || currentStatus,
+                          trackingNumber: form.trackingNumber ?? order.trackingNumber ?? '',
+                          trackingCarrier: form.trackingCarrier ?? order.trackingCarrier ?? '',
+                          notes: form.notes || '',
+                          deliveryPhotos: form.deliveryPhotos || [],
+                        };
+                        await api(`/seller/orders/${encodeURIComponent(order.id)}`, {
+                          method: 'PUT',
+                          token,
+                          body: payload,
+                        });
+                        const result = await api('/seller/orders', { token });
+                        setSellerOrders(Array.isArray(result?.orders) ? result.orders : []);
+                        setSellerOrderForms((old) => {
+                          const next = { ...old };
+                          delete next[order.id];
+                          return next;
+                        });
+                        setSellerOrderMessage((old) => ({
+                          ...old,
+                          [order.id]: { type: 'success', text: 'Seguimiento guardado correctamente.' }
+                        }));
+                      } catch (error) {
+                        setSellerOrderMessage((old) => ({
+                          ...old,
+                          [order.id]: { type: 'error', text: error?.message || 'No se pudo guardar el seguimiento.' }
+                        }));
+                      } finally {
+                        setSellerOrderSaving((old) => ({ ...old, [order.id]: false }));
+                      }
+                    }}
+                  >
+                    {saving ? 'Guardando...' : 'Guardar seguimiento'}
+                  </Button>
+
+                  {photos.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold">Fotos registradas</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {photos.map((photo, index) => (
+                          <a key={`${photo}-${index}`} href={photo} target="_blank" rel="noreferrer">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                              className="w-full h-24 object-cover rounded-md border" loading="lazy" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {history.length > 0 && (
+                    <details>
+                      <summary className="cursor-pointer text-sm font-semibold">Historial de estados</summary>
+                      <div className="mt-2 space-y-2">
+                        {history.map((entry, index) => (
+                          <div key={`${entry.at || index}-${index}`} className="border-l-2 pl-3 py-1 text-sm">
+                            <div className="font-medium">
+                              {entry.status || 'Actualización'}
+                              {entry.at ? ` · ${new Date(entry.at).toLocaleString()}` : ''}
+                            </div>
+                            {entry.notes && <p className="text-muted-foreground">{entry.notes}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </section>
+
     </section>
   );
 };

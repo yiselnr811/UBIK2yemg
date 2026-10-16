@@ -274,6 +274,16 @@ const updateOrderStatusSchema = z.object({
   adminNotes: z.string().max(1000).optional(),
 });
 
+const sellerOrderUpdateSchema = z.object({
+  status: z.enum(['processing', 'shipped', 'delivered']),
+  trackingNumber: z.string().max(100).optional(),
+  trackingCarrier: z.string().max(50).optional(),
+  notes: z.string().max(1000).optional(),
+  deliveryPhotos: z.array(
+    z.string().max(4 * 1024 * 1024)
+  ).max(4).optional(),
+});
+
 // ===== CRYPTO INVOICE SCHEMAS =====
 const createOrderCryptoSchema = createOrderSchema.extend({
   shippingPhone: z.string().min(1).max(20),
@@ -2043,6 +2053,192 @@ return json({ payments: out });
     );
 
     return json({ order, invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
+  }
+
+  // Seller order management: only the verified owner of the business.
+  if (path[0] === 'seller' && path[1] === 'orders' &&
+      (method === 'GET' || (method === 'PUT' && path[2]))) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    if (method === 'GET') {
+      const orders = await db.collection('orders')
+        .find({ businessId: business.id })
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .toArray();
+
+      return json({ orders });
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'El cuerpo de la solicitud no es JSON válido.' }, 400);
+    }
+
+    const parsed = sellerOrderUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({
+        error: 'Datos inválidos',
+        details: parsed.error.flatten().fieldErrors,
+      }, 400);
+    }
+
+    const order = await db.collection('orders').findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu comercio.' }, 404);
+    }
+
+    const effectivePaymentStatus =
+      order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+
+    if (effectivePaymentStatus !== 'paid') {
+      return json({
+        error: 'El pedido debe tener el pago confirmado antes de gestionar su entrega.',
+      }, 409);
+    }
+
+    const shippingStates = ['processing', 'shipped', 'delivered'];
+    const currentShippingStatus = shippingStates.includes(order.shippingStatus)
+      ? order.shippingStatus
+      : (shippingStates.includes(order.status) ? order.status : 'processing');
+    const effectiveDeliveryMethod = order.deliveryMethod || order.shipping?.deliveryMethod || 'pickup';
+    let allowedStatuses;
+    if (currentShippingStatus === 'delivered') {
+      allowedStatuses = ['delivered'];
+    } else if (effectiveDeliveryMethod === 'pickup') {
+      allowedStatuses = currentShippingStatus === 'processing'
+        ? ['processing', 'delivered']
+        : [currentShippingStatus, 'delivered'];
+    } else {
+      allowedStatuses = currentShippingStatus === 'processing'
+        ? ['processing', 'shipped']
+        : currentShippingStatus === 'shipped'
+          ? ['shipped', 'delivered']
+          : [currentShippingStatus];
+    }
+    if (!allowedStatuses.includes(parsed.data.status)) {
+      return json({
+        error: effectiveDeliveryMethod === 'pickup'
+          ? 'Para recogida, primero prepara el pedido y después márcalo como entregado.'
+          : 'Transición no válida. Usa preparación, envío y entrega en ese orden.',
+      }, 409);
+    }
+
+    const { status, trackingNumber, trackingCarrier, notes, deliveryPhotos = [] } = parsed.data;
+
+    if (deliveryPhotos.some((photo) =>
+      !photo.startsWith('data:image/') &&
+      !/^https:\/\/res\.cloudinary\.com\//i.test(photo)
+    )) {
+      return json({
+        error: 'Las fotos deben ser imágenes nuevas o URLs seguras de Cloudinary.',
+      }, 400);
+    }
+
+    if (deliveryPhotos.some((photo) =>
+      photo.startsWith('data:image/') &&
+      !/^data:image\/(jpeg|jpg|png|webp);base64,/i.test(photo)
+    )) {
+      return json({ error: 'Formato de foto no admitido. Usa JPG, PNG o WebP.' }, 400);
+    }
+
+    const existingPhotos = Array.isArray(order.deliveryPhotos)
+      ? order.deliveryPhotos
+      : [];
+
+    if (existingPhotos.length + deliveryPhotos.length > 12) {
+      return json({ error: 'Este pedido admite un máximo de 12 fotos de entrega.' }, 400);
+    }
+
+    let uploadedPhotos = [];
+    try {
+      for (const photo of deliveryPhotos) {
+        uploadedPhotos.push(
+          await uploadToCloudinary(photo, 'deliveries')
+        );
+      }
+    } catch (e) {
+      console.error('[Seller orders] Error subiendo fotos:', e?.message || e);
+      return json({
+        error: 'No se pudieron guardar las fotos. Comprueba la configuración de Cloudinary.',
+      }, 503);
+    }
+
+    const now = new Date().toISOString();
+    const historyEntry = { status, at: now, by: user.id };
+    if (notes) historyEntry.notes = notes;
+    if (trackingNumber !== undefined) historyEntry.trackingNumber = trackingNumber;
+    if (trackingCarrier !== undefined) historyEntry.trackingCarrier = trackingCarrier;
+    if (uploadedPhotos.length) historyEntry.deliveryPhotos = uploadedPhotos;
+
+    const updateSet = {
+      status,
+      shippingStatus: status,
+      updatedAt: now,
+    };
+
+    if (trackingNumber !== undefined) updateSet.trackingNumber = trackingNumber;
+    if (trackingCarrier !== undefined) updateSet.trackingCarrier = trackingCarrier;
+
+    const updateDoc = {
+      $set: updateSet,
+      $push: { statusHistory: historyEntry },
+    };
+
+    if (uploadedPhotos.length) {
+      updateDoc.$push.deliveryPhotos = { $each: uploadedPhotos };
+    }
+
+    const updateResult = await db.collection('orders').updateOne(
+      {
+        id: path[2],
+        businessId: business.id,
+        $or: [
+          { paymentStatus: 'paid' },
+          { status: 'paid', paymentStatus: { $exists: false } },
+          { status: 'paid', paymentStatus: null },
+          { status: 'paid', paymentStatus: '' },
+        ],
+      },
+      updateDoc
+    );
+
+    if (updateResult.matchedCount !== 1) {
+      return json({
+        error: 'No se actualizó el pedido. Comprueba que el pago siga confirmado y vuelve a cargarlo.',
+      }, 409);
+    }
+
+    const updated = await db.collection('orders').findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!updated) {
+      return json({ error: 'No se pudo recuperar el pedido actualizado.' }, 500);
+    }
+
+    return json({ order: updated });
   }
 
   // GET /api/my/orders - List buyer's orders

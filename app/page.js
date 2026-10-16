@@ -3126,6 +3126,9 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
   const [invoiceTxHashes, setInvoiceTxHashes] = useState({});
   const [invoiceSubmitLoading, setInvoiceSubmitLoading] = useState({});
   const [invoiceSubmitMessages, setInvoiceSubmitMessages] = useState({});
+  const [receiptConfirmLoading, setReceiptConfirmLoading] = useState({});
+  const [receiptConfirmMessages, setReceiptConfirmMessages] = useState({});
+
 
   useEffect(() => {
     let cancelled = false;
@@ -3205,6 +3208,48 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
     } catch (error) {
       toast.error(error?.message || 'No se pudo descargar la factura.');
+    }
+  };
+
+  const confirmOrderReceipt = async (order) => {
+    if (!order?.publicInvoiceId) {
+      setReceiptConfirmMessages((prev) => ({
+        ...prev,
+        [order.id]: 'Esta factura todavía no tiene identificador válido.'
+      }));
+      return;
+    }
+
+    setReceiptConfirmLoading((prev) => ({ ...prev, [order.id]: true }));
+    setReceiptConfirmMessages((prev) => ({ ...prev, [order.id]: '' }));
+
+    try {
+      const data = await api(
+        `/orders/${encodeURIComponent(order.id)}/confirm-receipt`,
+        {
+          method: 'POST',
+          token,
+          body: { publicInvoiceId: order.publicInvoiceId }
+        }
+      );
+
+      if (data.order) {
+        setOrders((prev) =>
+          prev.map((item) => item.id === order.id ? data.order : item)
+        );
+      }
+
+      setReceiptConfirmMessages((prev) => ({
+        ...prev,
+        [order.id]: data.message || 'Recepción confirmada correctamente.'
+      }));
+    } catch (error) {
+      setReceiptConfirmMessages((prev) => ({
+        ...prev,
+        [order.id]: error?.message || 'No se pudo confirmar la recepción.'
+      }));
+    } finally {
+      setReceiptConfirmLoading((prev) => ({ ...prev, [order.id]: false }));
     }
   };
 
@@ -3494,6 +3539,48 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     Descargar factura PDF con QR
                   </Button>
                 </div>
+
+                {order.publicInvoiceId && (
+                  <p className="text-xs text-muted-foreground pt-2 break-all">
+                    Número de factura: <strong>{order.publicInvoiceId}</strong>
+                  </p>
+                )}
+
+                {(
+                  order.paymentStatus === 'paid' ||
+                  order.status === 'paid' ||
+                  order.status === 'delivered'
+                ) && (
+                  <>
+                    {(order.shippingStatus === 'delivered' || order.status === 'delivered') &&
+                     (order.paymentStatus === 'paid' || order.status === 'paid') && (
+                      <div className="pt-3 space-y-2">
+                        {order.buyerReceiptConfirmation?.confirmedAt ? (
+                          <p className="text-sm text-green-700 font-medium">
+                            Recepción confirmada.
+                          </p>
+                        ) : (
+                          <Button
+                            onClick={() => confirmOrderReceipt(order)}
+                            disabled={
+                              !!receiptConfirmLoading[order.id] ||
+                              !order.publicInvoiceId
+                            }
+                          >
+                            {receiptConfirmLoading[order.id]
+                              ? 'Confirmando recepción…'
+                              : 'Confirmar recepción'}
+                          </Button>
+                        )}
+                        {receiptConfirmMessages[order.id] && (
+                          <p className="text-sm" role="status">
+                            {receiptConfirmMessages[order.id]}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
 
                 {order.cryptoInvoiceId && (
                   <div className="pt-2">

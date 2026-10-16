@@ -778,6 +778,54 @@ async function ensureIndexes(db) {
         err.criticalTxHashIndex = true;
         throw err;
       });
+    // Facturas: completar identificadores antiguos y corregir duplicados antes del índice único.
+    const ordersForInvoices = db.collection('orders');
+    const missingInvoiceIds = await ordersForInvoices.find({
+      $or: [
+        { publicInvoiceId: { $exists: false } },
+        { publicInvoiceId: null },
+        { publicInvoiceId: '' }
+      ]
+    }, { projection: { _id: 1 } }).toArray();
+
+    for (const doc of missingInvoiceIds) {
+      await ordersForInvoices.updateOne(
+        { _id: doc._id, $or: [
+          { publicInvoiceId: { $exists: false } },
+          { publicInvoiceId: null },
+          { publicInvoiceId: '' }
+        ] },
+        { $set: { publicInvoiceId: uuidv4() } }
+      );
+    }
+
+    const duplicateInvoiceIds = await ordersForInvoices.aggregate([
+      { $match: { publicInvoiceId: { $type: 'string', $ne: '' } } },
+      { $group: { _id: '$publicInvoiceId', ids: { $push: '$_id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
+
+    for (const group of duplicateInvoiceIds) {
+      for (const duplicateId of group.ids.slice(1)) {
+        await ordersForInvoices.updateOne(
+          { _id: duplicateId, publicInvoiceId: group._id },
+          { $set: { publicInvoiceId: uuidv4() } }
+        );
+      }
+    }
+
+    await ordersForInvoices.createIndex(
+      { publicInvoiceId: 1 },
+      { unique: true, name: 'orders_publicInvoiceId_unique' }
+    ).catch((err) => {
+      err.criticalInvoiceIdIndex = true;
+      throw err;
+    });
+
+    if (missingInvoiceIds.length || duplicateInvoiceIds.length) {
+      console.log(`[MongoDB] Facturas migradas: faltantes=${missingInvoiceIds.length}, grupos duplicados=${duplicateInvoiceIds.length}`);
+    }
+
     await Promise.all([
       // Products
       db.collection('products').createIndex({ available: 1, featured: -1, createdAt: -1 }),
@@ -833,7 +881,7 @@ async function ensureIndexes(db) {
       console.warn('[MongoDB] Backfill negocios falló (no crítico):', e?.message);
     }
   } catch (e) {
-    if (e?.criticalTxHashIndex) throw e;
+    if (e?.criticalTxHashIndex || e?.criticalInvoiceIdIndex) throw e;
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
 }
@@ -1151,7 +1199,7 @@ async function route(request, method, path) {
 
     return json({
       valid: true,
-      invoiceNumber: token.slice(0, 8).toUpperCase(),
+      invoiceNumber: token.toUpperCase(),
       businessName: String(order.businessName || 'Negocio').slice(0, 160),
       items,
       total: Number(order.total ?? order.subtotal ?? 0) || 0,
@@ -2298,6 +2346,147 @@ return json({ payments: out });
     return json({ order: updated });
   }
 
+
+  // POST /api/orders/:id/confirm-receipt
+  // Solo el comprador autenticado puede confirmar una entrega ya pagada.
+  if (
+    path[0] === 'orders' &&
+    path[1] &&
+    path[2] === 'confirm-receipt' &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'El cuerpo de la solicitud no es JSON válido.' }, 400);
+    }
+
+    const suppliedInvoiceId = String(body?.publicInvoiceId || '');
+    const orders = db.collection('orders');
+    const order = await orders.findOne({
+      id: path[1],
+      buyerId: user.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu cuenta.' }, 404);
+    }
+
+    if (
+      !order.publicInvoiceId ||
+      suppliedInvoiceId !== order.publicInvoiceId
+    ) {
+      return json({ error: 'El identificador de factura no coincide.' }, 409);
+    }
+
+    if (order.buyerReceiptConfirmation?.confirmedAt) {
+      return json({
+        order,
+        alreadyConfirmed: true,
+        message: 'La recepción ya estaba confirmada.',
+      });
+    }
+
+    const paid =
+      order.paymentStatus === 'paid' ||
+      (
+        order.status === 'paid' &&
+        (
+          order.paymentStatus === undefined ||
+          order.paymentStatus === null ||
+          order.paymentStatus === ''
+        )
+      );
+
+    if (!paid) {
+      return json({ error: 'El pedido todavía no tiene el pago confirmado.' }, 409);
+    }
+
+    if (order.shippingStatus !== 'delivered' && order.status !== 'delivered') {
+      return json({ error: 'El vendedor todavía no ha marcado el pedido como entregado.' }, 409);
+    }
+
+    const now = new Date().toISOString();
+    const confirmation = {
+      confirmedAt: now,
+      buyerId: user.id,
+      publicInvoiceId: order.publicInvoiceId,
+    };
+
+    const result = await orders.updateOne(
+      {
+        id: order.id,
+        buyerId: user.id,
+        publicInvoiceId: order.publicInvoiceId,
+        $and: [
+          {
+            $or: [
+              { paymentStatus: 'paid' },
+              { status: 'paid', paymentStatus: { $exists: false } },
+              { status: 'paid', paymentStatus: null },
+              { status: 'paid', paymentStatus: '' },
+            ],
+          },
+          {
+            $or: [
+              { shippingStatus: 'delivered' },
+              { status: 'delivered' },
+            ],
+          },
+          {
+            $or: [
+              { 'buyerReceiptConfirmation.confirmedAt': { $exists: false } },
+              { 'buyerReceiptConfirmation.confirmedAt': null },
+            ],
+          },
+        ],
+      },
+      {
+        $set: {
+          buyerReceiptConfirmation: confirmation,
+          updatedAt: now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'buyer_received',
+            at: now,
+            by: user.id,
+            publicInvoiceId: order.publicInvoiceId,
+          },
+        },
+      }
+    );
+
+    const updated = await orders.findOne({ id: order.id, buyerId: user.id });
+
+    if (result.matchedCount !== 1) {
+      if (updated?.buyerReceiptConfirmation?.confirmedAt) {
+        return json({
+          order: updated,
+          alreadyConfirmed: true,
+          message: 'La recepción ya estaba confirmada.',
+        });
+      }
+      return json({
+        error: 'El pedido cambió de estado. Recarga tus pedidos e inténtalo de nuevo.',
+      }, 409);
+    }
+
+    if (!updated?.buyerReceiptConfirmation?.confirmedAt) {
+      return json({ error: 'No se pudo verificar la confirmación guardada.' }, 500);
+    }
+
+    return json({
+      order: updated,
+      alreadyConfirmed: false,
+      message: 'Recepción confirmada correctamente.',
+    });
+  }
+
   // GET /api/my/orders - List buyer's orders
   if (path[0] === 'my' && path[1] === 'orders' && method === 'GET') {
     const { user, error } = await requireUser(request);
@@ -2470,7 +2659,7 @@ return json({ payments: out });
 
     drawLine('UBIK2YEMG', { size: 22, bold: true, gap: 30 });
     drawLine('FACTURA COMERCIAL', { size: 15, bold: true, gap: 25 });
-    drawLine('Número de factura: ' + order.publicInvoiceId.slice(0, 8).toUpperCase());
+    drawLine('Número de factura: ' + String(order.publicInvoiceId).toUpperCase());
     drawLine('Pedido: ' + String(order.id).slice(0, 80));
     drawLine('Negocio: ' + String(order.businessName || 'No indicado').slice(0, 120));
     drawLine('Fecha: ' + (order.createdAt || 'No indicada'));

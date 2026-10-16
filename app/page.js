@@ -1621,7 +1621,7 @@ const App = () => {
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
             onShareBusiness={() => shareBusiness(business)}
-            compressLogo={compressLogo} onLogoChange={updateMyLogo}
+            compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo}
           />
         )}
         {view === 'dashboard' && user && !business && (
@@ -3578,7 +3578,8 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, onLogoChange, token }) => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token }) => {
+  const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
   const [tab, setTab] = React.useState('all');
@@ -3598,7 +3599,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
       try {
         const result = await api('/seller/orders', { token });
         if (!cancelled) {
-          setSellerOrders(Array.isArray(result?.orders) ? result.orders : []);
+          setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
         }
       } catch (error) {
         if (!cancelled) {
@@ -3841,7 +3842,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
                   setSellerOrdersError('');
                   try {
                     const result = await api('/seller/orders', { token });
-                    setSellerOrders(Array.isArray(result?.orders) ? result.orders : []);
+                    setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
                   } catch (error) {
                     setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
                   } finally {
@@ -3900,7 +3901,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
                       </div>
                     ))}
                     <div className="font-semibold pt-1">
-                      Total: {formatMoney(Number(order.total || order.totalCUP || 0))}
+                      Total: {formatPrice(Number(order.total || order.totalCUP || 0), order.currency || 'CUP')}
                     </div>
                   </div>
 
@@ -4045,7 +4046,7 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
                           body: payload,
                         });
                         const result = await api('/seller/orders', { token });
-                        setSellerOrders(Array.isArray(result?.orders) ? result.orders : []);
+                        setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
                         setSellerOrderForms((old) => {
                           const next = { ...old };
                           delete next[order.id];
@@ -4113,9 +4114,13 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
 // ============ ADMIN ============
 const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason }) => {
   const [editBiz, setEditBiz] = useState(null);
-  const { payments, users, products, stats, reports } = data;
-  const pending = payments.filter((p) => p.status === 'pending');
-  const pendingReports = reports.filter((r) => r.status === 'pending');
+  const payments = Array.isArray(data?.payments) ? data.payments : [];
+  const users = Array.isArray(data?.users) ? data.users : [];
+  const products = Array.isArray(data?.products) ? data.products : [];
+  const stats = data?.stats ?? null;
+  const reports = Array.isArray(data?.reports) ? data.reports : [];
+  const pending = payments.filter((p) => p?.status === 'pending');
+  const pendingReports = reports.filter((r) => r?.status === 'pending');
   const cryptoInvoices = data.cryptoInvoices || [];
   const cryptoPending = cryptoInvoices.filter((i) => i.status === 'submitted' || i.status === 'pending').length;
   return (

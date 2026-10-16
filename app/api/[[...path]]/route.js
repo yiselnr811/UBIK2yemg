@@ -1368,6 +1368,16 @@ async function route(request, method, path) {
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
 
+      if ('deliveryEnabled' in body) {
+        if (typeof body.deliveryEnabled !== 'boolean') {
+          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+        }
+        if (body.deliveryEnabled && user.role !== 'admin' && user.plan !== 'premium') {
+          return json({ error: 'Se requiere un plan Premium para activar las entregas' }, 403);
+        }
+        update.deliveryEnabled = body.deliveryEnabled;
+      }
+
       // Validation: if hiding contacts, require physical presence info
       const merged = { ...business, ...update };
       if (merged.showContactsPublicly === false) {
@@ -2827,7 +2837,7 @@ return json({ payments: out });
         .collection('businesses')
         .find(
           { id: { $in: users.map((u) => u.businessId) } },
-          { projection: { id: 1, name: 1 } }
+          { projection: { id: 1, name: 1, deliveryEnabled: 1 } }
         )
         .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
@@ -2872,6 +2882,14 @@ return json({ payments: out });
       const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook', 'verified'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      if ('deliveryEnabled' in body) {
+        if (typeof body.deliveryEnabled !== 'boolean') {
+          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+        }
+        update.deliveryEnabled = body.deliveryEnabled;
+      }
+
       await db.collection('businesses').updateOne({ id: path[2] }, { $set: update });
       const updated = await db.collection('businesses').findOne({ id: path[2] });
       return json({ business: updated });

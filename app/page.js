@@ -4986,6 +4986,21 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
           </div>
           <div><Label>Ubicación / Ciudad (visible)</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
 
+          <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <span className="text-sm font-semibold">Permitir entregas</span>
+              <input
+                type="checkbox"
+                checked={form.deliveryEnabled === true}
+                onChange={(e) => setForm({ ...form, deliveryEnabled: e.target.checked })}
+                className="h-4 w-4"
+              />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              Activa las entregas para este negocio. El vendedor necesita un plan Premium.
+            </p>
+          </div>
+
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={!!form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
             <ShieldCheck className="h-4 w-4 text-[#1565C0]" /> Marcar como verificado

@@ -260,6 +260,7 @@ const createOrderSchema = z.object({
   shippingName: z.string().min(1).max(100),
   shippingPhone: z.string().min(8).max(20),
   shippingAddress: z.string().min(5).max(500),
+  deliveryMethod: z.enum(['pickup', 'delivery']).optional(),
   shippingRecipientId: z.string().max(50).optional(),
   shippingEmail: z.string().email().max(254).optional(),
   shippingNotes: z.string().max(1000).optional(),
@@ -1774,6 +1775,7 @@ return json({ payments: out });
       return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
     }
     const { items, shippingName, shippingPhone, shippingAddress, shippingRecipientId, shippingEmail, shippingNotes, idempotencyKey } = parsed.data;
+    const deliveryMethod = parsed.data.deliveryMethod || 'pickup';
 
     // Idempotency: if key provided and order exists, return existing
     if (idempotencyKey) {
@@ -1834,6 +1836,14 @@ return json({ payments: out });
     const businessId = businessIds[0];
     const business = await db.collection('businesses').findOne({ id: businessId });
 
+    // Enforce delivery eligibility on the server, never trust the client.
+    if (deliveryMethod === 'delivery' && (user.plan !== 'premium' || business?.deliveryEnabled !== true)) {
+      return json({ error: 'La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.' }, 403);
+    }
+    const finalShippingAddress = deliveryMethod === 'pickup'
+      ? `Recogida en el negocio: ${String(business?.name || 'negocio')}`.slice(0, 500)
+      : shippingAddress;
+
     const now = new Date().toISOString();
     const order = {
       id: uuidv4(),
@@ -1845,12 +1855,14 @@ return json({ payments: out });
       subtotal,
       total: subtotal, // no tax/shipping for now
       currency,
+      deliveryMethod,
       shipping: {
+        deliveryMethod,
         recipientId: shippingRecipientId || '',
         name: shippingName,
         email: shippingEmail || '',
         phone: shippingPhone,
-        address: shippingAddress,
+        address: finalShippingAddress,
         notes: shippingNotes || '',
       },
       paymentStatus: 'pending_payment',

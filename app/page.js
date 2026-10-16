@@ -586,6 +586,9 @@ const App = () => {
   const [cryptoSelectorOpen, setCryptoSelectorOpen] = useState(false);
   const [cryptoSelectedKey, setCryptoSelectedKey] = useState('');
   const [cryptoPendingCheckout, setCryptoPendingCheckout] = useState(null);
+  const [checkoutBusiness, setCheckoutBusiness] = useState(null);
+  const [deliveryMethod, setDeliveryMethod] = useState('pickup');
+  const canUseHomeDelivery = user?.plan === 'premium' && checkoutBusiness?.deliveryEnabled === true;
   const [cryptoRecipientData, setCryptoRecipientData] = useState({
     recipientId: '', name: '', address: '', email: '', phone: '',
   });
@@ -1140,6 +1143,18 @@ const App = () => {
 
     setCheckoutSubmitting(true);
     try {
+      let businessInfo = null;
+      if (businessIds[0]) {
+        try {
+          const businessRes = await api(`/businesses/${encodeURIComponent(businessIds[0])}`, { token });
+          businessInfo = businessRes?.business || null;
+        } catch {
+          // La recogida sigue disponible aunque falle la consulta del negocio.
+        }
+      }
+      setCheckoutBusiness(businessInfo);
+      setDeliveryMethod('pickup');
+
       const config = cryptoConfig || await fetchCryptoConfig();
       if (!config?.enabled?.length) return toast.error('No hay redes crypto configuradas');
       setCryptoConfig(config);
@@ -1165,8 +1180,17 @@ const App = () => {
       phone: cryptoRecipientData.phone.trim(),
     };
 
-    if (Object.values(recipient).some((value) => !value)) {
-      toast.error('Completa todos los datos del destinatario');
+    if ([recipient.recipientId, recipient.name, recipient.email, recipient.phone].some((value) => !value)) {
+      toast.error('Completa los datos del destinatario');
+      return;
+    }
+    if (deliveryMethod === 'delivery' && !recipient.address) {
+      toast.error('Introduce la dirección de entrega');
+      return;
+    }
+    if (deliveryMethod === 'delivery' && !canUseHomeDelivery) {
+      toast.error('La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.');
+      setDeliveryMethod('pickup');
       return;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email)) {
@@ -1194,7 +1218,10 @@ const App = () => {
           shippingRecipientId: recipient.recipientId,
           shippingName: recipient.name,
           shippingPhone: recipient.phone,
-          shippingAddress: recipient.address,
+          shippingAddress: deliveryMethod === 'delivery'
+            ? recipient.address
+            : `Recogida en el negocio: ${checkoutBusiness?.name || 'negocio'}`,
+          deliveryMethod,
           shippingEmail: recipient.email,
           shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
           paymentMethod: 'crypto',
@@ -1698,6 +1725,54 @@ const App = () => {
           <div className="max-h-[70vh] space-y-4 overflow-y-auto py-2 pr-1">
             <div className="space-y-3">
               <h3 className="font-semibold">Datos de la persona que recibirá el pedido</h3>
+
+              <div className="space-y-3 rounded-lg border p-3">
+                <p className="font-medium">¿Cómo recibirás tu pedido?</p>
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="radio"
+                    name="delivery-method"
+                    value="pickup"
+                    checked={deliveryMethod === 'pickup'}
+                    onChange={() => setDeliveryMethod('pickup')}
+                    disabled={checkoutSubmitting}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Recogida en el negocio</span>
+                    <span className="block text-sm text-muted-foreground">
+                      Opción disponible para todos los compradores.
+                    </span>
+                  </span>
+                </label>
+
+                {canUseHomeDelivery ? (
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="radio"
+                      name="delivery-method"
+                      value="delivery"
+                      checked={deliveryMethod === 'delivery'}
+                      onChange={() => setDeliveryMethod('delivery')}
+                      disabled={checkoutSubmitting}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="font-medium">Entrega a domicilio</span>
+                      <span className="block text-sm text-muted-foreground">
+                        Disponible para tu cuenta Premium en este negocio.
+                      </span>
+                    </span>
+                  </label>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {user?.plan !== 'premium'
+                      ? 'La entrega a domicilio requiere el plan Premium.'
+                      : 'Este negocio no tiene habilitada la entrega a domicilio.'}
+                  </p>
+                )}
+              </div>
+
               <div className="space-y-1">
                 <Label htmlFor="crypto-recipient-id">ID del destinatario</Label>
                 <Input id="crypto-recipient-id" autoComplete="off" maxLength={50}
@@ -1712,13 +1787,19 @@ const App = () => {
                   onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, name: e.target.value }))}
                   disabled={checkoutSubmitting} required placeholder="Nombre completo" />
               </div>
-              <div className="space-y-1">
-                <Label htmlFor="crypto-recipient-address">Dirección de entrega</Label>
-                <Input id="crypto-recipient-address" autoComplete="street-address" maxLength={500}
-                  value={cryptoRecipientData.address}
-                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, address: e.target.value }))}
-                  disabled={checkoutSubmitting} required placeholder="Calle, número, ciudad y país" />
-              </div>
+              {deliveryMethod === 'delivery' ? (
+                <div className="space-y-1">
+                  <Label htmlFor="crypto-recipient-address">Dirección de entrega</Label>
+                  <Input id="crypto-recipient-address" autoComplete="street-address" maxLength={500}
+                    value={cryptoRecipientData.address}
+                    onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, address: e.target.value }))}
+                    disabled={checkoutSubmitting} required placeholder="Calle, número, ciudad y país" />
+                </div>
+              ) : (
+                <p className="rounded-md bg-muted p-3 text-sm">
+                  Recogerás el pedido en el negocio. No necesitas introducir una dirección de entrega.
+                </p>
+              )}
               <div className="space-y-1">
                 <Label htmlFor="crypto-recipient-email">Correo electrónico</Label>
                 <Input id="crypto-recipient-email" type="email" autoComplete="email" maxLength={254}

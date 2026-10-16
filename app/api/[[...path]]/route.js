@@ -2301,6 +2301,10 @@ return json({ payments: out });
       shippingStatus: status,
       updatedAt: now,
     };
+    // Conserva el pago confirmado en pedidos antiguos sin paymentStatus.
+    if (order.paymentStatus !== 'paid' && order.status === 'paid') {
+      updateSet.paymentStatus = 'paid';
+    }
 
     if (trackingNumber !== undefined) updateSet.trackingNumber = trackingNumber;
     if (trackingCarrier !== undefined) updateSet.trackingCarrier = trackingCarrier;
@@ -2394,12 +2398,8 @@ return json({ payments: out });
     const paid =
       order.paymentStatus === 'paid' ||
       (
-        order.status === 'paid' &&
-        (
-          order.paymentStatus === undefined ||
-          order.paymentStatus === null ||
-          order.paymentStatus === ''
-        )
+        ['paid', 'processing', 'shipped', 'delivered'].includes(order.status) &&
+        (order.paymentStatus === undefined || order.paymentStatus === null || order.paymentStatus === '')
       );
 
     if (!paid) {

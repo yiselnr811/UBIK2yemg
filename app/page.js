@@ -3553,7 +3553,11 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 ) && (
                   <>
                     {(order.shippingStatus === 'delivered' || order.status === 'delivered') &&
-                     (order.paymentStatus === 'paid' || order.status === 'paid') && (
+                     (
+                       order.paymentStatus === 'paid' ||
+                       order.status === 'paid' ||
+                       (!order.paymentStatus && ['processing', 'shipped', 'delivered'].includes(order.status))
+                     ) && (
                       <div className="pt-3 space-y-2">
                         {order.buyerReceiptConfirmation?.confirmedAt ? (
                           <p className="text-sm text-green-700 font-medium">
@@ -4021,6 +4025,16 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       {paid ? 'Pago confirmado' : 'Pago pendiente'}
                     </Badge>
                   </div>
+
+                  {order.buyerReceiptConfirmation?.confirmedAt ? (
+                    <p className="text-sm font-medium text-green-700">
+                      El comprador confirmó la recepción.
+                    </p>
+                  ) : currentStatus === 'delivered' ? (
+                    <p className="text-sm text-amber-700">
+                      Entrega marcada. Pendiente de confirmación del comprador.
+                    </p>
+                  ) : null}
 
                   <div className="text-sm space-y-1">
                     {(Array.isArray(order.items) ? order.items : []).map((item, index) => (

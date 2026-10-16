@@ -1377,10 +1377,13 @@ const App = () => {
   const rejectPayment = async (id) => { const r = prompt('Motivo') || ''; try { await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason: r } }); toast.success('Rechazado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
 
   const adminUpdateOrder = async (order) => {
-    const allowed = ['pending_payment', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'payment_failed'];
+    const allowed = ['processing', 'shipped', 'delivered'];
+    const currentShippingStatus = allowed.includes(order.shippingStatus)
+      ? order.shippingStatus
+      : 'processing';
     const status = prompt(
-      'Nuevo estado del pedido:\n' + allowed.join(', '),
-      order.status || 'pending_payment'
+      'Nuevo estado de preparación/entrega:\n' + allowed.join(', '),
+      currentShippingStatus
     );
     if (status === null) return;
     if (!allowed.includes(status.trim())) {

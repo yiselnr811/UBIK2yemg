@@ -268,7 +268,7 @@ const createOrderSchema = z.object({
 });
 
 const updateOrderStatusSchema = z.object({
-  status: z.enum(['pending_payment', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'payment_failed']),
+  status: z.enum(['processing', 'shipped', 'delivered']),
   trackingNumber: z.string().max(100).optional(),
   trackingCarrier: z.string().max(50).optional(),
   adminNotes: z.string().max(1000).optional(),
@@ -2083,19 +2083,34 @@ return json({ payments: out });
     const order = await db.collection('orders').findOne({ id: path[2] });
     if (!order) return json({ error: 'Pedido no encontrado' }, 404);
 
+    const effectivePaymentStatus = order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+    if (effectivePaymentStatus !== 'paid') {
+      return json({ error: 'El pedido debe tener el pago confirmado antes de gestionar su preparación o entrega.' }, 409);
+    }
+
     const now = new Date().toISOString();
     const historyEntry = { status, at: now, by: user.id };
     if (adminNotes) historyEntry.notes = adminNotes;
     if (trackingNumber) historyEntry.trackingNumber = trackingNumber;
     if (trackingCarrier) historyEntry.trackingCarrier = trackingCarrier;
 
+    const updateSet = {
+      status,
+      updatedAt: now,
+    };
+
+    // Solo estos estados representan cambios en el pago.
+    if (['pending_payment', 'paid', 'payment_failed'].includes(status)) {
+      updateSet.paymentStatus = status;
+    }
+
+    // Los estados de preparación y entrega no deben sobrescribir el pago.
+    if (['processing', 'shipped', 'delivered', 'cancelled'].includes(status)) {
+      updateSet.shippingStatus = status;
+    }
+
     const update = {
-      $set: {
-        status,
-        paymentStatus: status,
-        shippingStatus: ['shipped', 'delivered'].includes(status) ? status : order.shippingStatus,
-        updatedAt: now,
-      },
+      $set: updateSet,
       $push: { statusHistory: historyEntry },
     };
     if (trackingNumber) update.$set.trackingNumber = trackingNumber;

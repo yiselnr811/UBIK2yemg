@@ -2864,7 +2864,7 @@ return json({ payments: out });
         .collection('businesses')
         .find(
           { id: { $in: users.map((u) => u.businessId) } },
-          { projection: { id: 1, name: 1, deliveryEnabled: 1 } }
+          { projection: { id: 1, name: 1, deliveryEnabled: 1, verified: 1, verifiedAt: 1, verifiedBy: 1 } }
         )
         .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
@@ -2906,15 +2906,31 @@ return json({ payments: out });
 
     if (path[1] === 'businesses' && path[2] && method === 'PUT') {
       const body = await request.json();
-      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook', 'verified'];
+      const existing = await db.collection('businesses').findOne({ id: path[2] });
+      if (!existing) return json({ error: 'Negocio no encontrado' }, 404);
+
+      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      if ('verified' in body) {
+        if (typeof body.verified !== 'boolean') {
+          return json({ error: 'El estado de verificación debe ser verdadero o falso' }, 400);
+        }
+        update.verified = body.verified;
+        update.verifiedAt = body.verified ? new Date().toISOString() : null;
+        update.verifiedBy = body.verified ? user.id : null;
+      }
 
       if ('deliveryEnabled' in body) {
         if (typeof body.deliveryEnabled !== 'boolean') {
           return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
         }
         update.deliveryEnabled = body.deliveryEnabled;
+      }
+
+      if (Object.keys(update).length === 0) {
+        return json({ error: 'No hay cambios válidos para guardar' }, 400);
       }
 
       await db.collection('businesses').updateOne({ id: path[2] }, { $set: update });

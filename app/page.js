@@ -3981,6 +3981,21 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {u.business ? `🏪 ${u.business.name}` : '🛍️ Sin negocio'} · Plan: <b>{u.plan}</b> · {u.name || '—'}
+                    {u.business && (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {u.business.verified ? (
+                          <Badge className="bg-green-600 text-white border-0">Verificado</Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-amber-500 text-amber-600">Pendiente de verificación</Badge>
+                        )}
+                        {u.business.verified && u.business.verifiedAt && (
+                          <span className="text-[10px] text-muted-foreground">
+                            Verificado el {new Date(u.business.verifiedAt).toLocaleString('es-ES')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                   </div>
                 </div>
                 <div className="flex gap-2 flex-wrap">

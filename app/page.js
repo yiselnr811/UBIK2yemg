@@ -3183,6 +3183,31 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     }
   };
 
+
+  const downloadOrderInvoice = async (order) => {
+    try {
+      const response = await fetch(
+        `${API}/orders/${encodeURIComponent(order.id)}/invoice/pdf`,
+        { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'No se pudo descargar la factura.');
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `factura-${String(order.id || 'pedido').slice(0, 8)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    } catch (error) {
+      toast.error(error?.message || 'No se pudo descargar la factura.');
+    }
+  };
+
   const submitInvoiceTxHash = async (order) => {
     const txHash = (invoiceTxHashes[order.id] || '').trim();
 
@@ -3459,6 +3484,16 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     )}
                   </div>
                 )}
+
+
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => downloadOrderInvoice(order)}
+                  >
+                    Descargar factura PDF con QR
+                  </Button>
+                </div>
 
                 {order.cryptoInvoiceId && (
                   <div className="pt-2">
@@ -3890,7 +3925,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                 <CardContent className="p-4 space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <h3 className="font-bold">Pedido #{String(order.id || '').slice(-10)}</h3>
+                      <h3 className="font-bold">Pedido #{String(order.id || 'Sin identificador')}</h3>
                       <p className="text-xs text-muted-foreground">
                         {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Fecha no disponible'}
                       </p>
@@ -3903,7 +3938,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                   <div className="text-sm space-y-1">
                     {(Array.isArray(order.items) ? order.items : []).map((item, index) => (
                       <div key={item.id || item.productId || index} className="flex justify-between gap-3">
-                        <span>{item.name || item.title || 'Producto'} × {item.quantity || item.qty || 1}</span>
+                        <span>{item.productName || item.name || item.title || 'Producto'} × {item.quantity || item.qty || 1}</span>
                       </div>
                     ))}
                     <div className="font-semibold pt-1">

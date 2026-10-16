@@ -3,6 +3,8 @@ import { MongoClient } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { v2 as cloudinary } from 'cloudinary';
 import { z } from 'zod';
@@ -1106,6 +1108,60 @@ async function route(request, method, path) {
     return json({ ok: true, app: 'UBIK2 YEMG API', version: '1.0' });
   }
 
+
+  // Factura pública: solo expone información comercial no sensible.
+  if (path[0] === 'public' && path[1] === 'invoices' &&
+      path[2] && path.length === 3 && method === 'GET') {
+    const token = String(path[2]);
+    if (!/^[0-9a-f-]{36}$/i.test(token)) {
+      return json({ error: 'Factura no encontrada' }, 404);
+    }
+
+    const order = await db.collection('orders').findOne(
+      { publicInvoiceId: token },
+      { projection: {
+        _id: 0, publicInvoiceId: 1, businessName: 1, items: 1,
+        subtotal: 1, total: 1, currency: 1, createdAt: 1,
+        paymentStatus: 1, status: 1, cryptoInvoiceId: 1
+      }}
+    );
+    if (!order) return json({ error: 'Factura no encontrada' }, 404);
+
+    let cryptoStatus = null;
+    if (order.cryptoInvoiceId) {
+      const inv = await db.collection('crypto_invoices').findOne(
+        { id: order.cryptoInvoiceId },
+        { projection: { _id: 0, status: 1, currency: 1, network: 1, expectedAmount: 1 }}
+      );
+      if (inv) cryptoStatus = {
+        status: inv.status || 'pending',
+        currency: inv.currency || null,
+        network: inv.network || null,
+        expectedAmount: Number.isFinite(Number(inv.expectedAmount))
+          ? Number(inv.expectedAmount) : null
+      };
+    }
+
+    const items = (Array.isArray(order.items) ? order.items : []).map((item) => ({
+      name: String(item.name || item.productName || item.title || 'Producto').slice(0, 160),
+      quantity: Math.max(0, Number(item.quantity || item.qty || 1) || 1),
+      unitPrice: Number(item.price ?? item.unitPrice ?? 0) || 0,
+      total: Number(item.total ?? item.subtotal ?? item.lineTotal ?? ((Number(item.price ?? item.unitPrice ?? 0) || 0) * (Number(item.quantity || item.qty || 1) || 1))) || 0
+    }));
+
+    return json({
+      valid: true,
+      invoiceNumber: token.slice(0, 8).toUpperCase(),
+      businessName: String(order.businessName || 'Negocio').slice(0, 160),
+      items,
+      total: Number(order.total ?? order.subtotal ?? 0) || 0,
+      currency: String(order.currency || 'CUP').slice(0, 12),
+      createdAt: order.createdAt || null,
+      paymentStatus: String(order.paymentStatus || order.status || 'unknown'),
+      crypto: cryptoStatus
+    });
+  }
+
   // Categories
   if (path[0] === 'categories' && method === 'GET') {
     // Categories are static — cache aggressively for 1 hour
@@ -1857,6 +1913,7 @@ return json({ payments: out });
     const now = new Date().toISOString();
     const order = {
       id: uuidv4(),
+      publicInvoiceId: uuidv4(),
       buyerId: user.id,
       buyerEmail: user.email,
       businessId,
@@ -2351,6 +2408,142 @@ return json({ payments: out });
   if (path[0] === 'payments' && path[1] === 'crypto' && path[2] === 'config' && method === 'GET') {
     const config = getCryptoConfig();
     return jsonCached(config, 200, 300); // cache 5 min
+  }
+
+
+  // PDF de factura: requiere autenticación y pertenencia al pedido.
+  if (path[0] === 'orders' && path[1] && path[2] === 'invoice' &&
+      path[3] === 'pdf' && path.length === 4 && method === 'GET') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const orderId = path[1];
+    let order = await db.collection('orders').findOne({ id: orderId });
+    if (!order) return json({ error: 'Pedido no encontrado' }, 404);
+    if (order.buyerId !== user.id && user.role !== 'admin') {
+      return json({ error: 'Sin permiso' }, 403);
+    }
+
+    // Compatibilidad con pedidos anteriores a la factura pública.
+    if (!order.publicInvoiceId) {
+      const newToken = uuidv4();
+      await db.collection('orders').updateOne(
+        { id: orderId, $or: [
+          { publicInvoiceId: { $exists: false } },
+          { publicInvoiceId: null },
+          { publicInvoiceId: '' }
+        ]},
+        { $set: { publicInvoiceId: newToken } }
+      );
+      order = await db.collection('orders').findOne({ id: orderId });
+    }
+    if (!order?.publicInvoiceId) {
+      return json({ error: 'No se pudo preparar la verificación de la factura' }, 500);
+    }
+
+    const pdf = await PDFDocument.create();
+    pdf.setTitle('Factura UBIK2YEMG');
+    pdf.setSubject('Factura comercial y verificación pública');
+    pdf.setCreator('UBIK2YEMG');
+
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    const pageSize = [595.28, 841.89];
+    let currentPage = pdf.addPage(pageSize);
+    let y = 790;
+
+    const drawLine = (text, options = {}) => {
+      if (y < 55) {
+        currentPage = pdf.addPage(pageSize);
+        y = 790;
+      }
+      currentPage.drawText(String(text ?? '').slice(0, 150), {
+        x: options.x ?? 48,
+        y,
+        size: options.size ?? 10,
+        font: options.bold ? bold : font,
+        color: rgb(0.12, 0.16, 0.22),
+        maxWidth: options.maxWidth ?? 495
+      });
+      y -= options.gap ?? 18;
+    };
+
+    drawLine('UBIK2YEMG', { size: 22, bold: true, gap: 30 });
+    drawLine('FACTURA COMERCIAL', { size: 15, bold: true, gap: 25 });
+    drawLine('Número de factura: ' + order.publicInvoiceId.slice(0, 8).toUpperCase());
+    drawLine('Pedido: ' + String(order.id).slice(0, 80));
+    drawLine('Negocio: ' + String(order.businessName || 'No indicado').slice(0, 120));
+    drawLine('Fecha: ' + (order.createdAt || 'No indicada'));
+    drawLine('Método de entrega: ' + String(order.deliveryMethod || 'No indicado'));
+    y -= 8;
+    drawLine('PRODUCTOS', { size: 12, bold: true, gap: 23 });
+
+    const items = Array.isArray(order.items) ? order.items : [];
+    for (const item of items) {
+      const name = String(item.name || item.productName || item.title || 'Producto').slice(0, 100);
+      const qty = Number(item.quantity || item.qty || 1) || 1;
+      const price = Number(item.price ?? item.unitPrice ?? 0) || 0;
+      const lineTotal = Number(item.total ?? item.subtotal ?? item.lineTotal ?? (price * qty)) || 0;
+      drawLine(name, { bold: true, gap: 15 });
+      drawLine('  Cantidad: ' + qty + ' | Precio unitario: ' + price.toFixed(2) +
+        ' | Importe: ' + lineTotal.toFixed(2), { size: 9, gap: 20 });
+    }
+
+    y -= 8;
+    drawLine('Total: ' + (Number(order.total ?? order.subtotal ?? 0) || 0).toFixed(2) +
+      ' ' + String(order.currency || 'CUP'), { size: 14, bold: true, gap: 25 });
+
+    const paymentStatus = String(order.paymentStatus || order.status || 'unknown');
+    const statusLabels = {
+      paid: 'PAGO CONFIRMADO',
+      confirmed: 'PAGO CONFIRMADO',
+      pending_payment: 'PENDIENTE DE PAGO',
+      pending: 'PENDIENTE',
+      failed: 'PAGO FALLIDO',
+      cancelled: 'CANCELADO',
+      refunded: 'REEMBOLSADO'
+    };
+    drawLine('Estado real del pago: ' + (statusLabels[paymentStatus] || paymentStatus));
+    drawLine('La validez de esta factura no demuestra por sí sola que el pago esté confirmado.', {
+      size: 9, gap: 16
+    });
+
+    // Página de verificación separada: el QR no cambia estados ni aprueba pagos.
+    const qrPage = pdf.addPage(pageSize);
+    qrPage.drawText('VERIFICACIÓN PÚBLICA DE FACTURA', {
+      x: 48, y: 780, size: 16, font: bold, color: rgb(0.12, 0.16, 0.22)
+    });
+    const requestOrigin = new URL(request.url).origin;
+    const base = BASE_URL && !BASE_URL.includes('localhost')
+      ? BASE_URL : requestOrigin;
+    const verifyUrl = base.replace(/\/+$/, '') + '/invoice/' +
+      encodeURIComponent(order.publicInvoiceId);
+    const qrData = await QRCode.toDataURL(verifyUrl, {
+      errorCorrectionLevel: 'M', margin: 2, width: 320
+    });
+    const qrImage = await pdf.embedPng(qrData);
+    qrPage.drawImage(qrImage, { x: 177, y: 390, width: 240, height: 240 });
+    qrPage.drawText('Escanea el QR para consultar la información pública.', {
+      x: 80, y: 350, size: 11, font, color: rgb(0.12, 0.16, 0.22)
+    });
+    qrPage.drawText('La consulta no confirma pagos ni libera fondos.', {
+      x: 95, y: 328, size: 10, font: bold, color: rgb(0.12, 0.16, 0.22)
+    });
+    qrPage.drawText(verifyUrl.slice(0, 100), {
+      x: 48, y: 295, size: 8, font, color: rgb(0.12, 0.16, 0.22),
+      maxWidth: 495
+    });
+
+    const bytes = await pdf.save();
+    return new NextResponse(Buffer.from(bytes), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="factura-' +
+          String(order.publicInvoiceId).slice(0, 8) + '.pdf"',
+        'Cache-Control': 'private, no-store, max-age=0'
+      }
+    });
   }
 
   // GET /api/orders/:id/invoice - Get crypto invoice for order (buyer or admin)

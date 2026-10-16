@@ -3709,6 +3709,12 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            Pedidos y entregas ({sellerOrders.length})
+          </Button>
           <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio">
             <Share2 className="h-4 w-4 mr-2" /> Compartir negocio
           </Button>

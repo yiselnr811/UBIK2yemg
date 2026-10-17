@@ -4634,7 +4634,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                   </div>
                   {inv.txHash && (
                     <a
-                      href={inv.network === 'TRC20' ? `https://tronscan.org/#/transaction/${inv.txHash}` : `https://etherscan.io/tx/${inv.txHash}`}
+                      href={({TRC20: `https://tronscan.org/#/transaction/${inv.txHash}`, ERC20: `https://etherscan.io/tx/${inv.txHash}`, POLYGON: `https://polygonscan.com/tx/${inv.txHash}`, BASE: `https://basescan.org/tx/${inv.txHash}`, ARBITRUM: `https://arbiscan.io/tx/${inv.txHash}`, BEP20: `https://bscscan.com/tx/${inv.txHash}`}[inv.network] || `https://etherscan.io/tx/${inv.txHash}`)}
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Ver en explorer"
@@ -5532,9 +5532,22 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
   const minutes = Math.max(0, Math.ceil(timeLeft / 60000));
   const seconds = Math.max(0, Math.floor((timeLeft % 60000) / 1000));
 
-  const formatAmount = (amount) => {
-    const num = Number(amount);
-    return num.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: invoice.decimals });
+  const formatAmount = (amountRaw, decimals = invoice.decimals) => {
+    const raw = String(amountRaw ?? '');
+    if (!/^\d+$/.test(raw) || !Number.isInteger(decimals) || decimals < 0) return '—';
+
+    const padded = raw.padStart(decimals + 1, '0');
+    const integerPart = decimals > 0 ? padded.slice(0, -decimals) : padded;
+    let fractionalPart = decimals > 0
+      ? padded.slice(-decimals).replace(/0+$/, '')
+      : '';
+
+    if (fractionalPart.length < 2) {
+      fractionalPart = fractionalPart.padEnd(2, '0');
+    }
+
+    const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return `${groupedInteger},${fractionalPart}`;
   };
 
   const copyToClipboard = (text, label) => {
@@ -5609,7 +5622,7 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
               </div>
               <div>
                 <p className="text-muted-foreground">Importe esperado</p>
-                <p className="font-semibold text-xl">{formatAmount(invoice.expectedAmount)} {invoice.currency}</p>
+                <p className="font-semibold text-xl">{formatAmount(invoice.expectedAmountRaw, invoice.decimals)} {invoice.currency}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">En unidades mínimas</p>
@@ -5630,7 +5643,7 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Envía exactamente <b>{formatAmount(invoice.expectedAmount)} {invoice.currency}</b> a esta dirección en la red <b>{invoice.network}</b>.
+              Envía exactamente <b>{formatAmount(invoice.expectedAmountRaw, invoice.decimals)} {invoice.currency}</b> a esta dirección en la red <b>{invoice.network}</b>.
               <br />Contrato: <code className="text-xs font-mono break-all">{invoice.tokenContract}</code>
             </p>
           </div>
@@ -5688,7 +5701,7 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
               </h3>
               <p className="text-sm">Tu hash <code className="font-mono break-all">{invoice.txHash}</code> ha sido enviado.</p>
               <p className="text-sm text-amber-600 dark:text-amber-400">
-                Un administrador lo verificará manualmente en el explorer ({invoice.network === 'TRC20' ? 'Tronscan' : 'Etherscan/Polygonscan/Basescan/Arbiscan'}).
+                Un administrador lo verificará manualmente en el explorer ({({TRC20: 'Tronscan', ERC20: 'Etherscan', POLYGON: 'Polygonscan', BASE: 'Basescan', ARBITRUM: 'Arbiscan', BEP20: 'BscScan'}[invoice.network] || 'explorer')}).
                 Recibirás notificación cuando se apruebe o rechace.
               </p>
             </div>

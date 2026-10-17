@@ -8,6 +8,7 @@ import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { v2 as cloudinary } from 'cloudinary';
 import { z } from 'zod';
+import { parseUnits, formatUnits } from 'viem';
 
 import { verifyCryptoInvoice, verifyPendingInvoices } from '@/lib/crypto-verify';
 
@@ -61,6 +62,8 @@ const CRYPTO_TOKEN_CONTRACTS = {
   BASE_USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   ARBITRUM_USDT: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
   ARBITRUM_USDC: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  BEP20_USDT: '0x55d398326f99059fF775485246999027B3197955',
+  BEP20_USDC: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
 };
 
 const CRYPTO_DECIMALS = {
@@ -74,6 +77,7 @@ const CRYPTO_MIN_CONFIRMATIONS = {
   POLYGON: 20,
   BASE: 2,
   ARBITRUM: 20,
+  BEP20: 15,
 };
 
 // Parse enabled networks from env
@@ -97,7 +101,7 @@ function getEnabledCryptoNetworks() {
       network,
       currency,
       contract,
-      decimals: CRYPTO_DECIMALS[currency] || 6,
+      decimals: network === 'BEP20' ? 18 : (CRYPTO_DECIMALS[currency] || 6),
       receiverAddress,
       minConfirmations: CRYPTO_MIN_CONFIRMATIONS[network] || 1,
       label: `${currency} (${network === 'TRC20' ? 'Tron' : network})`,
@@ -293,7 +297,7 @@ const createOrderCryptoSchema = createOrderSchema.extend({
   shippingEmail: z.string().email().max(254),
   paymentMethod: z.literal('crypto'),
   cryptoCurrency: z.enum(['USDT', 'USDC']),
-  cryptoNetwork: z.enum(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM']),
+  cryptoNetwork: z.enum(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20']),
 });
 
 const submitTxSchema = z.object({
@@ -849,7 +853,7 @@ async function ensureIndexes(db) {
       db.collection('payments').createIndex({ status: 1, createdAt: -1 }),
       // Orders
       db.collection('orders').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
-      db.collection('settlement_ledger').createIndex({ publicInvoiceId: 1 }, { unique: true, name: 'settlement_invoice_unique' }),
+      db.collection('settlement_ledger').createIndex({ publicInvoiceId: 1 }, { unique: true, name: 'settlement_invoice_unique' }).catch((err) => { console.error('[MongoDB] Error creando índice único settlement_ledger:', err?.message || err); err.criticalSettlementLedgerIndex = true; throw err; }),
       db.collection('orders').createIndex({ buyerId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ businessId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ status: 1, createdAt: -1 }),
@@ -882,7 +886,7 @@ async function ensureIndexes(db) {
       console.warn('[MongoDB] Backfill negocios falló (no crítico):', e?.message);
     }
   } catch (e) {
-    if (e?.criticalTxHashIndex || e?.criticalInvoiceIdIndex) throw e;
+    if (e?.criticalTxHashIndex || e?.criticalInvoiceIdIndex || e?.criticalSettlementLedgerIndex) throw e;
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
 }
@@ -2066,9 +2070,11 @@ return json({ payments: out });
 
       // Cuantizar al número de decimales admitido por el token y derivar
       // el importe visible del mismo valor entero usado para verificar la cadena.
-      const amountFactor = 10 ** networkConfig.decimals;
-      const expectedAmountRaw = Math.round(amountInCrypto * amountFactor).toString();
-      const expectedAmount = Number(expectedAmountRaw) / amountFactor;
+      // Convertir a unidades enteras sin multiplicaciones imprecisas.
+      // El importe de origen ya puede tener precisión limitada por Number.
+      const amountDecimal = amountInCrypto.toFixed(networkConfig.decimals);
+      const expectedAmountRaw = parseUnits(amountDecimal, networkConfig.decimals).toString();
+      const expectedAmount = Number(formatUnits(BigInt(expectedAmountRaw), networkConfig.decimals));
 
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + config.expiryMinutes);
@@ -2584,18 +2590,45 @@ return json({ payments: out });
             orderId: confirmedOrder.id,
           });
 
-      const verified = invoice?.status === 'approved'
-        && Number.isFinite(Number(invoice.expectedAmount))
-        && Number(invoice.expectedAmount) > 0;
+      const decimals = Number.isInteger(Number(invoice?.decimals))
+      && Number(invoice.decimals) >= 0
+      && Number(invoice.decimals) <= 36
+      ? Number(invoice.decimals) : 6;
 
-      const amount = verified ? Number(invoice.expectedAmount) : null;
-      const commissionAmount = verified
-        ? Math.round(amount * 0.03 * 1e8) / 1e8
-        : null;
-      const sellerNetAmount = verified
-        ? Math.round((amount - commissionAmount) * 1e8) / 1e8
-        : null;
-      const business = await db.collection('businesses').findOne({
+    let grossAmountRaw = null;
+    if (invoice?.status === 'approved') {
+      try {
+        const savedRaw = String(invoice.expectedAmountRaw ?? '');
+        if (/^\\d+$/.test(savedRaw)) {
+          grossAmountRaw = BigInt(savedRaw);
+        } else if (
+          Number.isFinite(Number(invoice.expectedAmount))
+          && Number(invoice.expectedAmount) > 0
+        ) {
+          // Compatibilidad con facturas antiguas sin importe entero guardado.
+          grossAmountRaw = BigInt(
+            parseUnits(Number(invoice.expectedAmount).toFixed(decimals), decimals).toString()
+          );
+        }
+      } catch {
+        grossAmountRaw = null;
+      }
+    }
+
+    const verified = grossAmountRaw !== null && grossAmountRaw > 0n;
+    // Comisión del 3 % en unidades enteras; redondeo al entero más cercano.
+    const commissionAmountRaw = verified
+      ? (grossAmountRaw * 300n + 5000n) / 10000n : null;
+    const sellerNetAmountRaw = verified
+      ? grossAmountRaw - commissionAmountRaw : null;
+
+    const amount = verified
+      ? Number(formatUnits(grossAmountRaw, decimals)) : null;
+    const commissionAmount = verified
+      ? Number(formatUnits(commissionAmountRaw, decimals)) : null;
+    const sellerNetAmount = verified
+      ? Number(formatUnits(sellerNetAmountRaw, decimals)) : null;
+    const business = await db.collection('businesses').findOne({
         id: confirmedOrder.businessId,
       });
       const createdAt = new Date().toISOString();
@@ -2613,6 +2646,10 @@ return json({ payments: out });
             cryptoInvoiceId: invoice?.id || null,
             currency: invoice?.currency || confirmedOrder.currency || null,
             network: invoice?.network || null,
+            amountDecimals: decimals,
+            grossAmountRaw: verified ? grossAmountRaw.toString() : null,
+            commissionAmountRaw: verified ? commissionAmountRaw.toString() : null,
+            sellerNetAmountRaw: verified ? sellerNetAmountRaw.toString() : null,
             grossAmount: amount,
             commissionRateBps: 300,
             commissionAmount,
@@ -2640,7 +2677,11 @@ return json({ payments: out });
               cryptoInvoiceId: invoice.id,
               currency: invoice.currency || confirmedOrder.currency || null,
               network: invoice.network || null,
-              grossAmount: amount,
+              amountDecimals: decimals,
+            grossAmountRaw: verified ? grossAmountRaw.toString() : null,
+            commissionAmountRaw: verified ? commissionAmountRaw.toString() : null,
+            sellerNetAmountRaw: verified ? sellerNetAmountRaw.toString() : null,
+            grossAmount: amount,
               commissionRateBps: 300,
               commissionAmount,
               sellerNetAmount,
@@ -2695,9 +2736,9 @@ return json({ payments: out });
           {
             $or: [
               { paymentStatus: 'paid' },
-              { status: 'paid', paymentStatus: { $exists: false } },
-              { status: 'paid', paymentStatus: null },
-              { status: 'paid', paymentStatus: '' },
+              { status: { $in: ['paid', 'processing', 'shipped', 'delivered'] }, paymentStatus: { $exists: false } },
+              { status: { $in: ['paid', 'processing', 'shipped', 'delivered'] }, paymentStatus: null },
+              { status: { $in: ['paid', 'processing', 'shipped', 'delivered'] }, paymentStatus: '' },
             ],
           },
           {
@@ -3223,6 +3264,7 @@ return json({ payments: out });
       POLYGON: 20,
       BASE: 2,
       ARBITRUM: 20,
+  BEP20: 15,
     };
     const requiredConfirmations = confirmationRequirements[invoice.network];
     if (!requiredConfirmations) {

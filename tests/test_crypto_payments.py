@@ -50,6 +50,16 @@ class TestCryptoPayments(unittest.TestCase):
             result = str(int(round(amount * (10 ** decimals))))
             self.assertEqual(result, expected, f"Failed for {amount} with {decimals} decimals")
 
+    def test_bep20_raw_amount_preserves_18_decimal_places(self):
+        """BEP20 raw units must preserve all 18 decimal places exactly."""
+        cases = [
+            ("1234567890123456789", "1234567890123456789"),
+            ("1000000000000000001", "1000000000000000001"),
+            ("123000000000000000", "123000000000000000"),
+        ]
+        for raw, expected in cases:
+            self.assertEqual(str(int(raw)), expected)
+
     def test_raw_to_amount_conversion(self):
         """Test raw units to amount"""
         test_cases = [
@@ -140,6 +150,8 @@ class TestCryptoPayments(unittest.TestCase):
             ('USDC', 'BASE'),
             ('USDT', 'ARBITRUM'),
             ('USDC', 'ARBITRUM'),
+                ('USDT', 'BEP20'),
+                ('USDC', 'BEP20'),
         ]
 
         for currency, network in valid_combinations:
@@ -147,7 +159,7 @@ class TestCryptoPayments(unittest.TestCase):
             self.assertIn(key, [
                 'TRC20_USDT', 'ERC20_USDT', 'ERC20_USDC',
                 'POLYGON_USDT', 'POLYGON_USDC', 'BASE_USDT', 'BASE_USDC',
-                'ARBITRUM_USDT', 'ARBITRUM_USDC'
+                'ARBITRUM_USDT', 'ARBITRUM_USDC', 'BEP20_USDT', 'BEP20_USDC'
             ])
 
     def test_invalid_currency(self):
@@ -161,7 +173,7 @@ class TestCryptoPayments(unittest.TestCase):
     def test_invalid_network(self):
         """Test that invalid networks are rejected"""
         invalid = ['BSC', 'SOLANA', 'AVALANCHE', 'FANTOM']
-        valid_networks = ['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM']
+        valid_networks = ['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20']
 
         for network in invalid:
             self.assertNotIn(network, valid_networks)
@@ -176,6 +188,12 @@ class TestCryptoPayments(unittest.TestCase):
         self.assertEqual(decimals_map['USDT'], 6)
         self.assertEqual(decimals_map['USDC'], 6)
 
+    def test_bep20_uses_18_decimals(self):
+        """BEP20 tokens configured here use 18 decimal places."""
+        from pathlib import Path
+        route_text = (Path(BASE_DIR) / "app" / "api" / "[[...path]]" / "route.js").read_text()
+        self.assertIn("decimals: network === 'BEP20' ? 18", route_text)
+
     def test_min_confirmations_by_network(self):
         """Test required confirmations by network"""
         confirmations = {
@@ -184,6 +202,7 @@ class TestCryptoPayments(unittest.TestCase):
             'POLYGON': 20,
             'BASE': 2,
             'ARBITRUM': 20,
+            'BEP20': 15,
         }
 
         # Tron is fast (1 block)
@@ -233,6 +252,8 @@ class TestCryptoPayments(unittest.TestCase):
             "BASE_USDC": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
             "ARBITRUM_USDT": "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9",
             "ARBITRUM_USDC": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+            "BEP20_USDT": "0x55d398326f99059fF775485246999027B3197955",
+            "BEP20_USDC": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
         }
 
         self.assertEqual(
@@ -405,6 +426,16 @@ class TestIntegration(unittest.TestCase):
             restored[item['productId']] = restored.get(item['productId'], 0) + item['quantity']
 
         self.assertEqual(restored, {'prod-1': 2, 'prod-2': 1})
+
+
+    def test_crypto_invoice_uses_exact_raw_amount(self):
+        """Invoice verification must use integer raw units, not float arithmetic."""
+        from pathlib import Path
+        route = (Path(BASE_DIR) / "app" / "api" / "[[...path]]" / "route.js").read_text()
+        self.assertIn("parseUnits(amountDecimal, networkConfig.decimals).toString()", route)
+        self.assertIn("expectedAmountRaw", route)
+        self.assertIn("transfer.amountRaw === String(expectedAmountRaw)",
+                      (Path(BASE_DIR) / "lib" / "crypto-verify.js").read_text())
 
 
 if __name__ == '__main__':

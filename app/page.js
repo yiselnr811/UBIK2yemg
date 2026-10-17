@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import jsQR from 'jsqr';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -2232,6 +2233,236 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 };
 
 // ============ HOME ============
+
+function PublicInvoiceScanner() {
+  const [open, setOpen] = React.useState(false);
+  const [scanning, setScanning] = React.useState(false);
+  const [value, setValue] = React.useState('');
+  const [invoice, setInvoice] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const videoRef = React.useRef(null);
+
+  const stopCamera = React.useCallback(() => {
+    const video = videoRef.current;
+    if (video && video.srcObject) {
+      video.srcObject.getTracks().forEach(track => track.stop());
+      video.srcObject = null;
+    }
+  }, []);
+
+  React.useEffect(() => () => stopCamera(), [stopCamera]);
+
+  const lookup = async (input) => {
+    const raw = String(input || '').trim();
+    if (!raw) return;
+    let token = raw;
+    try {
+      if (/^https?:\/\//i.test(raw)) {
+        const url = new URL(raw);
+        const match = url.pathname.match(/\/invoice\/([^/]+)/);
+        if (!match) throw new Error('El QR no contiene un enlace de factura reconocido.');
+        token = decodeURIComponent(match[1]);
+      }
+    } catch (e) {
+      setError(e.message || 'Código QR no válido.');
+      return;
+    }
+
+    if (!/^[0-9a-f-]{36}$/i.test(token)) {
+      setError('Introduce un QR de factura o su identificador válido.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setInvoice(null);
+    try {
+      const response = await fetch('/api/public/invoices/' + encodeURIComponent(token), {
+        method: 'GET',
+        cache: 'no-store'
+      });
+      const data = await response.json();
+      if (!response.ok || !data.valid) {
+        throw new Error(data.error || 'Factura no encontrada o no válida.');
+      }
+      setInvoice(data);
+      setValue(raw);
+      setScanning(false);
+      stopCamera();
+    } catch (e) {
+      setError(e.message || 'No se pudo verificar la factura.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!open || !scanning) return;
+    let cancelled = false;
+    let stream = null;
+    let frame = null;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    const scanFrame = async () => {
+      if (cancelled) return;
+      const video = videoRef.current;
+      if (video && ctx && video.readyState >= 2 && video.videoWidth > 0) {
+        try {
+          const width = Math.min(video.videoWidth, 640);
+          const height = Math.max(1, Math.round(width * video.videoHeight / video.videoWidth));
+          canvas.width = width;
+          canvas.height = height;
+          ctx.drawImage(video, 0, 0, width, height);
+          const pixels = ctx.getImageData(0, 0, width, height);
+          const code = jsQR(pixels.data, width, height, { inversionAttempts: 'attemptBoth' });
+          if (code && code.data) {
+            setValue(code.data);
+            setScanning(false);
+            await lookup(code.data);
+            return;
+          }
+        } catch (_) {}
+      }
+      if (!cancelled) frame = requestAnimationFrame(scanFrame);
+    };
+
+    const start = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('Este navegador no permite acceder a la cámara. Utiliza una imagen QR o pega el enlace de la factura.');
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        });
+        if (cancelled) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        const video = videoRef.current;
+        if (!video) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        video.srcObject = stream;
+        await video.play();
+        if (!cancelled) scanFrame();
+      } catch (e) {
+        setError(e.message || 'No se pudo abrir la cámara. Comprueba los permisos o utiliza una imagen QR.');
+        setScanning(false);
+      }
+    };
+
+    start();
+    return () => {
+      cancelled = true;
+      if (frame) cancelAnimationFrame(frame);
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+  }, [open, scanning]);
+
+  const scanImage = async (file) => {
+    if (!file) return;
+    setError('');
+    let bitmap = null;
+    let objectUrl = null;
+    try {
+      let source;
+      if (typeof createImageBitmap === 'function') {
+        bitmap = await createImageBitmap(file);
+        source = bitmap;
+      } else {
+        objectUrl = URL.createObjectURL(file);
+        source = await new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('No se pudo abrir la imagen seleccionada.'));
+          image.src = objectUrl;
+        });
+      }
+
+      const width = source.width || source.naturalWidth;
+      const height = source.height || source.naturalHeight;
+      if (!width || !height) throw new Error('La imagen no tiene dimensiones válidas.');
+
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 1200 / Math.max(width, height));
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('No se pudo procesar la imagen.');
+
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(pixels.data, canvas.width, canvas.height, { inversionAttempts: 'attemptBoth' });
+      if (!code || !code.data) {
+        throw new Error('No se encontró un QR legible. Prueba con una imagen más nítida.');
+      }
+      setValue(code.data);
+      await lookup(code.data);
+    } catch (e) {
+      setError(e.message || 'No se pudo leer esa imagen.');
+    } finally {
+      if (bitmap && typeof bitmap.close === 'function') bitmap.close();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+  };
+
+  return (
+    <div className="mt-4 mx-auto max-w-2xl rounded-2xl border border-white/30 bg-white/95 p-4 text-left text-gray-900 shadow-lg">
+      <button type="button" onClick={() => { setOpen(!open); setError(''); }}
+        className="w-full rounded-xl bg-[#1565C0] px-4 py-3 font-bold text-white">
+        {open ? 'Cerrar verificador de facturas' : '📷 Escanear QR / verificar factura'}
+      </button>
+      {open && (
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-gray-700">Disponible sin iniciar sesión. Consultar una factura no confirma el pago ni libera fondos.</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { setError(''); setInvoice(null); setScanning(true); }}
+              className="rounded-lg border px-3 py-2 text-sm font-semibold">Abrir cámara</button>
+            <label className="cursor-pointer rounded-lg border px-3 py-2 text-sm font-semibold">
+              Leer imagen QR
+              <input type="file" accept="image/*" className="sr-only"
+                onChange={e => scanImage(e.target.files?.[0])} />
+            </label>
+          </div>
+          <video ref={videoRef} autoPlay playsInline muted
+            className={scanning ? 'w-full max-h-64 rounded-xl bg-black object-contain' : 'hidden'} />
+          <form onSubmit={e => { e.preventDefault(); lookup(value); }} className="flex gap-2">
+            <input value={value} onChange={e => setValue(e.target.value)}
+              placeholder="Pega el enlace o ID de la factura"
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            <button disabled={loading} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-bold text-white">
+              {loading ? 'Verificando…' : 'Verificar'}
+            </button>
+          </form>
+          {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+          {invoice && (
+            <div className="space-y-2 rounded-xl border border-green-300 bg-green-50 p-3 text-sm">
+              <h3 className="font-bold text-green-900">Factura válida según el servidor</h3>
+              <p><b>Número:</b> {invoice.invoiceNumber || invoice.publicInvoiceId || '—'}</p>
+              <p><b>Negocio:</b> {invoice.businessName || '—'}</p>
+              <div><b>Productos:</b>
+                {Array.isArray(invoice.items) && invoice.items.length
+                  ? <ul className="list-disc pl-5">{invoice.items.map((item, i) =>
+                      <li key={i}>{item.name || item.title || item.productName || 'Producto'} × {item.quantity ?? item.qty ?? 1}</li>
+                    )}</ul>
+                  : <p>Sin detalles de productos disponibles.</p>}
+              </div>
+              <p><b>Total:</b> {invoice.total ?? '—'} {invoice.currency || '—'}</p>
+              <p><b>Estado del pago:</b> {invoice.paymentStatus || 'No disponible'}</p>
+              <p className="text-xs text-gray-700">La validez de la factura no demuestra por sí sola que el pago esté confirmado. Este escáner no modifica pedidos, pagos ni escrow.</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
 
@@ -2314,6 +2545,8 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
                 />
               </div>
             </div>
+
+            <PublicInvoiceScanner />
 
             {/* CTA buttons compact */}
             <div className="mt-3 flex gap-2 justify-center max-w-xl mx-auto">
@@ -3211,6 +3444,31 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     }
   };
 
+  const downloadInvoiceQR = async (order) => {
+    if (!order?.publicInvoiceId) {
+      toast.error('La factura todavía no tiene identificador.');
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${API}/public/invoices/${encodeURIComponent(order.publicInvoiceId)}/qr.png`,
+        { cache: 'no-store' }
+      );
+      if (!response.ok) throw new Error('No se pudo descargar el QR.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `qr-factura-${String(order.publicInvoiceId).slice(0, 8)}.png`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (error) {
+      toast.error(error?.message || 'Error descargando el QR.');
+    }
+  };
+
   const confirmOrderReceipt = async (order) => {
     if (!order?.publicInvoiceId) {
       setReceiptConfirmMessages((prev) => ({
@@ -3538,6 +3796,18 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                   >
                     Descargar factura PDF con QR
                   </Button>
+                  {order.publicInvoiceId && (
+                    <Button variant="outline" onClick={() => downloadInvoiceQR(order)}>
+                      Descargar QR en PNG
+                    </Button>
+                  )}
+                  {order.publicInvoiceId && (
+                    <Button variant="outline" onClick={() =>
+                      window.open(`/invoice/${encodeURIComponent(order.publicInvoiceId)}`, '_blank', 'noopener,noreferrer')
+                    }>
+                      Verificar factura
+                    </Button>
+                  )}
                 </div>
 
                 {order.publicInvoiceId && (

@@ -849,6 +849,7 @@ async function ensureIndexes(db) {
       db.collection('payments').createIndex({ status: 1, createdAt: -1 }),
       // Orders
       db.collection('orders').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      db.collection('settlement_ledger').createIndex({ publicInvoiceId: 1 }, { unique: true, name: 'settlement_invoice_unique' }),
       db.collection('orders').createIndex({ buyerId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ businessId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ status: 1, createdAt: -1 }),
@@ -1207,6 +1208,39 @@ async function route(request, method, path) {
       createdAt: order.createdAt || null,
       paymentStatus: String(order.paymentStatus || order.status || 'unknown'),
       crypto: cryptoStatus
+    });
+  }
+
+  // Descarga QR PNG de una factura pública; no modifica pagos.
+  if (path[0] === 'public' && path[1] === 'invoices' &&
+      path[2] && path[3] === 'qr.png' && path.length === 4 &&
+      method === 'GET') {
+    const token = String(path[2]);
+    if (!/^[0-9a-f-]{36}$/i.test(token)) {
+      return json({ error: 'Factura no encontrada' }, 404);
+    }
+    const order = await db.collection('orders').findOne(
+      { publicInvoiceId: token },
+      { projection: { _id: 0, publicInvoiceId: 1 } }
+    );
+    if (!order) return json({ error: 'Factura no encontrada' }, 404);
+
+    const requestOrigin = new URL(request.url).origin;
+    const base = BASE_URL && !BASE_URL.includes('localhost')
+      ? BASE_URL : requestOrigin;
+    const verifyUrl = base.replace(/\/+$/, '') +
+      '/invoice/' + encodeURIComponent(order.publicInvoiceId);
+    const png = await QRCode.toBuffer(verifyUrl, {
+      type: 'png', errorCorrectionLevel: 'M', margin: 2, width: 480
+    });
+    return new NextResponse(png, {
+      status: 200,
+      headers: {
+        'Content-Type': 'image/png',
+        'Content-Disposition': 'attachment; filename="qr-factura-' +
+          String(order.publicInvoiceId).slice(0, 8) + '.png"',
+        'Cache-Control': 'private, no-store, max-age=0'
+      }
     });
   }
 
@@ -2351,6 +2385,158 @@ return json({ payments: out });
   }
 
 
+
+  // POST /api/seller/orders/:id/confirm-delivery
+  // Confirmación explícita del vendedor; no libera fondos del escrow.
+  if (
+    path[0] === 'seller' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'confirm-delivery' &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'El cuerpo de la solicitud no es JSON válido.' }, 400);
+    }
+
+    const suppliedInvoiceId = String(body?.publicInvoiceId || '');
+    if (!suppliedInvoiceId) {
+      return json({ error: 'Falta el identificador de la factura QR.' }, 400);
+    }
+
+    const orders = db.collection('orders');
+    const order = await orders.findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu comercio.' }, 404);
+    }
+
+    if (!order.publicInvoiceId || suppliedInvoiceId !== order.publicInvoiceId) {
+      return json({ error: 'El identificador de factura QR no coincide.' }, 409);
+    }
+
+    const effectivePaymentStatus =
+      order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+
+    if (effectivePaymentStatus !== 'paid') {
+      return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
+    }
+
+    if (order.shippingStatus !== 'delivered' && order.status !== 'delivered') {
+      return json({ error: 'Primero debes marcar el pedido como entregado.' }, 409);
+    }
+
+    if (order.sellerDeliveryConfirmation?.confirmedAt) {
+      return json({
+        order,
+        alreadyConfirmed: true,
+        message: 'La entrega ya estaba confirmada por el vendedor.',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const confirmation = {
+      confirmedAt: now,
+      sellerId: user.id,
+      businessId: business.id,
+      publicInvoiceId: order.publicInvoiceId,
+    };
+
+    const result = await orders.updateOne(
+      {
+        id: order.id,
+        businessId: business.id,
+        publicInvoiceId: order.publicInvoiceId,
+        $and: [
+          {
+            $or: [
+              { paymentStatus: 'paid' },
+              { status: 'paid', paymentStatus: { $exists: false } },
+              { status: 'paid', paymentStatus: null },
+              { status: 'paid', paymentStatus: '' },
+            ],
+          },
+          {
+            $or: [
+              { shippingStatus: 'delivered' },
+              { status: 'delivered' },
+            ],
+          },
+          {
+            $or: [
+              { 'sellerDeliveryConfirmation.confirmedAt': { $exists: false } },
+              { 'sellerDeliveryConfirmation.confirmedAt': null },
+            ],
+          },
+        ],
+      },
+      {
+        $set: {
+          sellerDeliveryConfirmation: confirmation,
+          updatedAt: now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'seller_delivery_confirmed',
+            at: now,
+            by: user.id,
+            publicInvoiceId: order.publicInvoiceId,
+          },
+        },
+      }
+    );
+
+    const updated = await orders.findOne({
+      id: order.id,
+      businessId: business.id,
+    });
+
+    if (result.matchedCount !== 1) {
+      if (updated?.sellerDeliveryConfirmation?.confirmedAt) {
+        return json({
+          order: updated,
+          alreadyConfirmed: true,
+          message: 'La entrega ya estaba confirmada por el vendedor.',
+        });
+      }
+      return json({
+        error: 'El pedido cambió de estado. Recarga e inténtalo de nuevo.',
+      }, 409);
+    }
+
+    if (!updated?.sellerDeliveryConfirmation?.confirmedAt) {
+      return json({ error: 'No se pudo verificar la confirmación guardada.' }, 500);
+    }
+
+    return json({
+      order: updated,
+      alreadyConfirmed: false,
+      message: 'Entrega confirmada por el vendedor.',
+    });
+  }
+
   // POST /api/orders/:id/confirm-receipt
   // Solo el comprador autenticado puede confirmar una entrega ya pagada.
   if (
@@ -2387,7 +2573,90 @@ return json({ payments: out });
       return json({ error: 'El identificador de factura no coincide.' }, 409);
     }
 
+    // Registro idempotente de liquidación. No transfiere fondos.
+    const ensureSettlementLedger = async (confirmedOrder, confirmedAt) => {
+      const invoice = confirmedOrder.cryptoInvoiceId
+        ? await db.collection('crypto_invoices').findOne({
+            id: confirmedOrder.cryptoInvoiceId,
+            orderId: confirmedOrder.id,
+          })
+        : await db.collection('crypto_invoices').findOne({
+            orderId: confirmedOrder.id,
+          });
+
+      const verified = invoice?.status === 'approved'
+        && Number.isFinite(Number(invoice.expectedAmount))
+        && Number(invoice.expectedAmount) > 0;
+
+      const amount = verified ? Number(invoice.expectedAmount) : null;
+      const commissionAmount = verified
+        ? Math.round(amount * 0.03 * 1e8) / 1e8
+        : null;
+      const sellerNetAmount = verified
+        ? Math.round((amount - commissionAmount) * 1e8) / 1e8
+        : null;
+      const business = await db.collection('businesses').findOne({
+        id: confirmedOrder.businessId,
+      });
+      const createdAt = new Date().toISOString();
+
+      await db.collection('settlement_ledger').updateOne(
+        { publicInvoiceId: confirmedOrder.publicInvoiceId },
+        {
+          $setOnInsert: {
+            id: uuidv4(),
+            publicInvoiceId: confirmedOrder.publicInvoiceId,
+            orderId: confirmedOrder.id,
+            buyerId: confirmedOrder.buyerId,
+            businessId: confirmedOrder.businessId,
+            sellerUserId: business?.userId || null,
+            cryptoInvoiceId: invoice?.id || null,
+            currency: invoice?.currency || confirmedOrder.currency || null,
+            network: invoice?.network || null,
+            grossAmount: amount,
+            commissionRateBps: 300,
+            commissionAmount,
+            sellerNetAmount,
+            buyerConfirmedAt: confirmedAt,
+            status: verified ? 'confirmed_pending_release' : 'blocked_payment_verification',
+            releaseStatus: 'pending_custody_integration',
+            releaseTxHash: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        },
+        { upsert: true }
+      );
+
+      // Si la factura se verificó después, desbloquear el registro existente.
+      if (verified) {
+        await db.collection('settlement_ledger').updateOne(
+          {
+            publicInvoiceId: confirmedOrder.publicInvoiceId,
+            status: 'blocked_payment_verification',
+          },
+          {
+            $set: {
+              cryptoInvoiceId: invoice.id,
+              currency: invoice.currency || confirmedOrder.currency || null,
+              network: invoice.network || null,
+              grossAmount: amount,
+              commissionRateBps: 300,
+              commissionAmount,
+              sellerNetAmount,
+              status: 'confirmed_pending_release',
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        );
+      }
+    };
+
     if (order.buyerReceiptConfirmation?.confirmedAt) {
+      await ensureSettlementLedger(
+        order,
+        order.buyerReceiptConfirmation.confirmedAt
+      );
       return json({
         order,
         alreadyConfirmed: true,
@@ -2465,6 +2734,10 @@ return json({ payments: out });
 
     if (result.matchedCount !== 1) {
       if (updated?.buyerReceiptConfirmation?.confirmedAt) {
+        await ensureSettlementLedger(
+          updated,
+          updated.buyerReceiptConfirmation.confirmedAt
+        );
         return json({
           order: updated,
           alreadyConfirmed: true,
@@ -2480,10 +2753,15 @@ return json({ payments: out });
       return json({ error: 'No se pudo verificar la confirmación guardada.' }, 500);
     }
 
+    await ensureSettlementLedger(
+      updated,
+      updated.buyerReceiptConfirmation.confirmedAt
+    );
+
     return json({
       order: updated,
       alreadyConfirmed: false,
-      message: 'Recepción confirmada correctamente.',
+      message: 'Recepción confirmada. Liquidación registrada para su procesamiento.',
     });
   }
 

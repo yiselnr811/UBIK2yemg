@@ -321,7 +321,7 @@ class TestSecurity(unittest.TestCase):
             self.assertNotIn('apikey', line.lower())
             self.assertNotIn('key=', line.lower())
             # Should be known public endpoints
-            known_public = ['trongrid.io', 'llamarpc.com', 'polygon-rpc.com', 'mainnet.base.org', 'arbitrum.io']
+            known_public = ['trongrid.io', 'llamarpc.com', 'polygon-rpc.com', 'mainnet.base.org', 'arbitrum.io', 'publicnode.com']
             self.assertTrue(any(ep in line for ep in known_public), f"Unknown RPC endpoint: {line}")
 
     def test_no_hardcoded_secrets_in_route(self):

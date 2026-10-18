@@ -83,12 +83,15 @@ const CRYPTO_MIN_CONFIRMATIONS = {
 
 // Parse enabled networks from env
 function getEnabledCryptoNetworks() {
+  const allowedNewNetworks = new Set(['BASE', 'ARBITRUM', 'BEP20']);
   const env = process.env.CRYPTO_ENABLED_NETWORKS || '';
   const enabled = env.split(',').map(s => s.trim()).filter(Boolean);
   const networks = [];
   for (const key of enabled) {
     const [network, currency] = key.split('_');
     if (!network || !currency) continue;
+    // Bloquear redes antiguas para nuevas facturas; conservar la verificación histórica.
+    if (!allowedNewNetworks.has(network)) continue;
     const contractKey = `${network}_${currency}`;
     const contract = CRYPTO_TOKEN_CONTRACTS[contractKey];
     const receiverEnvKey = `CRYPTO_WALLET_${contractKey}`;
@@ -298,7 +301,7 @@ const createOrderCryptoSchema = createOrderSchema.extend({
   shippingEmail: z.string().email().max(254),
   paymentMethod: z.literal('crypto'),
   cryptoCurrency: z.enum(['USDT', 'USDC']),
-  cryptoNetwork: z.enum(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20']),
+  cryptoNetwork: z.enum(['BASE', 'ARBITRUM', 'BEP20']),
 });
 
 const submitTxSchema = z.object({
@@ -1524,7 +1527,7 @@ async function route(request, method, path) {
 
       if ('cryptoPayoutWallets' in body) {
         const wallets = body.cryptoPayoutWallets;
-        const networks = ['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20'];
+        const networks = ['BASE', 'ARBITRUM', 'BEP20'];
         if (!wallets || typeof wallets !== 'object' || Array.isArray(wallets)) {
           return json({ error: 'La configuración de billeteras no es válida.' }, 400);
         }

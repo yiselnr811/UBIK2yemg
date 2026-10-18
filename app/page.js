@@ -4182,9 +4182,6 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </p>
   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
     {[
-      ['TRC20', 'USDT / USDC · Tron'],
-      ['ERC20', 'Ethereum'],
-      ['POLYGON', 'Polygon'],
       ['BASE', 'Base'],
       ['ARBITRUM', 'Arbitrum'],
       ['BEP20', 'BNB Smart Chain']

@@ -438,5 +438,125 @@ class TestIntegration(unittest.TestCase):
                       (Path(BASE_DIR) / "lib" / "crypto-verify.js").read_text())
 
 
+
+class TestEscrowWalletGuard(unittest.TestCase):
+    """Regression tests for escrow payout destination safeguards."""
+
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        cls.route = (Path(BASE_DIR) / "app" / "api" / "[[...path]]" / "route.js").read_text()
+
+    def test_missing_seller_wallet_blocks_release_state(self):
+        self.assertIn("'blocked_missing_seller_wallet'", self.route)
+        self.assertIn("payoutAddress ? 'confirmed_pending_release' : 'blocked_missing_seller_wallet'", self.route)
+
+    def test_existing_pending_ledger_is_rechecked(self):
+        self.assertIn("'blocked_payment_verification', 'blocked_missing_seller_wallet'", self.route)
+
+    def test_real_release_remains_disabled(self):
+        self.assertIn("releaseStatus: 'pending_custody_integration'", self.route)
+        self.assertIn("releaseTxHash: null", self.route)
+
+    def test_wallet_save_recovers_legacy_escrows_with_cursor(self):
+        self.assertIn("if ('cryptoPayoutWallets' in body)", self.route)
+        self.assertIn("for await (const ledger of blockedLedgers)", self.route)
+        self.assertIn(".batchSize(100)", self.route)
+        self.assertIn("releaseStatus: 'pending_custody_integration'", self.route)
+        self.assertIn("releaseTxHash: null", self.route)
+
+    def test_recovery_requires_both_confirmations_and_approved_invoice(self):
+        self.assertIn("!order.buyerReceiptConfirmation?.confirmedAt", self.route)
+        self.assertIn("!order.sellerDeliveryConfirmation?.confirmedAt", self.route)
+        self.assertIn("invoice.status !== 'approved'", self.route)
+        self.assertIn("invoice.buyerId !== order.buyerId", self.route)
+        self.assertIn("invoice.businessId !== order.businessId", self.route)
+
+    def test_recovery_does_not_require_buyer_to_confirm_again(self):
+        start = self.route.find("// Recuperación segura de escrows bloqueados")
+        end = self.route.find("return json({ business: updated, recoveredEscrows });", start)
+        self.assertGreaterEqual(start, 0)
+        self.assertGreater(end, start)
+        recovery = self.route[start:end]
+        self.assertIn("buyerReceiptConfirmation?.confirmedAt", recovery)
+        self.assertIn("status: 'confirmed_pending_release'", recovery)
+        self.assertNotIn("confirm-receipt", recovery)
+        self.assertNotIn("sendTransaction(", recovery)
+        self.assertNotIn("sendRawTransaction(", recovery)
+
+
+    def test_recovery_validates_invoice_network_and_raw_amount(self):
+        start = self.route.find("// Recuperación segura de escrows bloqueados")
+        end = self.route.find("return json({ business: updated, recoveredEscrows });", start)
+        self.assertGreaterEqual(start, 0)
+        self.assertGreater(end, start)
+        recovery = self.route[start:end]
+        self.assertIn("invoice.network?.toUpperCase() !== network", recovery)
+        self.assertIn("!/^\\d+$/.test(invoiceRaw)", recovery)
+        self.assertIn("const rate = invoice.commissionRateBps;", recovery)
+        self.assertNotIn("ledger.commissionRateBps", recovery)
+        self.assertIn("grossAmountRaw.toString()", recovery)
+        self.assertIn("sellerNetAmountRaw.toString()", recovery)
+
+    def test_recovery_update_is_conditional_and_never_releases_funds(self):
+        start = self.route.find("// Recuperación segura de escrows bloqueados")
+        end = self.route.find("return json({ business: updated, recoveredEscrows });", start)
+        self.assertGreaterEqual(start, 0)
+        self.assertGreater(end, start)
+        recovery = self.route[start:end]
+        self.assertIn("status: ledger.status", recovery)
+        self.assertIn("grossAmountRaw: { $in: [null, grossAmountRaw.toString()] }", recovery)
+        self.assertIn("commissionAmountRaw: { $in: [null, commissionAmountRaw.toString()] }", recovery)
+        self.assertIn("sellerNetAmountRaw: { $in: [null, sellerNetAmountRaw.toString()] }", recovery)
+        self.assertIn("commissionRateBps: { $in: [null, commissionRateBps] }", recovery)
+        self.assertIn("amountDecimals: { $in: [null, decimals] }", recovery)
+        self.assertIn("grossAmount: { $in: [null, grossAmount] }", recovery)
+        self.assertIn("commissionAmount: { $in: [null, commissionAmount] }", recovery)
+        self.assertIn("sellerNetAmount: { $in: [null, sellerNetAmount] }", recovery)
+
+        self.assertIn("releaseStatus: 'pending_custody_integration'", recovery)
+        self.assertIn("releaseTxHash: null", recovery)
+        self.assertNotIn("sendTransaction(", recovery)
+        self.assertNotIn("sendRawTransaction(", recovery)
+
+
+    def test_settlement_uses_frozen_invoice_commission_without_silent_fallback(self):
+        start = self.route.find("const ensureSettlementLedger = async")
+        end = self.route.find("if (order.buyerReceiptConfirmation?.confirmedAt)", start)
+        self.assertGreaterEqual(start, 0)
+        self.assertGreater(end, start)
+        settlement = self.route[start:end]
+        self.assertIn("invoice?.commissionRateBps", settlement)
+        self.assertIn("commissionRateBps", settlement)
+        # La factura debe contener una comisión congelada válida; sin fallback.
+        self.assertIn("const validCommissionRate", settlement)
+        self.assertIn("if (!validCommissionRate)", settlement)
+        self.assertIn("const commissionRateBps = Number(invoice.commissionRateBps);", settlement)
+        self.assertNotIn(": 300;", settlement)
+
+    def test_existing_ledger_recalculation_is_limited_to_pending_statuses(self):
+        start = self.route.find("const ensureSettlementLedger = async")
+        end = self.route.find("if (order.buyerReceiptConfirmation?.confirmedAt)", start)
+        self.assertGreaterEqual(start, 0)
+        self.assertGreater(end, start)
+        settlement = self.route[start:end]
+        self.assertIn("status: { $in: ['blocked_payment_verification', 'blocked_missing_seller_wallet'] }", settlement)
+        self.assertNotIn("status: { $in: ['blocked_payment_verification', 'blocked_missing_seller_wallet', 'confirmed_pending_release'] }", settlement)
+        self.assertIn("releaseStatus: 'pending_custody_integration'", settlement)
+        self.assertIn("releaseTxHash: null", settlement)
+
+
+    def test_settlement_blocks_invoice_without_valid_frozen_commission(self):
+        start = self.route.find("const ensureSettlementLedger = async")
+        end = self.route.find("if (order.buyerReceiptConfirmation?.confirmedAt)", start)
+        self.assertGreaterEqual(start, 0)
+        self.assertGreater(end, start)
+        settlement = self.route[start:end]
+        self.assertIn("invoice?.commissionRateBps", settlement)
+        self.assertIn("if (!validCommissionRate)", settlement)
+        self.assertIn("const commissionRateBps = Number(invoice.commissionRateBps);", settlement)
+        self.assertNotIn("? Number(invoice.commissionRateBps) : 300;", settlement)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

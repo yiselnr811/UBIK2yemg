@@ -3987,6 +3987,34 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [sellerOrderSaving, setSellerOrderSaving] = React.useState({});
   const [sellerOrderMessage, setSellerOrderMessage] = React.useState({});
 
+  const [cryptoPayoutWallets, setCryptoPayoutWallets] = React.useState({ ...(business?.cryptoPayoutWallets || {}) });
+  const [walletSaving, setWalletSaving] = React.useState(false);
+  const [walletMessage, setWalletMessage] = React.useState('');
+
+  React.useEffect(() => {
+    setCryptoPayoutWallets({ ...(business?.cryptoPayoutWallets || {}) });
+  }, [business?.id]);
+
+  const saveCryptoPayoutWallets = async () => {
+    if (!business?.id || walletSaving) return;
+    setWalletSaving(true);
+    setWalletMessage('');
+    try {
+      const result = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: { cryptoPayoutWallets }
+      });
+      if (result?.error) throw new Error(result.error);
+      setWalletMessage('Billeteras guardadas correctamente.');
+    } catch (error) {
+      setWalletMessage(error?.message || 'No se pudieron guardar las billeteras.');
+    } finally {
+      setWalletSaving(false);
+    }
+  };
+
+
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -4145,7 +4173,53 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         </Card>
       )}
 
-      {/* Stats — 4 cards instead of 3 */}
+
+<div className="mb-6 rounded-xl border border-gray-200 p-4">
+  <h2 className="mb-2 text-lg font-semibold">Billeteras para recibir pagos</h2>
+  <p className="mb-4 text-sm text-gray-600">
+    Configura las direcciones de destino de tu negocio. Deja vacío un campo para borrar esa dirección.
+    Guardar estos datos no activa transferencias automáticas.
+  </p>
+  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+    {[
+      ['TRC20', 'USDT / USDC · Tron'],
+      ['ERC20', 'Ethereum'],
+      ['POLYGON', 'Polygon'],
+      ['BASE', 'Base'],
+      ['ARBITRUM', 'Arbitrum'],
+      ['BEP20', 'BNB Smart Chain']
+    ].map(([network, label]) => (
+      <label key={network} className="block text-sm font-medium">
+        {label}
+        <input
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          value={cryptoPayoutWallets[network] || ''}
+          onChange={(event) => setCryptoPayoutWallets((previous) => ({
+            ...previous,
+            [network]: event.target.value
+          }))}
+          placeholder={`Dirección ${network}`}
+          className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+        />
+      </label>
+    ))}
+  </div>
+  <div className="mt-4 flex flex-wrap items-center gap-3">
+    <button
+      type="button"
+      onClick={saveCryptoPayoutWallets}
+      disabled={walletSaving}
+      className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white disabled:opacity-50"
+    >
+      {walletSaving ? 'Guardando…' : 'Guardar billeteras'}
+    </button>
+    <span role="status" aria-live="polite" className="text-sm">{walletMessage}</span>
+  </div>
+</div>
+
+{/* Stats — 4 cards instead of 3 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <Card><CardContent className="p-4">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Total productos</div>
@@ -5804,6 +5878,7 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
       setForm({
         showContactsPublicly: true, // default visible
         province: '', municipality: '', address: '', openingHours: '', closingHours: '', messenger: '',
+        commissionRateBps: 300,
         ...biz,
       });
     }
@@ -5818,6 +5893,10 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
     !form.closingHours && 'horario cierre',
   ].filter(Boolean) : [];
   const handleSave = () => {
+    if (!Number.isInteger(Number(form.commissionRateBps)) || Number(form.commissionRateBps) < 0 || Number(form.commissionRateBps) > 3000) {
+      toast.error('La comisión debe estar entre 0 % y 30 %.');
+      return;
+    }
     if (hidingContacts && missing.length) {
       toast.error(`Si ocultas los contactos debes agregar dirección física y horarios. Faltan: ${missing.join(', ')}.`);
       return;
@@ -5903,6 +5982,20 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
           </div>
           <div><Label>Ubicación / Ciudad (visible)</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
 
+          <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+            <Label>Comisión por venta (%)</Label>
+            <Input
+              type="number"
+              min="0"
+              max="30"
+              step="0.01"
+              value={(Number(form.commissionRateBps ?? 300) / 100).toFixed(2)}
+              onChange={(e) => setForm({ ...form, commissionRateBps: e.target.value === '' ? '' : Math.round(Number(e.target.value) * 100) })}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Predeterminada: 3 %. Admite del 0 % al 30 %. El cambio solo afecta a nuevas facturas.
+            </p>
+          </div>
           <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
             <label className="flex items-center justify-between gap-3 cursor-pointer">
               <span className="text-sm font-semibold">Permitir entregas</span>

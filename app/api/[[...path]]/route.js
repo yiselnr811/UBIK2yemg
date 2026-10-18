@@ -8,9 +8,9 @@ import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { v2 as cloudinary } from 'cloudinary';
 import { z } from 'zod';
-import { parseUnits, formatUnits } from 'viem';
+import { parseUnits, formatUnits, isAddress } from 'viem';
 
-import { verifyCryptoInvoice, verifyPendingInvoices } from '@/lib/crypto-verify';
+import { verifyCryptoInvoice, verifyPendingInvoices, isValidTronAddress } from '@/lib/crypto-verify';
 
 // Defensive: an undefined MONGO_URL makes the Mongo driver throw the cryptic
 // "Cannot read properties of undefined (reading 'startsWith')". Fallback + warn.
@@ -1521,6 +1521,34 @@ async function route(request, method, path) {
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
 
+      if ('cryptoPayoutWallets' in body) {
+        const wallets = body.cryptoPayoutWallets;
+        const networks = ['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20'];
+        if (!wallets || typeof wallets !== 'object' || Array.isArray(wallets)) {
+          return json({ error: 'La configuración de billeteras no es válida.' }, 400);
+        }
+        const cleanWallets = {};
+        for (const [network, value] of Object.entries(wallets)) {
+          if (!networks.includes(network) || typeof value !== 'string' || value.length > 100) {
+            return json({ error: 'Red o dirección de billetera no válida.' }, 400);
+          }
+          const address = value.trim();
+          if (address && (
+            network === 'TRC20'
+              ? !isValidTronAddress(address)
+              : !isAddress(address)
+          )) {
+            return json({ error: `La dirección configurada para ${network} no es válida.` }, 400);
+          }
+          cleanWallets[network] = address;
+        }
+        update.cryptoPayoutWallets = {
+          ...(business.cryptoPayoutWallets || {}),
+          ...cleanWallets
+        };
+      }
+
+
       if ('deliveryEnabled' in body) {
         if (typeof body.deliveryEnabled !== 'boolean') {
           return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
@@ -1555,7 +1583,137 @@ async function route(request, method, path) {
       }
       await db.collection('businesses').updateOne({ id: path[1] }, { $set: update });
       const updated = await db.collection('businesses').findOne({ id: path[1] });
-      return json({ business: updated });
+
+      // Recuperación segura de escrows bloqueados cuando se configura la billetera.
+      // Solo actualiza el registro; nunca firma ni transmite transacciones.
+      let recoveredEscrows = 0;
+      if ('cryptoPayoutWallets' in body) {
+        const blockedLedgers = await db.collection('settlement_ledger')
+          .find({
+            businessId: path[1],
+            releaseStatus: 'pending_custody_integration',
+            releaseTxHash: null,
+            $or: [
+              { status: 'blocked_missing_seller_wallet' },
+              {
+                status: 'confirmed_pending_release',
+                $or: [
+                  { payoutAddress: null },
+                  { payoutAddress: { $exists: false } },
+                  { payoutAddress: '' },
+                ],
+              },
+            ],
+          })
+          .batchSize(100);
+
+        for await (const ledger of blockedLedgers) {
+          const network = String(ledger.payoutNetwork || ledger.network || '').toUpperCase();
+          const payoutAddress = updated?.cryptoPayoutWallets?.[network];
+          if (!payoutAddress || typeof payoutAddress !== 'string' || !payoutAddress.trim()) continue;
+
+          const order = await db.collection('orders').findOne({
+        id: ledger.orderId,
+        businessId: path[1],
+        publicInvoiceId: ledger.publicInvoiceId,
+      });
+
+      if (
+        !order ||
+        order.buyerId !== ledger.buyerId ||
+        !order.buyerReceiptConfirmation?.confirmedAt ||
+        !order.sellerDeliveryConfirmation?.confirmedAt
+      ) continue;
+
+      const invoice = ledger.cryptoInvoiceId
+        ? await db.collection('crypto_invoices').findOne({
+            id: ledger.cryptoInvoiceId,
+            orderId: order.id,
+          })
+        : await db.collection('crypto_invoices').findOne({ orderId: order.id });
+
+      if (
+        !invoice ||
+        invoice.status !== 'approved' ||
+        invoice.orderId !== order.id ||
+        invoice.buyerId !== order.buyerId ||
+        invoice.businessId !== order.businessId ||
+        invoice.network?.toUpperCase() !== network ||
+        (order.cryptoInvoiceId && invoice.id !== order.cryptoInvoiceId)
+      ) continue;
+
+      // Reconstruir importes solo desde la factura aprobada.
+      const decimals = Number(invoice.decimals);
+      const invoiceRaw = String(invoice.expectedAmountRaw ?? '');
+      if (
+        !Number.isInteger(decimals) ||
+        decimals < 0 ||
+        decimals > 36 ||
+        !/^\d+$/.test(invoiceRaw) ||
+        BigInt(invoiceRaw) <= 0n
+      ) continue;
+
+      const rate = invoice.commissionRateBps;
+      const commissionRateBps = Number(rate);
+      if (
+        !Number.isInteger(commissionRateBps) ||
+        commissionRateBps < 0 ||
+        commissionRateBps > 3000
+      ) continue;
+
+      const grossAmountRaw = BigInt(invoiceRaw);
+      const commissionAmountRaw =
+        (grossAmountRaw * BigInt(commissionRateBps) + 5000n) / 10000n;
+      const sellerNetAmountRaw = grossAmountRaw - commissionAmountRaw;
+
+      const grossAmount = Number(formatUnits(grossAmountRaw, decimals));
+      const commissionAmount = Number(formatUnits(commissionAmountRaw, decimals));
+      const sellerNetAmount = Number(formatUnits(sellerNetAmountRaw, decimals));
+      if (![grossAmount, commissionAmount, sellerNetAmount].every(Number.isFinite)) continue;
+
+      const result = await db.collection('settlement_ledger').updateOne(
+        {
+          publicInvoiceId: ledger.publicInvoiceId,
+          businessId: path[1],
+          status: ledger.status,
+          releaseStatus: 'pending_custody_integration',
+          releaseTxHash: null,
+          amountDecimals: { $in: [null, decimals] },
+          commissionRateBps: { $in: [null, commissionRateBps] },
+          grossAmountRaw: { $in: [null, grossAmountRaw.toString()] },
+          commissionAmountRaw: { $in: [null, commissionAmountRaw.toString()] },
+          sellerNetAmountRaw: { $in: [null, sellerNetAmountRaw.toString()] },
+          grossAmount: { $in: [null, grossAmount] },
+          commissionAmount: { $in: [null, commissionAmount] },
+          sellerNetAmount: { $in: [null, sellerNetAmount] },
+        },
+        {
+          $set: {
+            payoutNetwork: network,
+            payoutAddress: payoutAddress.trim(),
+            payoutDestinationStatus: 'configured_pending_custody_integration',
+            amountDecimals: decimals,
+            grossAmountRaw: grossAmountRaw.toString(),
+            commissionAmountRaw: commissionAmountRaw.toString(),
+            sellerNetAmountRaw: sellerNetAmountRaw.toString(),
+            grossAmount,
+            commissionRateBps,
+            commissionAmount,
+            sellerNetAmount,
+            status: 'confirmed_pending_release',
+            releaseStatus: 'pending_custody_integration',
+            releaseTxHash: null,
+            buyerConfirmedAt: order.buyerReceiptConfirmation.confirmedAt,
+            sellerConfirmedAt: order.sellerDeliveryConfirmation.confirmedAt,
+            updatedAt: new Date().toISOString(),
+          },
+        }
+      );
+      if (result.modifiedCount === 1) recoveredEscrows++;
+        }
+      }
+
+      return json({ business: updated, recoveredEscrows });
     }
   }
 
@@ -2078,12 +2236,18 @@ return json({ payments: out });
 
       const expiresAt = new Date();
       expiresAt.setMinutes(expiresAt.getMinutes() + config.expiryMinutes);
+      const commissionRateBps = business?.commissionRateBps !== undefined
+        && Number.isInteger(Number(business.commissionRateBps))
+        && Number(business.commissionRateBps) >= 0
+        && Number(business.commissionRateBps) <= 3000
+        ? Number(business.commissionRateBps) : 300;
 
       invoice = {
         id: uuidv4(),
         orderId: order.id,
         buyerId: user.id,
         businessId: order.businessId,
+        commissionRateBps,
         currency: cryptoCurrency,
         network: cryptoNetwork,
         tokenContract: networkConfig.contract,
@@ -2581,6 +2745,14 @@ return json({ payments: out });
 
     // Registro idempotente de liquidación. No transfiere fondos.
     const ensureSettlementLedger = async (confirmedOrder, confirmedAt) => {
+      // No registrar liquidación hasta que ambas partes confirmen.
+      if (
+        !confirmedOrder?.buyerReceiptConfirmation?.confirmedAt ||
+        !confirmedOrder?.sellerDeliveryConfirmation?.confirmedAt
+      ) {
+        return;
+      }
+
       const invoice = confirmedOrder.cryptoInvoiceId
         ? await db.collection('crypto_invoices').findOne({
             id: confirmedOrder.cryptoInvoiceId,
@@ -2589,6 +2761,27 @@ return json({ payments: out });
         : await db.collection('crypto_invoices').findOne({
             orderId: confirmedOrder.id,
           });
+
+      if (
+        !invoice ||
+        invoice.orderId !== confirmedOrder.id ||
+        invoice.buyerId !== confirmedOrder.buyerId ||
+        invoice.businessId !== confirmedOrder.businessId ||
+        (confirmedOrder.cryptoInvoiceId && invoice.id !== confirmedOrder.cryptoInvoiceId)
+      ) {
+        return;
+      }
+
+      const existingLedger = await db.collection('settlement_ledger').findOne({
+        publicInvoiceId: confirmedOrder.publicInvoiceId,
+      });
+      if (existingLedger && (
+        existingLedger.orderId !== confirmedOrder.id ||
+        existingLedger.buyerId !== confirmedOrder.buyerId ||
+        existingLedger.businessId !== confirmedOrder.businessId
+      )) {
+        return;
+      }
 
       const decimals = Number.isInteger(Number(invoice?.decimals))
       && Number(invoice.decimals) >= 0
@@ -2599,7 +2792,7 @@ return json({ payments: out });
     if (invoice?.status === 'approved') {
       try {
         const savedRaw = String(invoice.expectedAmountRaw ?? '');
-        if (/^\\d+$/.test(savedRaw)) {
+        if (/^\d+$/.test(savedRaw)) {
           grossAmountRaw = BigInt(savedRaw);
         } else if (
           Number.isFinite(Number(invoice.expectedAmount))
@@ -2616,9 +2809,21 @@ return json({ payments: out });
     }
 
     const verified = grossAmountRaw !== null && grossAmountRaw > 0n;
-    // Comisión del 3 % en unidades enteras; redondeo al entero más cercano.
+    // La liquidación solo acepta la comisión congelada y válida de la factura.
+    const validCommissionRate = invoice?.commissionRateBps !== undefined
+      && Number.isInteger(Number(invoice.commissionRateBps))
+      && Number(invoice.commissionRateBps) >= 0
+      && Number(invoice.commissionRateBps) <= 3000;
+    if (!validCommissionRate) {
+      console.warn('[Escrow] Liquidación bloqueada: factura sin comisión congelada válida', {
+        orderId: confirmedOrder.id,
+        invoiceId: invoice.id,
+      });
+      return;
+    }
+    const commissionRateBps = Number(invoice.commissionRateBps);
     const commissionAmountRaw = verified
-      ? (grossAmountRaw * 300n + 5000n) / 10000n : null;
+      ? (grossAmountRaw * BigInt(commissionRateBps) + 5000n) / 10000n : null;
     const sellerNetAmountRaw = verified
       ? grossAmountRaw - commissionAmountRaw : null;
 
@@ -2631,6 +2836,11 @@ return json({ payments: out });
     const business = await db.collection('businesses').findOne({
         id: confirmedOrder.businessId,
       });
+      const payoutNetwork = String(invoice.network || '').toUpperCase();
+      const payoutAddress = business?.cryptoPayoutWallets?.[payoutNetwork] || null;
+      const payoutDestinationStatus = payoutAddress
+        ? 'configured_pending_custody_integration'
+        : 'missing_seller_wallet';
       const createdAt = new Date().toISOString();
 
       await db.collection('settlement_ledger').updateOne(
@@ -2646,16 +2856,20 @@ return json({ payments: out });
             cryptoInvoiceId: invoice?.id || null,
             currency: invoice?.currency || confirmedOrder.currency || null,
             network: invoice?.network || null,
+            payoutNetwork,
+            payoutAddress,
+            payoutDestinationStatus,
             amountDecimals: decimals,
             grossAmountRaw: verified ? grossAmountRaw.toString() : null,
             commissionAmountRaw: verified ? commissionAmountRaw.toString() : null,
             sellerNetAmountRaw: verified ? sellerNetAmountRaw.toString() : null,
             grossAmount: amount,
-            commissionRateBps: 300,
+            commissionRateBps,
             commissionAmount,
             sellerNetAmount,
             buyerConfirmedAt: confirmedAt,
-            status: verified ? 'confirmed_pending_release' : 'blocked_payment_verification',
+            sellerConfirmedAt: confirmedOrder.sellerDeliveryConfirmation?.confirmedAt || null,
+            status: !verified ? 'blocked_payment_verification' : (payoutAddress ? 'confirmed_pending_release' : 'blocked_missing_seller_wallet'),
             releaseStatus: 'pending_custody_integration',
             releaseTxHash: null,
             createdAt,
@@ -2670,22 +2884,27 @@ return json({ payments: out });
         await db.collection('settlement_ledger').updateOne(
           {
             publicInvoiceId: confirmedOrder.publicInvoiceId,
-            status: 'blocked_payment_verification',
+            status: { $in: ['blocked_payment_verification', 'blocked_missing_seller_wallet'] },
           },
           {
             $set: {
               cryptoInvoiceId: invoice.id,
               currency: invoice.currency || confirmedOrder.currency || null,
               network: invoice.network || null,
+              payoutNetwork,
+              payoutAddress,
+              payoutDestinationStatus,
               amountDecimals: decimals,
             grossAmountRaw: verified ? grossAmountRaw.toString() : null,
             commissionAmountRaw: verified ? commissionAmountRaw.toString() : null,
             sellerNetAmountRaw: verified ? sellerNetAmountRaw.toString() : null,
             grossAmount: amount,
-              commissionRateBps: 300,
+              commissionRateBps,
               commissionAmount,
               sellerNetAmount,
-              status: 'confirmed_pending_release',
+              buyerConfirmedAt: confirmedOrder.buyerReceiptConfirmation?.confirmedAt || confirmedAt,
+              sellerConfirmedAt: confirmedOrder.sellerDeliveryConfirmation?.confirmedAt || null,
+              status: payoutAddress ? 'confirmed_pending_release' : 'blocked_missing_seller_wallet',
               updatedAt: new Date().toISOString(),
             },
           }
@@ -2718,6 +2937,13 @@ return json({ payments: out });
 
     if (order.shippingStatus !== 'delivered' && order.status !== 'delivered') {
       return json({ error: 'El vendedor todavía no ha marcado el pedido como entregado.' }, 409);
+    }
+
+    if (!order.sellerDeliveryConfirmation?.confirmedAt) {
+      return json({
+        error: 'El vendedor debe confirmar explícitamente la entrega antes de que puedas confirmar la recepción.',
+        code: 'SELLER_DELIVERY_CONFIRMATION_REQUIRED',
+      }, 409);
     }
 
     const now = new Date().toISOString();
@@ -2928,7 +3154,22 @@ return json({ payments: out });
     const orderId = path[1];
     let order = await db.collection('orders').findOne({ id: orderId });
     if (!order) return json({ error: 'Pedido no encontrado' }, 404);
-    if (order.buyerId !== user.id && user.role !== 'admin') {
+    const isInvoiceBuyer = order.buyerId === user.id;
+    const isInvoiceAdmin = user.role === 'admin';
+    let isInvoiceSeller = false;
+
+    if (!isInvoiceBuyer && !isInvoiceAdmin && order.businessId) {
+      let sellerBusiness = null;
+      if (user.businessId) {
+        sellerBusiness = await db.collection('businesses').findOne({ id: user.businessId });
+      }
+      if (!sellerBusiness) {
+        sellerBusiness = await db.collection('businesses').findOne({ userId: user.id });
+      }
+      isInvoiceSeller = Boolean(sellerBusiness && sellerBusiness.id === order.businessId);
+    }
+
+    if (!isInvoiceBuyer && !isInvoiceAdmin && !isInvoiceSeller) {
       return json({ error: 'Sin permiso' }, 403);
     }
 
@@ -2983,6 +3224,11 @@ return json({ payments: out });
     drawLine('Negocio: ' + String(order.businessName || 'No indicado').slice(0, 120));
     drawLine('Fecha: ' + (order.createdAt || 'No indicada'));
     drawLine('Método de entrega: ' + String(order.deliveryMethod || 'No indicado'));
+    drawLine('DATOS DEL DESTINATARIO', { size: 12, bold: true, gap: 23 });
+    drawLine('Nombre: ' + String(order.shipping?.name || 'No indicado'));
+    drawLine('Teléfono: ' + String(order.shipping?.phone || 'No indicado'));
+    drawLine('Carnet/ID: ' + String(order.shipping?.recipientId || 'No indicado'));
+    drawLine('Dirección: ' + String(order.shipping?.address || 'No indicada'));
     y -= 8;
     drawLine('PRODUCTOS', { size: 12, bold: true, gap: 23 });
 
@@ -3810,6 +4056,13 @@ return json({ payments: out });
       const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      if ('commissionRateBps' in body) {
+        if (!Number.isInteger(body.commissionRateBps) || body.commissionRateBps < 0 || body.commissionRateBps > 3000) {
+          return json({ error: 'La comisión debe ser un entero entre 0 y 3000 puntos básicos (0 % a 30 %).' }, 400);
+        }
+        update.commissionRateBps = body.commissionRateBps;
+      }
 
       if ('verified' in body) {
         if (typeof body.verified !== 'boolean') {

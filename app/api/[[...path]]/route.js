@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { parseUnits, formatUnits, isAddress } from 'viem';
 
 import { verifyCryptoInvoice, verifyPendingInvoices, isValidTronAddress } from '@/lib/crypto-verify';
+import { checkPrivyConnection } from '@/lib/privy-server';
 
 // Defensive: an undefined MONGO_URL makes the Mongo driver throw the cryptic
 // "Cannot read properties of undefined (reading 'startsWith')". Fallback + warn.
@@ -3901,6 +3902,19 @@ return json({ payments: out });
   if (path[0] === 'admin') {
     const { user, error } = await requireAdmin(request);
     if (error) return error;
+
+    if (path[1] === 'privy' && path[2] === 'status' && method === 'GET') {
+      try {
+        const result = await checkPrivyConnection();
+        return json({ ok: true, ...result });
+      } catch (e) {
+        console.error('[Privy] Status check failed:', e?.message || e);
+        return json({
+          ok: false,
+          error: 'No se pudo comprobar la conexión de Privy. Revisa la configuración del servidor.'
+        }, 503);
+      }
+    }
 
     if (path[1] === 'stats' && method === 'GET') {
       const [products, businesses, users, pendingPayments, approvedPayments] = await Promise.all([

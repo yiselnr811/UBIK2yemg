@@ -2,7 +2,7 @@ import './globals.css';
 import { Toaster } from '@/components/ui/sonner';
 
 export const metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://www.ubik2yemg.qzz.io'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://ubik2yemg.qzz.io'),
   title: {
     default: 'UBIK2 YEMG — Todo en un solo lugar',
     template: '%s | UBIK2 YEMG',
@@ -39,7 +39,7 @@ export const metadata = {
   openGraph: {
     title: 'UBIK2 YEMG — Todo en un solo lugar',
     description: 'Compra fácil. Vende rápido. Conectando compradores y vendedores.',
-    images: ['https://www.ubik2yemg.qzz.io/logo.png'],
+    images: ['https://ubik2yemg.qzz.io/logo.png'],
     type: 'website',
     locale: 'es_CU',
   },
@@ -47,7 +47,7 @@ export const metadata = {
     card: 'summary_large_image',
     title: 'UBIK2 YEMG',
     description: 'Todo en un solo lugar.',
-    images: ['https://www.ubik2yemg.qzz.io/logo.png'],
+    images: ['https://ubik2yemg.qzz.io/logo.png'],
   },
 };
 

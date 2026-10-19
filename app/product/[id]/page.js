@@ -16,7 +16,7 @@ async function fetchProduct(id) {
     const product = await db.collection('products').findOne({ id });
     if (!product) { await client.close(); return null; }
     const business = product.businessId
-      ? await db.collection('businesses').findOne({ id: product.businessId }, { projection: { name: 1, location: 1 } })
+      ? await db.collection('businesses').findOne({ id: product.businessId }, { projection: { name: 1, location: 1, address: 1, province: 1, municipality: 1 } })
       : null;
     await client.close();
     return { ...product, business };
@@ -36,8 +36,23 @@ export async function generateMetadata({ params }) {
     maximumFractionDigits: 2,
   })} ${['USD', 'USDC', 'CUP'].includes(currency) ? currency : 'CUP'}`;
   const title = `${product.name} — ${priceLabel} · UBIK2 YEMG`;
-  const shortDesc = (product.description || '').slice(0, 160)
-    || `${product.name} disponible en ${product.business?.name || 'UBIK2 YEMG'}. Precio: ${priceLabel}.`;
+  const businessName = product.business?.name || 'UBIK2 YEMG';
+  const businessAddress = [...new Set([
+    product.business?.address,
+    product.business?.municipality,
+    product.business?.province,
+    product.business?.location,
+  ].map(value => String(value || '').trim()).filter(Boolean))].join(', ');
+  const storeDetails = [
+    `Tienda: ${businessName}.`,
+    businessAddress ? `Dirección/ubicación: ${businessAddress}.` : '',
+    `Precio: ${priceLabel}.`,
+  ].filter(Boolean).join(' ');
+  const productDescription = (
+    product.description || `${product.name} disponible en UBIK2 YEMG.`
+  ).trim();
+  const descriptionLimit = Math.max(0, 300 - storeDetails.length - 1);
+  const shortDesc = `${productDescription.slice(0, descriptionLimit).trim()} ${storeDetails}`.trim();
   const shareUrl = `${BASE_URL}/product/${product.id}`;
   const ogImage = product.image && product.image.includes('res.cloudinary.com')
     ? product.image.replace('/upload/', '/upload/c_pad,w_1200,h_630,b_auto,f_jpg,q_auto/')

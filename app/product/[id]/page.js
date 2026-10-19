@@ -3,8 +3,8 @@
 // Renders proper HTML (NOT a 307 redirect) so crawlers can read the OG tags.
 // Real browsers are auto-redirected to the SPA via a client-side script.
 
-const DB_NAME = process.env.DB_NAME || 'ubik2_yemg_test';
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
+const BASE_URL = (process.env.NEXT_PUBLIC_BASE_URL || 'https://www.ubik2yemg.qzz.io').replace(/\/$/, '');
 
 async function fetchProduct(id) {
   try {
@@ -30,9 +30,11 @@ export async function generateMetadata({ params }) {
   if (!product) {
     return { title: 'Producto no encontrado · UBIK2 YEMG', description: 'Marketplace cubano de MiPymes' };
   }
-  const priceLabel = product.currency === 'USDC'
-    ? `${Number(product.price).toLocaleString()} USDC`
-    : `${Number(product.price).toLocaleString()} CUP`;
+  const currency = String(product.currency || 'CUP').toUpperCase();
+  const priceLabel = `${Number(product.price).toLocaleString('es-ES', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })} ${['USD', 'USDC', 'CUP'].includes(currency) ? currency : 'CUP'}`;
   const title = `${product.name} — ${priceLabel} · UBIK2 YEMG`;
   const shortDesc = (product.description || '').slice(0, 160)
     || `${product.name} disponible en ${product.business?.name || 'UBIK2 YEMG'}. Precio: ${priceLabel}.`;
@@ -69,10 +71,12 @@ export default async function SharedProductPage({ params }) {
   // the OpenGraph metadata. Real browsers are redirected via inline JS.
   const safeId = encodeURIComponent(params.id);
   const targetUrl = `/?product=${safeId}`;
+  const currency = String(product?.currency || 'CUP').toUpperCase();
   const priceLabel = product
-    ? (product.currency === 'USDC'
-      ? `${Number(product.price).toLocaleString()} USDC`
-      : `${Number(product.price).toLocaleString()} CUP`)
+    ? `${Number(product.price).toLocaleString('es-ES', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      })} ${['USD', 'USDC', 'CUP'].includes(currency) ? currency : 'CUP'}`
     : '';
   return (
     <>

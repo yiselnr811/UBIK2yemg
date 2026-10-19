@@ -2,7 +2,7 @@ import './globals.css';
 import { Toaster } from '@/components/ui/sonner';
 
 export const metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://mipyme-hub.emergent.host'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://www.ubik2yemg.qzz.io'),
   title: {
     default: 'UBIK2 YEMG — Todo en un solo lugar',
     template: '%s | UBIK2 YEMG',

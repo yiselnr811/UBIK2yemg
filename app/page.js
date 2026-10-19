@@ -411,7 +411,10 @@ const buildContactLinks = (p) => {
   const cleanPhone = (s) => String(s || '').replace(/[^0-9+]/g, '').replace(/^\+/, '');
   const wa = cleanPhone(b.whatsapp);
   const tgRaw = (b.telegram || '').trim();
-  const sms = cleanPhone(b.sms || b.whatsapp);
+  // El teléfono solo se habilita si el vendedor lo configuró explícitamente.
+  const phoneRaw = String(b.sms || '').trim();
+  const phone = phoneRaw.replace(/[^0-9+]/g, '');
+  const sms = cleanPhone(phoneRaw);
 
   const name = p.name || 'tu producto';
   const price = formatPrice(p.price, p.currency);
@@ -433,13 +436,14 @@ const buildContactLinks = (p) => {
   const tgUser = tgRaw.replace(/^@/, '').replace(/^https?:\/\/(t\.me|telegram\.me)\//i, '');
   const tgLink = tgUser ? `https://t.me/${tgUser}` : '';
   // SMS: spec is sms:NUMBER?body=... (iOS uses `&body=`, Android `?body=`; ?body works on both).
+  const phoneLink = phone ? `tel:${phone}` : '';
   const smsLink = sms ? `sms:${sms}?body=${encoded}` : '';
 
   return {
     msg, encoded,
-    wa, tg: tgUser, sms,
-    waLink, tgLink, smsLink,
-    anyAvailable: !!(waLink || tgLink || smsLink),
+    wa, tg: tgUser, phone, sms,
+    waLink, tgLink, phoneLink, smsLink,
+    anyAvailable: !!(waLink || tgLink || phoneLink || smsLink),
   };
 };
 
@@ -2896,12 +2900,12 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
     return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   }
   const contact = buildContactLinks(product);
-  const { waLink, tgLink, smsLink, anyAvailable } = contact;
-
-  // Smart unified CTA: prefers WhatsApp, then Telegram, then SMS.
-  // Opens the first available channel directly so user doesn't have to choose if there's only one.
-  const primaryHref = waLink || tgLink || smsLink || '#';
-  const primaryLabel = waLink ? 'WhatsApp' : tgLink ? 'Telegram' : smsLink ? 'SMS' : '';
+  const { waLink, tgLink, phoneLink, smsLink, anyAvailable } = contact;
+  const contactsHidden =
+    product.contactsHidden === true ||
+    product.showPublicContact === false ||
+    product.business?.contactsHidden === true ||
+    product.business?.showContactsPublicly === false;
   const isFav = favorites.includes(product.id);
 
   return (
@@ -2945,9 +2949,8 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 
           {/* Contact section */}
           <div className="mt-6 p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
-            {/* Privacy mode: product or business hides digital contacts → show physical info */}
-            {(product.contactsHidden || product.business?.contactsHidden) ? (() => {
-              // Effective physical info: product-level fields override business-level
+            {/* Mostrar solo los canales configurados y respetar la privacidad. */}
+            {contactsHidden ? (() => {
               const province = product.province || product.business?.province;
               const municipality = product.municipality || product.business?.municipality;
               const address = product.address || product.business?.address;
@@ -2966,10 +2969,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   {(address || locLine) && (
                     <div className="text-sm text-muted-foreground flex items-start gap-2">
                       <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0 text-[#00A86B]" />
-                      <span>
-                        {address && <>{address}<br /></>}
-                        {locLine}
-                      </span>
+                      <span>{address && <>{address}<br /></>}{locLine}</span>
                     </div>
                   )}
                   {(opening || closing) && (
@@ -2980,71 +2980,58 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   )}
                 </div>
               );
-            })() : anyAvailable ? (
-              <>
-                {/* Primary CTA — Web3-style */}
-                <a
-                  href={primaryHref}
-                  target={primaryHref.startsWith('sms:') ? undefined : '_blank'}
-                  rel="noopener noreferrer"
-                  className="block w-full h-14 rounded-xl brand-gradient text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
-                  aria-label="Contactar vendedor"
-                >
-                  <MessageCircle className="h-5 w-5" />
-                  Contactar vendedor
-                  <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
-                </a>
-
-                {product.stock && product.stock > 0 && (
-                  <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-3 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
-                    <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
-                  </Button>
+            })() : (
+              <div className="space-y-3">
+                <div className="font-semibold text-base">Contactar vendedor</div>
+                {anyAvailable ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {waLink && (
+                      <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <MessageCircle className="h-5 w-5" /> WhatsApp
+                      </a>
+                    )}
+                    {tgLink && (
+                      <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <Send className="h-5 w-5" /> Telegram
+                      </a>
+                    )}
+                    {phoneLink && (
+                      <a href={phoneLink} className="h-12 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <Phone className="h-5 w-5" /> Llamar
+                      </a>
+                    )}
+                    {smsLink && (
+                      <a href={smsLink} className="h-12 rounded-xl border border-border hover:bg-muted font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <MessageCircle className="h-5 w-5" /> SMS
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Este vendedor no configuró canales de contacto.
+                  </div>
                 )}
-
-                {/* Crypto Buy Button */}
-                {product.stock && product.stock > 0 && (
-                  <Button
-                    onClick={() => startCryptoCheckout(product)}
-                    disabled={checkoutSubmitting}
-                    className="w-full h-14 rounded-xl mt-3 bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
-                    aria-label="Comprar con criptomonedas"
-                  >
-                    {checkoutSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CreditCard className="h-5 w-5" />}
-                    Comprar con Crypto
-                    <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
-                  </Button>
-                )}
-
-                {/* Secondary channels — only shown if there are 2+ channels */}
-                {((!!waLink + !!tgLink + !!smsLink) > 1) && (
-                  <>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-4 mb-2 text-center font-semibold">
-                      O elige otro canal
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {waLink && (
-                        <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <MessageCircle className="h-4 w-4" /> {t.whatsapp}
-                        </a>
-                      )}
-                      {tgLink && (
-                        <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <Send className="h-4 w-4" /> {t.telegram}
-                        </a>
-                      )}
-                      {smsLink && (
-                        <a href={smsLink} className="h-11 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <Phone className="h-4 w-4" /> {t.sms}
-                        </a>
-                      )}
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="text-center py-3 text-sm text-muted-foreground">
-                Este vendedor no configuró canales de contacto.
               </div>
+            )}
+
+            {/* Las opciones de compra no dependen de los canales de contacto. */}
+            {product.stock > 0 && (
+              <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-4 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
+                <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
+              </Button>
+            )}
+
+            {product.stock > 0 && (
+              <Button
+                onClick={() => startCryptoCheckout(product)}
+                disabled={checkoutSubmitting}
+                className="w-full h-14 rounded-xl mt-3 bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg"
+                aria-label="Comprar con criptomonedas"
+              >
+                {checkoutSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CreditCard className="h-5 w-5" />}
+                Comprar con Crypto
+                <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
+              </Button>
             )}
           </div>
 

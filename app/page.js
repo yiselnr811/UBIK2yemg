@@ -2000,28 +2000,23 @@ const LogoUploader = ({ value, onChange, compressLogo, label = 'Logo del negocio
 
 const LogoSVG = ({ size = 40, showText = false, textWhite = false }) => (
   <img
-    src="/social-preview.png"
-    width={Math.round(size * 1.9)}
+    src="/ubik2-logo.jpg"
+    width={Math.round(size * 2.7)}
     height={size}
     alt="UBIK2 YEMG"
     loading="eager"
     decoding="async"
     className="flex-shrink-0 object-contain"
-    style={{ width: `${Math.round(size * 1.9)}px`, height: `${size}px` }}
+    style={{ width: `${Math.round(size * 2.7)}px`, height: `${size}px` }}
   />
 );
 
-const Logo = ({ size = 'md', withText = true, onDark = false }) => {
+const Logo = ({ size = 'md', withText = false, onDark = false }) => {
   const px = size === 'lg' ? 56 : size === 'sm' ? 32 : 44;
   return (
     <div className="flex items-center gap-2.5">
       <LogoSVG size={px} />
-      {withText && (
-        <div className="flex flex-col leading-none">
-          <span className={`${size === 'lg' ? 'text-3xl' : 'text-xl'} font-extrabold tracking-tight ${onDark ? 'text-white' : 'brand-text-gradient'}`}>UBIK2 YEMG</span>
-          <span className={`text-[10px] tracking-wider uppercase hidden sm:block ${onDark ? 'text-white/80' : 'text-muted-foreground'}`}>Todo en un solo lugar</span>
-        </div>
-      )}
+
     </div>
   );
 };
@@ -2518,15 +2513,6 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.15),transparent_50%)]" />
         <div className="relative container mx-auto px-4 pt-6 pb-10 md:pt-8 md:pb-12 text-white">
           <div className="max-w-3xl mx-auto text-center">
-            {/* Compact brand bar */}
-            <div className="mx-auto mb-4 inline-flex items-center justify-center rounded-2xl bg-black/85 backdrop-blur-sm px-4 py-2 shadow-xl ring-1 ring-white/15">
-              <LogoSVG size={40} />
-              <div className="ml-2 text-left">
-                <div className="text-base md:text-lg font-extrabold tracking-tight brand-text-gradient leading-none">UBIK2 YEMG</div>
-                <div className="text-[9px] text-white/70 tracking-widest uppercase mt-0.5">Todo en un solo lugar</div>
-              </div>
-            </div>
-
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight leading-tight drop-shadow">
               {t.slogan}
             </h1>

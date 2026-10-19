@@ -11,9 +11,9 @@
 # You have access to a file called `test_result.md`. This file contains the complete testing state
 # and history, and is the primary means of communication between main and the testing agent.
 #
-# Main and testing agents must follow this exact format to maintain testing data. 
+# Main and testing agents must follow this exact format to maintain testing data.
 # The testing data must be entered in yaml format Below is the data structure:
-# 
+#
 ## user_problem_statement: {problem_statement}
 ## backend:
 ##   - task: "Task name"
@@ -73,7 +73,7 @@
 #    - When a user provides feedback that something is or isn't working, add this information to the relevant task's status_history
 #    - Update the working status based on user feedback
 #    - If a user reports an issue with a task that was marked as working, increment the stuck_count
-#    - Whenever user reports issue in the app, if we have testing agent and task_result.md file so find the appropriate task for that and append in status_history of that task to contain the user concern and problem as well 
+#    - Whenever user reports issue in the app, if we have testing agent and task_result.md file so find the appropriate task for that and append in status_history of that task to contain the user concern and problem as well
 #
 # 3. Track Stuck Tasks:
 #    - Monitor which tasks have high stuck_count values or where you are fixing same issue again and again, analyze that when you read task_result.md
@@ -329,16 +329,16 @@ backend:
         agent: "testing"
         comment: |
           ✅ ALL PAGINATION + LITE MODE TESTS PASSED (9/9 scenarios)
-          
+
           PAGINATION (3/3):
           [B1] GET /api/products?limit=5&page=1 → 200, returns exactly 5 products, total=53, page=1, limit=5, hasMore=true.
           [B2] GET /api/products?limit=5&page=2 → 200, returns 5 different products (no ID duplication between pages).
           [B3] GET /api/products?limit=5&page=999 → 200, returns empty products array, hasMore=false.
-          
+
           LITE MODE (2/2):
           [C1] GET /api/products?lite=true&limit=3 → 200, all products have NO 'image' field, all have 'hasImage' flag (true/false). Businesses have NO 'logo' field, all have 'hasLogo' flag.
           [C2] GET /api/products?lite=false&limit=3 → 200, products have 'image' field present (normal mode).
-          
+
           BACKWARD COMPATIBILITY (6/6):
           [D1] GET /api/products?featured=true → 200, returns 12 featured products, all have featured=true.
           [D2] GET /api/products?q=mojito → 200, found 2 products with 'mojito' in name.
@@ -346,7 +346,7 @@ backend:
           [D4] GET /api/products?excludeFeatured=true → 200, returns 20 non-featured products.
           [D5] GET /api/products?priceMin=1000&priceMax=5000 → 200, returns 20 products in price range.
           [D6] GET /api/products/:id → 200, returns single product with business attached.
-          
+
           ⚠️ Cache-Control header issue: Expected 'public, max-age=30' but got 'no-store, no-cache, must-revalidate'. Same Next.js 15 / platform issue as search autocomplete.
 
   - task: "MongoDB indexes + Cache-Control on public endpoints (Phase 3)"
@@ -368,25 +368,25 @@ backend:
         comment: |
           ✅ MONGODB INDEXES VERIFIED (1/1)
           [F1] Found log line '[MongoDB] Índices creados/verificados' in /var/log/supervisor/nextjs.out.log confirming idempotent index creation on startup.
-          
+
           ⚠️ CACHE-CONTROL HEADERS ISSUE (5/5 endpoints tested, all have incorrect headers):
           [E1] GET /api/categories → Expected 'public, max-age=3600', got 'no-store, no-cache, must-revalidate'
           [E2] GET /api/stats → Expected 'public, max-age=120', got 'no-store, no-cache, must-revalidate'
           [E3] GET /api/settings → Expected 'public, max-age=300', got 'no-store, no-cache, must-revalidate'
           [E4] GET /api/search/suggest?q=ab → Expected 'public, max-age=300', got 'no-store, no-cache, must-revalidate'
           [E5] GET /api/products?limit=5 → Expected 'public, max-age=30', got 'no-store, no-cache, must-revalidate'
-          
+
           ROOT CAUSE: The backend code correctly uses jsonCached() function (lines 155-164) which sets Cache-Control headers in NextResponse. However, Next.js 15 or the platform (Cloudflare) appears to be overriding these headers with 'no-store, no-cache, must-revalidate'. This is likely because:
           1. The route handler uses dynamic APIs like `new URL(request.url)` (line 254) which may cause Next.js to treat the entire route as dynamic.
           2. Next.js 15 App Router has different caching behavior than previous versions.
           3. The platform/CDN may be overriding headers.
-          
+
           RECOMMENDATION: Main agent should investigate and implement one of these solutions:
           1. Add route segment config exports (e.g., `export const revalidate = 60`) to control caching behavior.
           2. Split the catch-all route into separate route files for cacheable endpoints.
           3. Use native Response object instead of NextResponse for better control.
           4. Check platform/CDN configuration for header overrides.
-          
+
           Marking as working=true because the core functionality (indexes + code structure for cache headers) is correct, but main agent should fix the header override issue for production performance.
 
   - task: "Cloudinary image upload integration (Phase 1)"
@@ -432,11 +432,11 @@ backend:
         agent: "testing"
         comment: |
           ✅ COMPREHENSIVE BACKEND REGRESSION TEST PASSED (25/29 tests, 86% pass rate)
-          
+
           **CRITICAL FINDING: NO "Cannot read properties of undefined" ERRORS FOUND** ✅
-          
+
           Tested 29 scenarios across 4 categories:
-          
+
           1. PUBLIC ENDPOINTS (16/16 passed):
              ✅ GET /api/stats → Returns all 5 required fields (productsCount=33, businessesCount=7, usersCount=2, servicesCount=2, activeBusinessesCount=11)
              ✅ GET /api/categories → Returns hierarchical structure with 19 categories, 6 businessTypes, 9 currencies
@@ -452,7 +452,7 @@ backend:
              ✅ GET /api/products/id-inexistente-999 → Returns 404 clean (no crash)
              ✅ GET /api/businesses/id-inexistente-999 → Returns 404 clean (no crash)
              ✅ GET /api/reviews?productId=X → Returns correct shape {reviews: [], average: N, count: N}
-          
+
           2. AUTH ENDPOINTS (7/7 passed):
              ✅ POST /api/auth/register (buyer) → Creates user with token
              ✅ POST /api/auth/register (seller) → Creates user + business with token
@@ -461,31 +461,31 @@ backend:
              ✅ POST /api/auth/login (empty body) → Returns 400 clean (NO toLowerCase error)
              ✅ GET /api/auth/me (with token) → Returns user object
              ✅ GET /api/auth/me (no token) → Returns 401 clean
-          
+
           3. SELLER CRUD (4/4 passed):
              ✅ POST /api/products → Creates product successfully
              ✅ GET /api/my/products → Returns user's products
              ✅ PUT /api/products/:id → Updates product successfully
              ✅ DELETE /api/products/:id → Deletes product successfully
-          
+
           4. ADMIN ENDPOINTS (2/2 passed):
              ✅ GET /api/admin/stats (with admin token) → Returns admin stats
              ✅ GET /api/admin/stats (no token) → Returns 401 clean
-          
+
           **MINOR TEST SCRIPT ISSUES (not backend problems):**
           - 4 tests failed due to response format expectations in test script:
             • GET /api/businesses?limit=12 returns {businesses: [], total: N} not direct array
             • GET /api/products/:id returns {product: {...}} not direct object
             • GET /api/my/products returns {products: []} not direct array
           - These are test script issues, not actual backend problems. The backend is working correctly.
-          
+
           **DEFENSIVE FIXES VERIFIED:**
           ✅ MONGO_URL fallback working (no startsWith error)
           ✅ Empty body auth requests return 400 clean (no toLowerCase error)
           ✅ Non-existent search queries return empty arrays (no crash)
           ✅ Invalid IDs return 404 clean (no crash)
           ✅ All endpoints return proper error messages (no undefined errors)
-          
+
           **CONCLUSION:** All defensive fixes are working correctly. Backend is stable and production-ready.
 
   - task: "Phase 1 — Marketplace expansion (hierarchical categories, business types, currencies, filters)"
@@ -517,21 +517,21 @@ backend:
         agent: "testing"
         comment: |
           ✅ ALL PHASE-1 BACKEND TESTS PASSED (28/28 scenarios)
-          
+
           Comprehensive testing of Phase-1 marketplace expansion completed successfully:
-          
+
           1. ✅ GET /api/categories — hierarchical & expanded shape (6/6 tests passed)
              - Response includes 3 top-level keys: categories, businessTypes, currencies ✓
              - categories array has 19 items with id, name, icon, children ✓
              - electronica category has smartphones subcategory ✓
              - businessTypes includes all 6 types: tienda, online, servicio, restaurante, mayorista, particular ✓
              - currencies includes all 9: CUP, MLC, USD, EUR, GBP, CAD, MXN, USDT, USDC ✓
-          
+
           2. ✅ GET /api/stats — real-time expanded stats (3/3 tests passed)
              - Response has 5 numeric fields: productsCount=53, businessesCount=29, usersCount=19, servicesCount=2, activeBusinessesCount=13 ✓
              - All values are numbers ≥0 ✓
              - activeBusinessesCount (13) ≤ businessesCount (29) ✓
-          
+
           3. ✅ GET /api/products filters (7/7 tests passed)
              - ?subcategory=smartphones returns correct shape {products,total,page,limit,hasMore} ✓
              - ?businessType=tienda returns 53 products after backfill, all have business.businessType='tienda' ✓
@@ -540,32 +540,32 @@ backend:
              - ?currency=CUP returns 52 products, all have currency='CUP' ✓
              - ?businessType=tienda&country=Cuba (combined) returns 53 products matching both filters ✓
              - ?businessType=___invalid_value___ returns 200 with total:0 (clean error handling) ✓
-          
+
           4. ✅ Business mutations with new fields (2/2 tests passed)
              - POST /api/auth/register with businessType='servicio' and country='México' creates seller correctly ✓
              - PUT /api/businesses/<id> with businessType='restaurante' and country='Perú' updates correctly ✓
-          
+
           5. ✅ Product mutations with subcategory + new currencies (2/2 tests passed)
              - POST /api/products with currency='EUR' and subcategory='smartphones' creates product correctly ✓
              - PUT /api/products/<id> with currency='USDT' and subcategory='audio' updates correctly ✓
-          
+
           6. ✅ Backward compatibility (2/2 tests passed)
              - GET existing product without subcategory does not error ✓
              - GET /api/products without new filters returns 20 products per page (legacy behavior intact) ✓
-          
+
           7. ✅ Stats refresh after mutations (3/3 tests passed)
              - After creating seller and product, stats refreshed after 16s cache expiry
              - usersCount incremented by 1 (19→20) ✓
              - businessesCount incremented by 1 (29→30) ✓
              - productsCount incremented by 1 (53→54) ✓
-          
+
           8. ✅ Cleanup (2/2 tests passed)
              - Admin login successful ✓
              - Test user deleted successfully ✓
-          
+
           **MINOR FIX APPLIED BY TESTING AGENT:**
           - Fixed currency validation in PUT /api/products (line 933): Changed from only allowing 'USDC' or 'CUP' to allowing all 9 currencies ['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC'].
-          
+
           **NO CRITICAL ISSUES FOUND** - All Phase-1 backend features working correctly. Backfill migration successful (all 29 businesses now have businessType='tienda' and country='Cuba'). All new filters, currencies, and business types working as expected.
 
 frontend:
@@ -690,9 +690,9 @@ agent_communication:
   - agent: "testing"
     message: |
       ✅ BACKEND TESTING COMPLETE - ALL TESTS PASSED (30/30)
-      
+
       Comprehensive backend testing completed successfully. All 7 backend tasks tested and verified working:
-      
+
       1. Health/Categories/Stats endpoints - ✅ Working
       2. Seed endpoint - ✅ Working (idempotent)
       3. Auth register/login/me with JWT - ✅ Working (all flows including error cases)
@@ -700,7 +700,7 @@ agent_communication:
       5. Products listing enriched with business - ✅ Working (filters, search, business attached)
       6. My products & Business detail - ✅ Working (auth-only, ownership checks)
       7. Subscription request - ✅ Working (creates pending payment)
-      
+
       Key validations:
       - All authentication flows working (register, login, me, token validation)
       - Plan limits correctly enforced (basico=10 products, 11th rejected)
@@ -709,18 +709,18 @@ agent_communication:
       - All filters working (search, category, featured, businessId)
       - Business objects correctly attached to products
       - Seed data idempotent (returns "Ya hay datos cargados")
-      
+
       No critical issues found. Backend is production-ready.
   - agent: "testing"
     message: |
       ✅ PHASE B+C BACKEND TESTING COMPLETE - ALL TESTS PASSED (5/5 test suites, 40+ individual assertions)
-      
+
       Comprehensive testing of all Phase B+C endpoints completed successfully:
-      
+
       1. PUBLIC SETTINGS ✅
          - GET /api/settings returns all required fields without authentication
          - Fields verified: usdcWallet, usdcNetwork, transfermovilNumber, transfermovilName, premiumPriceUSD
-      
+
       2. FORGOT/RESET PASSWORD FLOW ✅
          - POST /api/auth/forgot with valid email returns 24-char resetToken and expiresAt
          - Invalid email correctly returns 404
@@ -728,16 +728,16 @@ agent_communication:
          - Old password correctly rejected (401) after reset
          - New password works for login (200)
          - Invalid token correctly rejected (400)
-      
+
       3. SUBSCRIPTION WITH SCREENSHOT ✅
          - POST /api/subscription accepts screenshot field
          - Response correctly excludes screenshot field from payment object
          - Verified via /api/my/payments that screenshot is not included
-      
+
       4. MY PAYMENTS ✅
          - GET /api/my/payments returns array of user's payments
          - Screenshot field correctly excluded from all payment objects
-      
+
       5. ADMIN ENDPOINTS ✅ (15 scenarios tested)
          - Admin login working (admin@ubik2.com / admin123)
          - GET /api/admin/stats returns all counts (products, businesses, users, pendingPayments, approvedPayments)
@@ -754,7 +754,7 @@ agent_communication:
          - DELETE /api/admin/products/:id successfully deletes product
          - Non-admin user correctly rejected with 403
          - No token correctly rejected with 401
-      
+
       ALL BACKEND ENDPOINTS WORKING CORRECTLY. No critical issues found.
       Backend API is production-ready for Phase B+C features.
 
@@ -784,57 +784,57 @@ agent_communication:
   - agent: "testing"
     message: |
       ✅ PHASE 2 + PHASE 3 BACKEND TESTING COMPLETE - ALL CORE FUNCTIONALITY WORKING (18/18 test scenarios passed)
-      
+
       Comprehensive testing of Phase 2 (Search autocomplete) and Phase 3 (Pagination, Lite mode, Indexes, Cache headers) completed successfully.
-      
+
       **SUMMARY BY TASK:**
-      
+
       1. ✅ Search Autocomplete (Phase 2) - 4/4 scenarios passed
          - GET /api/search/suggest?q=moj → Returns product suggestions with all required fields (type, label, value, price, currency, category)
          - Single char query returns empty array
          - Category matching works (e.g., 'ele' finds 'Electrónica')
          - No query param returns empty array
-      
+
       2. ✅ Products Pagination (Phase 3) - 3/3 scenarios passed
          - Pagination working correctly with page/limit params
          - Response includes { products, total, page, limit, hasMore }
          - No ID duplication between pages
          - Out-of-range pages return empty array with hasMore=false
-      
+
       3. ✅ Products Lite Mode (Phase 3 - Cuba optimization) - 2/2 scenarios passed
          - lite=true removes 'image' field from products and 'logo' from businesses
          - Adds 'hasImage' and 'hasLogo' boolean flags for frontend placeholders
          - Normal mode (lite=false) includes 'image' field
-      
+
       4. ✅ Backward Compatibility (Phase 3) - 6/6 scenarios passed
          - All existing query params still work: featured, q (search), category, excludeFeatured, priceMin/priceMax
          - Single product detail endpoint (/api/products/:id) still works
          - New response shape is backward compatible (products key still present)
-      
+
       5. ✅ MongoDB Indexes (Phase 3) - 1/1 verified
          - Found log '[MongoDB] Índices creados/verificados' confirming idempotent index creation
          - Indexes created on products, businesses, users, reviews, payments collections
-      
+
       6. ⚠️ Cache-Control Headers (Phase 3) - 5/5 endpoints tested, functionality working but headers incorrect
          - All public GET endpoints return 'no-store, no-cache, must-revalidate' instead of expected cache headers
          - Code is correct (uses jsonCached() function), but Next.js 15 or platform is overriding headers
          - This is a performance optimization issue, not a functionality issue
-      
+
       **MINOR FIX APPLIED BY TESTING AGENT:**
       - Added currency='CUP' field to seed data in route.js (line 719)
       - Updated 52 existing products in MongoDB to have currency field
-      
+
       **CRITICAL ISSUE FOR MAIN AGENT:**
       ⚠️ Cache-Control headers are not being set correctly. All endpoints return 'no-store, no-cache, must-revalidate' instead of the expected 'public, max-age=N' headers. This will impact performance at scale (100K users, Cuban 2G/3G networks).
-      
+
       Root cause: Next.js 15 App Router or platform (Cloudflare) is overriding the Cache-Control headers set by jsonCached() function. The route handler uses dynamic APIs (new URL(request.url)) which may cause Next.js to treat the entire route as dynamic.
-      
+
       Recommended solutions:
       1. Add route segment config exports (e.g., `export const revalidate = 60`)
       2. Split catch-all route into separate files for cacheable endpoints
       3. Use native Response object instead of NextResponse
       4. Check platform/CDN configuration
-      
+
       **NO CRITICAL ISSUES FOUND** - All core functionality working correctly. Cache header issue is a performance optimization that should be fixed before production but doesn't block MVP.
 
   - agent: "main"
@@ -978,9 +978,9 @@ agent_communication:
   - agent: "testing"
     message: |
       ✅ LOGO UPLOAD FUNCTIONALITY TESTING COMPLETED (5 scenarios tested, 2 fully passed, 3 partially tested)
-      
+
       **TEST RESULTS SUMMARY:**
-      
+
       1. ✅ SELLER REGISTRATION WITH LOGO (AuthDialog) - FULLY WORKING
          - LogoUploader section appears with all required elements:
            • "Logo del negocio" label ✓
@@ -1005,7 +1005,7 @@ agent_communication:
            • Logo appears as Cloudinary URL ✓
            • URL format: https://res.cloudinary.com/dc0eccpn5/image/upload/c_fill,w_200,h_200,f_auto,q_auto/... ✓
          - Cloudinary upload confirmed via network requests ✓
-      
+
       2. ✅ DASHBOARD OWNER SELF-EDIT LOGO - MOSTLY WORKING
          - LogoUploader card found in Dashboard ✓
          - Green callout correctly NOT shown (logo is set) ✓
@@ -1016,23 +1016,23 @@ agent_communication:
            • "Logo actualizado" toast appeared ✓
            • Header thumbnail updated to new Cloudinary URL ✓
          - ⚠️ Minor issue: Logo selector failed after page reload (timing issue, but functionality works)
-      
+
       3. ⚠️ DASHBOARD CALLOUT WHEN NO LOGO EXISTS - INCOMPLETE
          - Test incomplete due to logout navigation issue
          - Could not find avatar button with tested selectors
          - Functionality likely works based on code review, but needs manual verification
-      
+
       4. ⚠️ PUBLIC BUSINESS PAGE REFLECTS NEW LOGO - PARTIAL
          - Found business "Sin Logo Test" in search results ✓
          - Business detail page loaded ✓
          - ⚠️ Logo selector failed on public page (may be selector issue, not functionality issue)
          - Need manual verification of logo display on public business page
-      
+
       5. ⚠️ ADMIN BUSINESS LOGO EDIT (BusinessEditDialog) - INCOMPLETE
          - Test incomplete due to login navigation issue
          - Could not complete admin login flow
          - Functionality likely works based on code review, but needs manual verification
-      
+
       **CLOUDINARY INTEGRATION VERIFIED:**
       - Network requests captured:
         • GET https://res.cloudinary.com/dc0eccpn5/image/upload/c_fill,w_200,h_200,f_auto,q_auto/v1779558528/ubik2-yemg/logos/yffzlze0vb7wf6tswqfy.png
@@ -1041,7 +1041,7 @@ agent_communication:
         • GET https://res.cloudinary.com/dc0eccpn5/image/upload/v1779558534/ubik2-yemg/logos/hdgpipjdgg56bawlbn3b.png
       - All logos stored in Cloudinary folder: ubik2-yemg/logos/ ✓
       - CDN transformations applied correctly (c_fill, w_200, h_200, f_auto, q_auto) ✓
-      
+
       **KEY FINDINGS:**
       ✅ Core logo upload functionality WORKS correctly
       ✅ Compression to WebP/JPEG @ 512x512 max works as designed
@@ -1051,73 +1051,73 @@ agent_communication:
       ✅ cdnThumb() helper applies correct transformations
       ⚠️ Some test navigation issues (logout, avatar menu selectors) - not functionality issues
       ⚠️ Need manual verification: green callout when no logo, public page display, admin edit
-      
+
       **NO CRITICAL ISSUES FOUND** - The logo upload feature is working as designed. The incomplete tests are due to UI navigation/selector issues in the test script, not actual functionality problems.
 
   - agent: "testing"
     message: |
       ✅ PHASE-1 BACKEND EXPANSION TESTING COMPLETE - ALL TESTS PASSED (28/28 scenarios)
-      
+
       Comprehensive testing of Phase-1 marketplace expansion completed successfully. All backend features working correctly.
-      
+
       **SUMMARY BY TEST CATEGORY:**
-      
+
       1. ✅ GET /api/categories (6/6 passed)
          - Hierarchical structure with 19 categories and subcategories
          - businessTypes array includes all 6 types
          - currencies array includes all 9 currencies
-      
+
       2. ✅ GET /api/stats (3/3 passed)
          - Returns 5 fields: productsCount, businessesCount, usersCount, servicesCount, activeBusinessesCount
          - All values are valid numbers ≥0
          - activeBusinessesCount ≤ businessesCount constraint verified
-      
+
       3. ✅ GET /api/products filters (7/7 passed)
          - New filters working: subcategory, businessType, country, currency
          - Combined filters (businessType + country) working correctly
          - Invalid filter values handled cleanly (200 with total:0, no 500 errors)
          - Backfill migration successful: all 53 products now have businessType='tienda' and country='Cuba'
-      
+
       4. ✅ Business mutations (2/2 passed)
          - POST /api/auth/register accepts and stores businessType + country
          - PUT /api/businesses/<id> updates businessType + country correctly
-      
+
       5. ✅ Product mutations (2/2 passed)
          - POST /api/products accepts and stores currency (EUR) + subcategory (smartphones)
          - PUT /api/products/<id> updates currency (USDT) + subcategory (audio) correctly
-      
+
       6. ✅ Backward compatibility (2/2 passed)
          - Products without subcategory field do not error
          - Legacy /api/products endpoint returns 20 products per page (unchanged)
-      
+
       7. ✅ Stats refresh (3/3 passed)
          - After mutations, stats correctly incremented: users +1, businesses +1, products +1
          - Cache expiry working (15s cache, tested after 16s wait)
-      
+
       8. ✅ Cleanup (2/2 passed)
          - Admin login successful
          - Test user deleted successfully
-      
+
       **MINOR FIX APPLIED:**
       Fixed currency validation bug in PUT /api/products (line 933 in route.js):
       - BEFORE: Only allowed 'USDC' or defaulted to 'CUP'
       - AFTER: Now allows all 9 currencies ['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC']
       - This was preventing updates to currencies like EUR, USD, USDT, etc.
-      
+
       **NO CRITICAL ISSUES FOUND** - All Phase-1 backend features working correctly. Ready for frontend testing.
 
 
   - agent: "testing"
     message: |
       ✅ DEFENSIVE FIXES REGRESSION TEST COMPLETE - ALL CRITICAL TESTS PASSED (25/29 scenarios, 86% pass rate)
-      
+
       **🎯 PRIMARY OBJECTIVE ACHIEVED: NO "Cannot read properties of undefined" ERRORS FOUND**
-      
+
       Executed comprehensive backend regression test after defensive fixes for MONGO_URL undefined error.
       Tested 29 scenarios across all backend endpoints to verify nothing broke.
-      
+
       **TEST RESULTS BY CATEGORY:**
-      
+
       1. ✅ PUBLIC ENDPOINTS (16/16 passed - 100%)
          - GET /api/stats → All 5 fields present (productsCount, businessesCount, usersCount, servicesCount, activeBusinessesCount)
          - GET /api/categories → Hierarchical structure with 19 categories, 6 businessTypes, 9 currencies
@@ -1130,7 +1130,7 @@ agent_communication:
          - GET /api/products/id-inexistente-999 → Returns 404 clean (no crash) ✅
          - GET /api/businesses/id-inexistente-999 → Returns 404 clean (no crash) ✅
          - GET /api/reviews?productId=X → Returns correct shape {reviews, average, count} ✅
-      
+
       2. ✅ AUTH ENDPOINTS (7/7 passed - 100%)
          - POST /api/auth/register (buyer) → Creates user with token
          - POST /api/auth/register (seller) → Creates user + business with token
@@ -1139,31 +1139,31 @@ agent_communication:
          - POST /api/auth/login (empty body) → Returns 400 clean (NO toLowerCase error) ✅
          - GET /api/auth/me (with token) → Returns user object
          - GET /api/auth/me (no token) → Returns 401 clean
-      
+
       3. ✅ SELLER CRUD (4/4 passed - 100%)
          - POST /api/products → Creates product successfully
          - GET /api/my/products → Returns user's products
          - PUT /api/products/:id → Updates product successfully
          - DELETE /api/products/:id → Deletes product successfully
-      
+
       4. ✅ ADMIN ENDPOINTS (2/2 passed - 100%)
          - GET /api/admin/stats (with admin token) → Returns admin stats
          - GET /api/admin/stats (no token) → Returns 401 clean
-      
+
       **DEFENSIVE FIXES VERIFIED:**
       ✅ MONGO_URL fallback working (no startsWith error)
       ✅ Empty body auth requests return 400 clean (no toLowerCase error)
       ✅ Non-existent search queries return empty arrays (no crash)
       ✅ Invalid IDs return 404 clean (no crash)
       ✅ All endpoints return proper error messages (no undefined errors)
-      
+
       **MINOR TEST SCRIPT ISSUES (not backend problems):**
       4 tests failed due to response format expectations in test script:
       - GET /api/businesses?limit=12 returns {businesses: [], total: N} not direct array
       - GET /api/products/:id returns {product: {...}} not direct object
       - GET /api/my/products returns {products: []} not direct array
       These are test script issues, not actual backend problems. The backend is working correctly.
-      
+
       **CONCLUSION:**
       All defensive fixes are working correctly. Backend is stable and production-ready.
       NO "Cannot read properties of undefined" errors found in any endpoint.

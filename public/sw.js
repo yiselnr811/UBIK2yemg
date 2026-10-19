@@ -9,7 +9,7 @@
  *
  * Designed to be tiny and friendly to Cuban networks (intermittent, 2G/3G).
  */
-const VERSION = 'v2';
+const VERSION = 'v3';
 const STATIC_CACHE = `ubik2-static-${VERSION}`;
 const RUNTIME_CACHE = `ubik2-runtime-${VERSION}`;
 const IMG_CACHE = `ubik2-images-${VERSION}`;
@@ -20,7 +20,7 @@ const MAX_IMG_ENTRIES = 200;               // cap image cache
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) =>
-      cache.addAll(['/manifest.webmanifest', '/favicon.svg', '/logo.png']).catch(() => null)
+      cache.addAll(['/manifest.webmanifest', '/favicon.svg', '/logo.png', '/icon-192.png', '/icon-512.png']).catch(() => null)
     ).then(() => self.skipWaiting())
   );
 });

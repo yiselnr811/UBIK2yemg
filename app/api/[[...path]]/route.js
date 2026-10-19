@@ -3,8 +3,15 @@ import { MongoClient } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { v4 as uuidv4 } from 'uuid';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import QRCode from 'qrcode';
 import { Resend } from 'resend';
 import { v2 as cloudinary } from 'cloudinary';
+import { z } from 'zod';
+import { parseUnits, formatUnits, isAddress } from 'viem';
+
+import { verifyCryptoInvoice, verifyPendingInvoices, isValidTronAddress } from '@/lib/crypto-verify';
+import { checkPrivyConnection } from '@/lib/privy-server';
 
 // Defensive: an undefined MONGO_URL makes the Mongo driver throw the cryptic
 // "Cannot read properties of undefined (reading 'startsWith')". Fallback + warn.
@@ -13,11 +20,23 @@ if (!process.env.MONGO_URL) {
   console.warn('[Config] MONGO_URL no está definida en las variables de entorno. Usando mongodb://localhost:27017 como respaldo.');
 }
 const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret';
+// JWT_SECRET es obligatorio en producción. Sin fallback inseguro.
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('[Config] JWT_SECRET no está definida. La autenticación fallará.');
+}
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || 'UBIK2 YEMG';
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+// BASE_URL: validate it's a proper absolute URL
+let BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+try {
+  const u = new URL(BASE_URL);
+  BASE_URL = u.origin; // strip any path
+} catch {
+  console.warn('[Config] NEXT_PUBLIC_BASE_URL inválido, usando default');
+  BASE_URL = 'http://localhost:3000';
+}
 
 const CLOUDINARY_CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
 const CLOUDINARY_API_KEY = process.env.CLOUDINARY_API_KEY;
@@ -30,6 +49,84 @@ if (CLOUDINARY_ENABLED) {
     api_secret: CLOUDINARY_API_SECRET,
     secure: true,
   });
+}
+
+// ===== CRYPTO PAYMENTS CONFIG (Self-custody wallets) =====
+// Token contracts (mainnet verified)
+const CRYPTO_TOKEN_CONTRACTS = {
+  TRC20_USDT: 'TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t',
+  ERC20_USDT: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+  ERC20_USDC: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+  POLYGON_USDT: '0xc2132D05D31c914a87C6611C10748AEb04B58e8F',
+  POLYGON_USDC: '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',
+  BASE_USDT: '0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2',
+  BASE_USDC: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  ARBITRUM_USDT: '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
+  ARBITRUM_USDC: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  BEP20_USDT: '0x55d398326f99059fF775485246999027B3197955',
+  BEP20_USDC: '0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d',
+};
+
+const CRYPTO_DECIMALS = {
+  USDT: 6,
+  USDC: 6,
+};
+
+const CRYPTO_MIN_CONFIRMATIONS = {
+  TRC20: 1,
+  ERC20: 12,
+  POLYGON: 20,
+  BASE: 2,
+  ARBITRUM: 20,
+  BEP20: 15,
+};
+
+// Parse enabled networks from env
+function getEnabledCryptoNetworks() {
+  const allowedNewNetworks = new Set(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20']);
+  const env = process.env.CRYPTO_ENABLED_NETWORKS || '';
+  const enabled = env.split(',').map(s => s.trim()).filter(Boolean);
+  const networks = [];
+  for (const key of enabled) {
+    const [network, currency] = key.split('_');
+    if (!network || !currency) continue;
+    // Bloquear redes antiguas para nuevas facturas; conservar la verificación histórica.
+    if (!allowedNewNetworks.has(network)) continue;
+    const contractKey = `${network}_${currency}`;
+    const contract = CRYPTO_TOKEN_CONTRACTS[contractKey];
+    const receiverEnvKey = `CRYPTO_WALLET_${contractKey}`;
+    const receiverAddress = process.env[receiverEnvKey];
+    if (!contract || !receiverAddress) {
+      console.warn(`[Crypto] Config incompleta para ${key}: contract=${!!contract}, wallet=${!!receiverAddress}`);
+      continue;
+    }
+    networks.push({
+      key,
+      network,
+      currency,
+      contract,
+      decimals: network === 'BEP20' ? 18 : (CRYPTO_DECIMALS[currency] || 6),
+      receiverAddress,
+      minConfirmations: CRYPTO_MIN_CONFIRMATIONS[network] || 1,
+      label: `${currency} (${network === 'TRC20' ? 'Tron' : network})`,
+    });
+  }
+  return networks;
+}
+
+function getCryptoConfig() {
+  const networks = getEnabledCryptoNetworks();
+  return {
+    enabled: networks,
+    expiryMinutes: Number(process.env.CRYPTO_INVOICE_EXPIRY_MINUTES) || 30,
+    underpayTolerancePct: Number(process.env.CRYPTO_UNDERPAY_TOLERANCE_PCT) || 0.5,
+    overpayTolerancePct: Number(process.env.CRYPTO_OVERPAY_TOLERANCE_PCT) || 5,
+  };
+}
+
+function normalizeTxHash(txHash) {
+  if (!txHash) return '';
+  return txHash.toLowerCase().replace(/^0x/, '');
 }
 
 // Upload base64/data-URL or raw URL to Cloudinary; return secure URL.
@@ -48,6 +145,176 @@ async function uploadToCloudinary(dataUrlOrUrl, folder = 'products') {
 }
 
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+
+// ===== RATE LIMITING (in-memory, per-IP) =====
+const rateLimitMap = new Map();
+function rateLimit(ip, key, maxRequests = 10, windowMs = 60000) {
+  const now = Date.now();
+  const mapKey = `${ip}:${key}`;
+  const entry = rateLimitMap.get(mapKey);
+  if (!entry || now - entry.windowStart > windowMs) {
+    rateLimitMap.set(mapKey, { count: 1, windowStart: now });
+    return { allowed: true, remaining: maxRequests - 1 };
+  }
+  if (entry.count >= maxRequests) {
+    return { allowed: false, remaining: 0, retryAfter: Math.ceil((entry.windowStart + windowMs - now) / 1000) };
+  }
+  entry.count++;
+  return { allowed: true, remaining: maxRequests - entry.count };
+}
+function getClientIP(request) {
+  return request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || request.headers.get('x-real-ip')
+    || 'unknown';
+}
+
+// ===== ZOD SCHEMAS =====
+const registerSchema = z.object({
+  email: z.string().email('Email inválido').toLowerCase(),
+  password: z.string().min(8, 'Mínimo 8 caracteres').max(128),
+  accountType: z.enum(['buyer', 'seller']).default('buyer'),
+  name: z.string().min(1).max(100).optional(),
+  businessName: z.string().min(1).max(100).optional(),
+  whatsapp: z.string().min(8).max(20).optional(),
+  location: z.string().max(200).optional(),
+  description: z.string().max(1000).optional(),
+  logo: z.string().url().or(z.string().startsWith('data:')).optional(),
+  instagram: z.string().max(100).optional(),
+  facebook: z.string().max(100).optional(),
+  businessType: z.string().max(50).optional(),
+  country: z.string().max(50).optional(),
+});
+
+const loginSchema = z.object({
+  email: z.string().email('Email inválido').toLowerCase(),
+  password: z.string().min(1).max(128),
+});
+
+const forgotSchema = z.object({
+  email: z.string().email('Email inválido').toLowerCase(),
+});
+
+const resetSchema = z.object({
+  token: z.string().min(10).max(100),
+  password: z.string().min(8, 'Mínimo 8 caracteres').max(128),
+});
+
+const productSchema = z.object({
+  name: z.string().min(1).max(200),
+  price: z.number().positive().or(z.string().regex(/^\d+(\.\d+)?$/).transform(Number)),
+  description: z.string().max(5000).optional(),
+  category: z.string().min(1).max(50),
+  subcategory: z.string().max(50).optional(),
+  stock: z.number().int().min(0).optional(),
+  image: z.string().url().or(z.string().startsWith('data:')).optional(),
+  available: z.boolean().optional(),
+  featured: z.boolean().optional(),
+  location: z.string().max(200).optional(),
+  currency: z.enum(['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC']).default('CUP'),
+  showPublicContact: z.boolean().optional(),
+  province: z.string().max(100).optional(),
+  municipality: z.string().max(100).optional(),
+  address: z.string().max(300).optional(),
+  openingHours: z.string().max(50).optional(),
+  closingHours: z.string().max(50).optional(),
+});
+
+const businessSchema = z.object({
+  name: z.string().min(1).max(100),
+  logo: z.string().url().or(z.string().startsWith('data:')).optional(),
+  description: z.string().max(1000).optional(),
+  whatsapp: z.string().min(8).max(20),
+  telegram: z.string().max(100).optional(),
+  sms: z.string().max(20).optional(),
+  location: z.string().max(200).optional(),
+  instagram: z.string().max(100).optional(),
+  facebook: z.string().max(100).optional(),
+  businessType: z.string().max(50).optional(),
+  country: z.string().max(50).optional(),
+  showContactsPublicly: z.boolean().optional(),
+  province: z.string().max(100).optional(),
+  municipality: z.string().max(100).optional(),
+  address: z.string().max(300).optional(),
+  openingHours: z.string().max(50).optional(),
+  closingHours: z.string().max(50).optional(),
+});
+
+const subscriptionSchema = z.object({
+  plan: z.enum(['basico', 'premium']),
+  paymentMethod: z.enum(['usdc', 'transfermovil']).default('usdc'),
+  reference: z.string().max(200).optional(),
+  screenshot: z.string().url().optional(),
+});
+
+const settingsSchema = z.object({
+  usdcWallet: z.string().max(100).optional(),
+  usdcNetwork: z.string().max(50).optional(),
+  transfermovilNumber: z.string().max(20).optional(),
+  transfermovilName: z.string().max(100).optional(),
+  premiumPriceUSD: z.number().min(0).optional(),
+  premiumPriceCUP: z.number().min(0).optional(),
+  plansEnabled: z.boolean().optional(),
+  contactPhone: z.string().max(30).optional(),
+  contactEmail: z.string().email().optional(),
+  usdRate: z.number().min(0.01).max(10000).optional(), // CUP per USD
+});
+
+// ===== ORDER SCHEMAS =====
+const orderItemSchema = z.object({
+  productId: z.string().min(1),
+  quantity: z.number().int().positive(),
+});
+
+const createOrderSchema = z.object({
+  items: z.array(orderItemSchema).min(1, 'Al menos un producto requerido'),
+  shippingName: z.string().min(1).max(100),
+  shippingPhone: z.string().min(8).max(20),
+  shippingAddress: z.string().min(5).max(500),
+  deliveryMethod: z.enum(['pickup', 'delivery']).optional(),
+  shippingRecipientId: z.string().max(50).optional(),
+  shippingEmail: z.string().email().max(254).optional(),
+  shippingNotes: z.string().max(1000).optional(),
+  idempotencyKey: z.string().min(10).max(100).optional(), // for duplicate prevention
+});
+
+const updateOrderStatusSchema = z.object({
+  status: z.enum(['processing', 'shipped', 'delivered']),
+  trackingNumber: z.string().max(100).optional(),
+  trackingCarrier: z.string().max(50).optional(),
+  adminNotes: z.string().max(1000).optional(),
+});
+
+const sellerOrderUpdateSchema = z.object({
+  status: z.enum(['processing', 'shipped', 'delivered']),
+  trackingNumber: z.string().max(100).optional(),
+  trackingCarrier: z.string().max(50).optional(),
+  notes: z.string().max(1000).optional(),
+  deliveryPhotos: z.array(
+    z.string().max(4 * 1024 * 1024)
+  ).max(4).optional(),
+});
+
+// ===== CRYPTO INVOICE SCHEMAS =====
+const createOrderCryptoSchema = createOrderSchema.extend({
+  shippingPhone: z.string().min(1).max(20),
+  shippingRecipientId: z.string().min(1).max(50),
+  shippingEmail: z.string().email().max(254),
+  paymentMethod: z.literal('crypto'),
+  cryptoCurrency: z.enum(['USDT', 'USDC']),
+  cryptoNetwork: z.enum(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20']),
+});
+
+const submitTxSchema = z.object({
+  txHash: z.string().min(32).max(130), // hex with or without 0x
+});
+
+const approveInvoiceSchema = z.object({
+  notes: z.string().max(1000).optional(),
+});
+
+const rejectInvoiceSchema = z.object({
+  reason: z.string().min(1).max(1000),
+});
 
 async function sendPasswordResetEmail(toEmail, name, token) {
   if (!resend) {
@@ -128,12 +395,445 @@ async function sendPasswordResetEmail(toEmail, name, token) {
   }
 }
 
+// ===== EMAIL TEMPLATE HELPERS =====
+function emailWrapper({ title, preheader, content, footerNote }) {
+  const year = new Date().getFullYear();
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>${title}</title></head>
+<body style="margin:0;padding:0;background:#f4f6f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+  <div style="display:none;max-height:0;overflow:hidden;color:transparent;">${preheader}</div>
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f6f9;padding:32px 16px;">
+    <tr><td align="center">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.05);">
+        <tr><td style="background:linear-gradient(135deg,#1565C0 0%,#00A86B 100%);padding:28px 24px;text-align:center;color:#ffffff;">
+          <div style="font-size:22px;font-weight:800;letter-spacing:0.5px;">UBIK2 YEMG</div>
+          <div style="font-size:13px;opacity:0.9;margin-top:4px;">Marketplace para MiPymes cubanas</div>
+        </td></tr>
+        <tr><td style="padding:32px 28px 8px;color:#111827;">
+          ${content}
+        </td></tr>
+        ${footerNote ? `<tr><td style="padding:0 28px 24px;color:#6b7280;font-size:12px;line-height:18px;">${footerNote}</td></tr>` : ''}
+        <tr><td style="padding:18px 28px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center;color:#9ca3af;font-size:12px;">
+          © ${year} UBIK2 YEMG · Marketplace cubano de MiPymes
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+}
+
+function orderItemsHtml(items) {
+  return items.map((item) => `
+    <tr>
+      <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;">
+        <div style="font-weight:600;color:#111827;">${item.productName}</div>
+        <div style="font-size:13px;color:#6b7280;">${item.quantity} × ${Number(item.unitPrice).toLocaleString('es-ES')} ${item.currency}</div>
+      </td>
+      <td style="padding:12px 8px;border-bottom:1px solid #e5e7eb;text-align:right;color:#111827;font-weight:600;">
+        ${Number(item.lineTotal).toLocaleString('es-ES')} ${item.currency}
+      </td>
+    </tr>
+  `).join('');
+}
+
+function shippingHtml(shipping) {
+  if (!shipping) return '';
+  return `
+    <div style="margin-top:24px;padding:16px;background:#f9fafb;border-radius:8px;">
+      <div style="font-weight:700;color:#111827;margin-bottom:8px;">📦 Dirección de envío</div>
+      <div style="font-size:14px;color:#374151;line-height:20px;">
+        <strong>${shipping.name}</strong><br/>
+        ${shipping.phone}<br/>
+        ${shipping.address}
+        ${shipping.notes ? `<br/><em>Notas: ${shipping.notes}</em>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+// ===== TRANSACTIONAL EMAILS =====
+
+// 1. Order Confirmation (created, pending_payment)
+async function sendOrderConfirmationEmail(toEmail, name, order) {
+  if (!resend) {
+    console.warn('[Resend] RESEND_API_KEY no configurado, omitiendo envío real');
+    return { skipped: true };
+  }
+  const safeName = (name || '').toString().split(' ')[0] || 'usuario';
+  const orderUrl = `${BASE_URL}/?order=${order.id}`;
+  const itemsHtml = orderItemsHtml(order.items);
+  const shipping = shippingHtml(order.shipping);
+
+  const content = `
+    <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} 👋</h1>
+    <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
+      Gracias por tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong> en <strong>${order.businessName}</strong>.
+      Lo hemos recibido y está <span style="color:#1565C0;font-weight:600;">pendiente de pago</span>.
+    </p>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+      <thead>
+        <tr style="background:#f9fafb;">
+          <th style="padding:12px 8px;text-align:left;color:#374151;font-weight:600;font-size:13px;">Producto</th>
+          <th style="padding:12px 8px;text-align:right;color:#374151;font-weight:600;font-size:13px;">Total</th>
+        </tr>
+      </thead>
+      <tbody>${itemsHtml}</tbody>
+      <tfoot>
+        <tr style="background:#f9fafb;">
+          <td style="padding:12px 8px;text-align:left;color:#111827;font-weight:700;font-size:15px;">Total</td>
+          <td style="padding:12px 8px;text-align:right;color:#111827;font-weight:700;font-size:15px;">${Number(order.total).toLocaleString('es-ES')} ${order.currency}</td>
+        </tr>
+      </tfoot>
+    </table>
+    ${shipping}
+    <div style="margin-top:24px;text-align:center;">
+      <a href="${orderUrl}" target="_blank" style="display:inline-block;padding:14px 28px;background:#1565C0;color:#ffffff;text-decoration:none;border-radius:9999px;font-weight:700;font-size:15px;">
+        Ver mi pedido
+      </a>
+    </div>
+    <p style="margin:24px 0 0;font-size:13px;line-height:20px;color:#6b7280;">
+      Para completar tu compra, realiza el pago usando la opción de criptomonedas (USDT, USDC, XLM) desde la página del pedido.
+      El pedido se mantendrá reservado por 30 minutos.
+    </p>
+  `;
+
+  const html = emailWrapper({
+    title: `Pedido confirmado #${order.id.slice(0, 8)}`,
+    preheader: `Tu pedido en ${order.businessName} por ${Number(order.total).toLocaleString('es-ES')} ${order.currency} está pendiente de pago.`,
+    content,
+    footerNote: 'Si no realizaste este pedido, por favor contacta a soporte.',
+  });
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+      to: [toEmail],
+      subject: `✅ Pedido confirmado #${order.id.slice(0, 8).toUpperCase()} - ${order.businessName}`,
+      html,
+    });
+    if (error) {
+      console.error('[Resend] error enviando confirmación de pedido:', error);
+      return { error };
+    }
+    console.log('[Resend] confirmación de pedido enviada:', data?.id);
+    return { data };
+  } catch (e) {
+    console.error('[Resend] excepción enviando confirmación:', e?.message || e);
+    return { error: e };
+  }
+}
+
+// 2. Payment Confirmed (webhook detects 'finished')
+async function sendPaymentConfirmedEmail(toEmail, name, order, paymentRef) {
+  if (!resend) {
+    console.warn('[Resend] RESEND_API_KEY no configurado, omitiendo envío real');
+    return { skipped: true };
+  }
+  const safeName = (name || '').toString().split(' ')[0] || 'usuario';
+  const orderUrl = `${BASE_URL}/?order=${order.id}`;
+  const cryptoInfo = paymentRef ? `
+    <div style="margin-top:16px;padding:12px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+      <div style="font-weight:600;color:#166534;">💎 Pago con ${paymentRef.payCurrency?.toUpperCase() || 'cripto'}</div>
+      <div style="font-size:13px;color:#166534;margin-top:4px;">
+        Monto: ${paymentRef.payAmount} ${paymentRef.payCurrency?.toUpperCase()}<br/>
+        ${paymentRef.payNetwork ? `Red: ${paymentRef.payNetwork}` : ''}
+        ${paymentRef.payinExtraId ? `<br/>Memo/Tag: ${paymentRef.payinExtraId}` : ''}
+      </div>
+    </div>
+  ` : '';
+
+  const content = `
+    <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} 🎉</h1>
+    <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
+      ¡Excelente noticia! Tu pago para el pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong>
+      ha sido <span style="color:#166534;font-weight:700;">confirmado</span>.
+    </p>
+    ${cryptoInfo}
+    <p style="margin:16px 0 0;font-size:15px;line-height:22px;color:#374151;">
+      El vendedor (<strong>${order.businessName}</strong>) ya ha sido notificado y comenzará a preparar tu pedido.
+      Te avisaremos cuando esté en camino.
+    </p>
+    <div style="margin-top:24px;text-align:center;">
+      <a href="${orderUrl}" target="_blank" style="display:inline-block;padding:14px 28px;background:#166534;color:#ffffff;text-decoration:none;border-radius:9999px;font-weight:700;font-size:15px;">
+        Ver estado del pedido
+      </a>
+    </div>
+  `;
+
+  const html = emailWrapper({
+    title: `Pago confirmado #${order.id.slice(0, 8)}`,
+    preheader: `Tu pago para el pedido #${order.id.slice(0, 8)} en ${order.businessName} ha sido confirmado.`,
+    content,
+    footerNote: 'Guarda este correo como comprobante de pago.',
+  });
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+      to: [toEmail],
+      subject: `💎 Pago confirmado - Pedido #${order.id.slice(0, 8).toUpperCase()}`,
+      html,
+    });
+    if (error) {
+      console.error('[Resend] error enviando pago confirmado:', error);
+      return { error };
+    }
+    console.log('[Resend] pago confirmado enviado:', data?.id);
+    return { data };
+  } catch (e) {
+    console.error('[Resend] excepción enviando pago confirmado:', e?.message || e);
+    return { error: e };
+  }
+}
+
+// 3. Order Shipped (admin marks shipped with tracking)
+async function sendOrderShippedEmail(toEmail, name, order, tracking) {
+  if (!resend) {
+    console.warn('[Resend] RESEND_API_KEY no configurado, omitiendo envío real');
+    return { skipped: true };
+  }
+  const safeName = (name || '').toString().split(' ')[0] || 'usuario';
+  const orderUrl = `${BASE_URL}/?order=${order.id}`;
+  const trackingHtml = tracking ? `
+    <div style="margin-top:16px;padding:16px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;">
+      <div style="font-weight:700;color:#1e40af;margin-bottom:8px;">📦 Tu pedido está en camino</div>
+      <div style="font-size:14px;color:#1e40af;line-height:22px;">
+        ${tracking.carrier ? `<strong>Transportista:</strong> ${tracking.carrier}<br/>` : ''}
+        ${tracking.number ? `<strong>Número de seguimiento:</strong> ${tracking.number}` : ''}
+      </div>
+    </div>
+  ` : '';
+
+  const content = `
+    <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} 📦</h1>
+    <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
+      Tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong> de <strong>${order.businessName}</strong>
+      ha sido <span style="color:#1e40af;font-weight:700;">enviado</span>.
+    </p>
+    ${trackingHtml}
+    <p style="margin:16px 0 0;font-size:15px;line-height:22px;color:#374151;">
+      Puedes hacer seguimiento de tu envío desde la página del pedido.
+    </p>
+    <div style="margin-top:24px;text-align:center;">
+      <a href="${orderUrl}" target="_blank" style="display:inline-block;padding:14px 28px;background:#1e40af;color:#ffffff;text-decoration:none;border-radius:9999px;font-weight:700;font-size:15px;">
+        Rastrear envío
+      </a>
+    </div>
+  `;
+
+  const html = emailWrapper({
+    title: `Pedido enviado #${order.id.slice(0, 8)}`,
+    preheader: `Tu pedido #${order.id.slice(0, 8)} de ${order.businessName} ha sido enviado.${tracking?.number ? ` Tracking: ${tracking.number}` : ''}`,
+    content,
+    footerNote: 'Si tienes dudas sobre la entrega, contacta al vendedor desde la página del pedido.',
+  });
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+      to: [toEmail],
+      subject: `📦 Pedido enviado #${order.id.slice(0, 8).toUpperCase()} - ${order.businessName}`,
+      html,
+    });
+    if (error) {
+      console.error('[Resend] error enviando envío:', error);
+      return { error };
+    }
+    console.log('[Resend] envío confirmado:', data?.id);
+    return { data };
+  } catch (e) {
+    console.error('[Resend] excepción enviando envío:', e?.message || e);
+    return { error: e };
+  }
+}
+
+// 4. Order Delivered (admin marks delivered)
+async function sendOrderDeliveredEmail(toEmail, name, order) {
+  if (!resend) {
+    console.warn('[Resend] RESEND_API_KEY no configurado, omitiendo envío real');
+    return { skipped: true };
+  }
+  const safeName = (name || '').toString().split(' ')[0] || 'usuario';
+  const orderUrl = `${BASE_URL}/?order=${order.id}`;
+
+  const content = `
+    <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} ✅</h1>
+    <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
+      ¡Tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong> de <strong>${order.businessName}</strong>
+      ha sido <span style="color:#166534;font-weight:700;">entregado</span>!
+    </p>
+    <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
+      Esperamos que disfrutes tu compra. Tu opinión nos ayuda a mejorar.
+    </p>
+    <div style="margin-top:24px;text-align:center;">
+      <a href="${orderUrl}" target="_blank" style="display:inline-block;padding:14px 28px;background:#166534;color:#ffffff;text-decoration:none;border-radius:9999px;font-weight:700;font-size:15px;">
+        Ver pedido y valorar
+      </a>
+    </div>
+    <p style="margin:24px 0 0;font-size:13px;line-height:20px;color:#6b7280;">
+      ¿Todo bien? Deja una reseña para ayudar a otros compradores.
+    </p>
+  `;
+
+  const html = emailWrapper({
+    title: `Pedido entregado #${order.id.slice(0, 8)}`,
+    preheader: `Tu pedido #${order.id.slice(0, 8)} de ${order.businessName} ha sido entregado.`,
+    content,
+    footerNote: 'Gracias por confiar en UBIK2 YEMG. ¡Vuelve pronto!',
+  });
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+      to: [toEmail],
+      subject: `✅ Pedido entregado #${order.id.slice(0, 8).toUpperCase()} - ${order.businessName}`,
+      html,
+    });
+    if (error) {
+      console.error('[Resend] error enviando entrega:', error);
+      return { error };
+    }
+    console.log('[Resend] entrega confirmada:', data?.id);
+    return { data };
+  } catch (e) {
+    console.error('[Resend] excepción enviando entrega:', e?.message || e);
+    return { error: e };
+  }
+}
+
+// 5. Payment Failed (webhook detects failed/expired)
+async function sendPaymentFailedEmail(toEmail, name, order, reason) {
+  if (!resend) {
+    console.warn('[Resend] RESEND_API_KEY no configurado, omitiendo envío real');
+    return { skipped: true };
+  }
+  const safeName = (name || '').toString().split(' ')[0] || 'usuario';
+  const orderUrl = `${BASE_URL}/?order=${order.id}`;
+
+  const content = `
+    <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} ⚠️</h1>
+    <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
+      Lamentablemente, el pago para tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong>
+      de <strong>${order.businessName}</strong> <span style="color:#dc2626;font-weight:600;">no se pudo completar</span>.
+    </p>
+    ${reason ? `
+    <div style="margin:16px 0;padding:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">
+      <div style="font-size:13px;color:#991b1b;"><strong>Motivo:</strong> ${reason}</div>
+    </div>
+    ` : ''}
+    <p style="margin:16px 0 0;font-size:15px;line-height:22px;color:#374151;">
+      El pedido ha sido <strong>cancelado</strong> y los productos devueltos al stock.
+      Puedes crear un nuevo pedido cuando quieras.
+    </p>
+    <div style="margin-top:24px;text-align:center;">
+      <a href="${orderUrl}" target="_blank" style="display:inline-block;padding:14px 28px;background:#dc2626;color:#ffffff;text-decoration:none;border-radius:9999px;font-weight:700;font-size:15px;">
+        Ver detalles
+      </a>
+    </div>
+    <p style="margin:24px 0 0;font-size:13px;line-height:20px;color:#6b7280;">
+      Si crees que es un error, contacta a soporte respondiendo a este correo.
+    </p>
+  `;
+
+  const html = emailWrapper({
+    title: `Pago fallido #${order.id.slice(0, 8)}`,
+    preheader: `El pago para tu pedido #${order.id.slice(0, 8)} en ${order.businessName} no se completó.`,
+    content,
+    footerNote: 'Los fondos no han sido cargados. Puedes reintentar el pago en un nuevo pedido.',
+  });
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+      to: [toEmail],
+      subject: `⚠️ Pago no completado - Pedido #${order.id.slice(0, 8).toUpperCase()}`,
+      html,
+    });
+    if (error) {
+      console.error('[Resend] error enviando fallo de pago:', error);
+      return { error };
+    }
+    console.log('[Resend] fallo de pago enviado:', data?.id);
+    return { data };
+  } catch (e) {
+    console.error('[Resend] excepción enviando fallo de pago:', e?.message || e);
+    return { error: e };
+  }
+}
+
 let _client = null;
 let _connectPromise = null;
 let _indexesEnsured = false;
+let _indexesPromise = null;
 async function ensureIndexes(db) {
   if (_indexesEnsured) return;
   try {
+    await db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch(async (err) => {
+        if ([85, 86].includes(err.code)) {
+          console.warn('[MongoDB] Se detectó un índice txHashNormalized incompatible; intentando reconstruirlo.');
+          await db.collection('crypto_invoices').dropIndex('txHashNormalized_1').catch((criticalErr) => {
+            criticalErr.criticalTxHashIndex = true;
+            throw criticalErr;
+          });
+          await db.collection('crypto_invoices').createIndex({ txHashNormalized: 1 }, { unique: true, partialFilterExpression: { txHashNormalized: { $type: 'string' } } }).catch((criticalErr) => {
+            criticalErr.criticalTxHashIndex = true;
+            throw criticalErr;
+          });
+          return;
+        }
+        console.error('[MongoDB] Error creando índice txHashNormalized:', err);
+        err.criticalTxHashIndex = true;
+        throw err;
+      });
+    // Facturas: completar identificadores antiguos y corregir duplicados antes del índice único.
+    const ordersForInvoices = db.collection('orders');
+    const missingInvoiceIds = await ordersForInvoices.find({
+      $or: [
+        { publicInvoiceId: { $exists: false } },
+        { publicInvoiceId: null },
+        { publicInvoiceId: '' }
+      ]
+    }, { projection: { _id: 1 } }).toArray();
+
+    for (const doc of missingInvoiceIds) {
+      await ordersForInvoices.updateOne(
+        { _id: doc._id, $or: [
+          { publicInvoiceId: { $exists: false } },
+          { publicInvoiceId: null },
+          { publicInvoiceId: '' }
+        ] },
+        { $set: { publicInvoiceId: uuidv4() } }
+      );
+    }
+
+    const duplicateInvoiceIds = await ordersForInvoices.aggregate([
+      { $match: { publicInvoiceId: { $type: 'string', $ne: '' } } },
+      { $group: { _id: '$publicInvoiceId', ids: { $push: '$_id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
+
+    for (const group of duplicateInvoiceIds) {
+      for (const duplicateId of group.ids.slice(1)) {
+        await ordersForInvoices.updateOne(
+          { _id: duplicateId, publicInvoiceId: group._id },
+          { $set: { publicInvoiceId: uuidv4() } }
+        );
+      }
+    }
+
+    await ordersForInvoices.createIndex(
+      { publicInvoiceId: 1 },
+      { unique: true, name: 'orders_publicInvoiceId_unique' }
+    ).catch((err) => {
+      err.criticalInvoiceIdIndex = true;
+      throw err;
+    });
+
+    if (missingInvoiceIds.length || duplicateInvoiceIds.length) {
+      console.log(`[MongoDB] Facturas migradas: faltantes=${missingInvoiceIds.length}, grupos duplicados=${duplicateInvoiceIds.length}`);
+    }
+
     await Promise.all([
       // Products
       db.collection('products').createIndex({ available: 1, featured: -1, createdAt: -1 }),
@@ -155,6 +855,19 @@ async function ensureIndexes(db) {
       // Payments
       db.collection('payments').createIndex({ userId: 1, createdAt: -1 }),
       db.collection('payments').createIndex({ status: 1, createdAt: -1 }),
+      // Orders
+      db.collection('orders').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      db.collection('settlement_ledger').createIndex({ publicInvoiceId: 1 }, { unique: true, name: 'settlement_invoice_unique' }).catch((err) => { console.error('[MongoDB] Error creando índice único settlement_ledger:', err?.message || err); err.criticalSettlementLedgerIndex = true; throw err; }),
+      db.collection('orders').createIndex({ buyerId: 1, createdAt: -1 }),
+      db.collection('orders').createIndex({ businessId: 1, createdAt: -1 }),
+      db.collection('orders').createIndex({ status: 1, createdAt: -1 }),
+      db.collection('orders').createIndex({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }).catch((err) => { console.error('[MongoDB] Error creando índice idempotencyKey:', err); throw err; }),
+      // Crypto Invoices (own wallet payments)
+      db.collection('crypto_invoices').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
+      db.collection('crypto_invoices').createIndex({ orderId: 1 }, { unique: true }).catch(() => {}),
+      db.collection('crypto_invoices').createIndex({ buyerId: 1, createdAt: -1 }),
+      db.collection('crypto_invoices').createIndex({ businessId: 1, status: 1 }),
+      db.collection('crypto_invoices').createIndex({ status: 1, expiresAt: 1 }),
     ]);
     _indexesEnsured = true;
     console.log('[MongoDB] Índices creados/verificados');
@@ -177,6 +890,7 @@ async function ensureIndexes(db) {
       console.warn('[MongoDB] Backfill negocios falló (no crítico):', e?.message);
     }
   } catch (e) {
+    if (e?.criticalTxHashIndex || e?.criticalInvoiceIdIndex || e?.criticalSettlementLedgerIndex) throw e;
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
 }
@@ -207,15 +921,19 @@ async function getDb() {
   const db = _client.db(DB_NAME);
 
   if (!_indexesEnsured) {
-    ensureIndexes(db).catch((err) => {
-      console.warn(
-        '[MongoDB] Error asegurando índices:',
-        err?.message
-      );
-    });
+    if (!_indexesPromise) {
+      _indexesPromise = ensureIndexes(db).catch((err) => {
+        _indexesPromise = null;
+        throw err;
+      });
+    }
+    await _indexesPromise;
+    if (!_indexesEnsured) {
+      _indexesPromise = null;
+    }
   }
 
-    return db;
+  return db;
 }
 function jsonCached(data, status = 200, maxAge = 60) {
   return NextResponse.json(data, {
@@ -390,13 +1108,19 @@ function getUserFromToken(request) {
   }
 }
 
+function isConfiguredAdmin(user) {
+  const configuredEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  return Boolean(configuredEmail && user?.email?.trim().toLowerCase() === configuredEmail);
+}
+
 async function requireUser(request) {
   const tok = getUserFromToken(request);
   if (!tok) return { error: json({ error: 'No autorizado' }, 401) };
   const db = await getDb();
   const user = await db.collection('users').findOne({ id: tok.id });
   if (!user) return { error: json({ error: 'Usuario no encontrado' }, 401) };
-  return { user };
+  // ADMIN_EMAIL is a server-side allowlist; normal password authentication is still required.
+  return { user: isConfiguredAdmin(user) ? { ...user, role: 'admin' } : user };
 }
 
 async function requireAdmin(request) {
@@ -418,6 +1142,7 @@ async function getSettings(db) {
       premiumPriceUSD: 9.99,
       contactPhone: '+5359195051',
       contactEmail: 'UBIK2YEMG@gmail.com',
+      usdRate: 120, // CUP per USD for crypto payment conversion
       updatedAt: new Date().toISOString(),
     };
     await db.collection('settings').insertOne(s);
@@ -438,6 +1163,93 @@ async function route(request, method, path) {
   // Health
   if (path.length === 0) {
     return json({ ok: true, app: 'UBIK2 YEMG API', version: '1.0' });
+  }
+
+
+  // Factura pública: solo expone información comercial no sensible.
+  if (path[0] === 'public' && path[1] === 'invoices' &&
+      path[2] && path.length === 3 && method === 'GET') {
+    const token = String(path[2]);
+    if (!/^[0-9a-f-]{36}$/i.test(token)) {
+      return json({ error: 'Factura no encontrada' }, 404);
+    }
+
+    const order = await db.collection('orders').findOne(
+      { publicInvoiceId: token },
+      { projection: {
+        _id: 0, publicInvoiceId: 1, businessName: 1, items: 1,
+        subtotal: 1, total: 1, currency: 1, createdAt: 1,
+        paymentStatus: 1, status: 1, cryptoInvoiceId: 1
+      }}
+    );
+    if (!order) return json({ error: 'Factura no encontrada' }, 404);
+
+    let cryptoStatus = null;
+    if (order.cryptoInvoiceId) {
+      const inv = await db.collection('crypto_invoices').findOne(
+        { id: order.cryptoInvoiceId },
+        { projection: { _id: 0, status: 1, currency: 1, network: 1, expectedAmount: 1 }}
+      );
+      if (inv) cryptoStatus = {
+        status: inv.status || 'pending',
+        currency: inv.currency || null,
+        network: inv.network || null,
+        expectedAmount: Number.isFinite(Number(inv.expectedAmount))
+          ? Number(inv.expectedAmount) : null
+      };
+    }
+
+    const items = (Array.isArray(order.items) ? order.items : []).map((item) => ({
+      name: String(item.name || item.productName || item.title || 'Producto').slice(0, 160),
+      quantity: Math.max(0, Number(item.quantity || item.qty || 1) || 1),
+      unitPrice: Number(item.price ?? item.unitPrice ?? 0) || 0,
+      total: Number(item.total ?? item.subtotal ?? item.lineTotal ?? ((Number(item.price ?? item.unitPrice ?? 0) || 0) * (Number(item.quantity || item.qty || 1) || 1))) || 0
+    }));
+
+    return json({
+      valid: true,
+      invoiceNumber: token.toUpperCase(),
+      businessName: String(order.businessName || 'Negocio').slice(0, 160),
+      items,
+      total: Number(order.total ?? order.subtotal ?? 0) || 0,
+      currency: String(order.currency || 'CUP').slice(0, 12),
+      createdAt: order.createdAt || null,
+      paymentStatus: String(order.paymentStatus || order.status || 'unknown'),
+      crypto: cryptoStatus
+    });
+  }
+
+  // Descarga QR PNG de una factura pública; no modifica pagos.
+  if (path[0] === 'public' && path[1] === 'invoices' &&
+      path[2] && path[3] === 'qr.png' && path.length === 4 &&
+      method === 'GET') {
+    const token = String(path[2]);
+    if (!/^[0-9a-f-]{36}$/i.test(token)) {
+      return json({ error: 'Factura no encontrada' }, 404);
+    }
+    const order = await db.collection('orders').findOne(
+      { publicInvoiceId: token },
+      { projection: { _id: 0, publicInvoiceId: 1 } }
+    );
+    if (!order) return json({ error: 'Factura no encontrada' }, 404);
+
+    const requestOrigin = new URL(request.url).origin;
+    const base = BASE_URL && !BASE_URL.includes('localhost')
+      ? BASE_URL : requestOrigin;
+    const verifyUrl = base.replace(/\/+$/, '') +
+      '/invoice/' + encodeURIComponent(order.publicInvoiceId);
+    const png = await QRCode.toBuffer(verifyUrl, {
+      type: 'png', errorCorrectionLevel: 'M', margin: 2, width: 480
+    });
+    return new NextResponse(png, {
+      status: 200,
+      headers: {
+        'Content-Type': 'image/png',
+        'Content-Disposition': 'attachment; filename="qr-factura-' +
+          String(order.publicInvoiceId).slice(0, 8) + '.png"',
+        'Cache-Control': 'private, no-store, max-age=0'
+      }
+    });
   }
 
   // Categories
@@ -531,14 +1343,16 @@ async function route(request, method, path) {
     if (path[1] === 'login' && method === 'POST') {
       const body = await request.json();
       const { email, password } = body || {};
-      if (!email || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
-      const user = await db.collection('users').findOne({ email: email.toLowerCase() });
-      if (!user) return json({ error: 'Credenciales inválidas' }, 401);
+      if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = await db.collection('users').findOne({ email: normalizedEmail });
+      if (!user || typeof user.password !== 'string' || !user.password) return json({ error: 'Credenciales inválidas' }, 401);
       const ok = await bcrypt.compare(password, user.password);
       if (!ok) return json({ error: 'Credenciales inválidas' }, 401);
       const business = await db.collection('businesses').findOne({ id: user.businessId });
-      const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
-      const { password: _, ...userOut } = user;
+      const effectiveUser = isConfiguredAdmin(user) ? { ...user, role: 'admin' } : user;
+      const token = jwt.sign({ id: effectiveUser.id, email: effectiveUser.email, role: effectiveUser.role }, JWT_SECRET, { expiresIn: '30d' });
+      const { password: _, ...userOut } = effectiveUser;
       return json({ token, user: userOut, business });
     }
 
@@ -546,7 +1360,8 @@ async function route(request, method, path) {
       const { user, error } = await requireUser(request);
       if (error) return error;
       const business = user.businessId ? await db.collection('businesses').findOne({ id: user.businessId }) : null;
-      const { password: _, ...userOut } = user;
+      const effectiveUser = isConfiguredAdmin(user) ? { ...user, role: 'admin' } : user;
+      const { password: _, ...userOut } = effectiveUser;
       return json({ user: userOut, business });
     }
 
@@ -555,8 +1370,12 @@ async function route(request, method, path) {
       if (error) return error;
       if (user.businessId) return json({ error: 'Ya tienes un negocio' }, 400);
       const body = await request.json();
-      const { businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook, businessType, country } = body || {};
-      if (!businessName || !whatsapp) return json({ error: 'Nombre del negocio y WhatsApp requeridos' }, 400);
+      // The upgrade form sends businessName but businessSchema requires name.
+      const parsed = businessSchema.safeParse({ ...body, name: body?.name || body?.businessName });
+      if (!parsed.success) {
+        return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+      }
+      const { name: businessName, whatsapp, location, description, logo, telegram, sms, instagram, facebook, businessType, country } = parsed.data;
       // Cloudinary auto-upload for business logo if base64
       let finalLogo = logo || '';
       if (finalLogo && finalLogo.startsWith('data:') && CLOUDINARY_ENABLED) {
@@ -608,9 +1427,17 @@ async function route(request, method, path) {
     }
 
     if (path[1] === 'reset' && method === 'POST') {
+      // Rate limiting
+      const ip = getClientIP(request);
+      const rl = rateLimit(ip, 'reset', 5, 60000);
+      if (!rl.allowed) return json({ error: 'Demasiados intentos. Intenta más tarde.', retryAfter: rl.retryAfter }, 429);
+
       const body = await request.json();
-      const { token: rt, newPassword } = body || {};
-      if (!rt || !newPassword) return json({ error: 'Token y nueva contraseña requeridos' }, 400);
+      const parsed = resetSchema.safeParse(body);
+      if (!parsed.success) {
+        return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+      }
+      const { token: rt, password: newPassword } = parsed.data;
       const u = await db.collection('users').findOne({ resetToken: rt });
       if (!u) return json({ error: 'Token inválido' }, 400);
       if (new Date(u.resetExpires) < new Date()) return json({ error: 'Token expirado' }, 400);
@@ -698,6 +1525,44 @@ async function route(request, method, path) {
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
 
+      if ('cryptoPayoutWallets' in body) {
+        const wallets = body.cryptoPayoutWallets;
+        const networks = ['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20'];
+        if (!wallets || typeof wallets !== 'object' || Array.isArray(wallets)) {
+          return json({ error: 'La configuración de billeteras no es válida.' }, 400);
+        }
+        const cleanWallets = {};
+        for (const [network, value] of Object.entries(wallets)) {
+          if (!networks.includes(network) || typeof value !== 'string' || value.length > 100) {
+            return json({ error: 'Red o dirección de billetera no válida.' }, 400);
+          }
+          const address = value.trim();
+          if (address && (
+            network === 'TRC20'
+              ? !isValidTronAddress(address)
+              : !isAddress(address)
+          )) {
+            return json({ error: `La dirección configurada para ${network} no es válida.` }, 400);
+          }
+          cleanWallets[network] = address;
+        }
+        update.cryptoPayoutWallets = {
+          ...(business.cryptoPayoutWallets || {}),
+          ...cleanWallets
+        };
+      }
+
+
+      if ('deliveryEnabled' in body) {
+        if (typeof body.deliveryEnabled !== 'boolean') {
+          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+        }
+        if (body.deliveryEnabled && user.role !== 'admin' && user.plan !== 'premium') {
+          return json({ error: 'Se requiere un plan Premium para activar las entregas' }, 403);
+        }
+        update.deliveryEnabled = body.deliveryEnabled;
+      }
+
       // Validation: if hiding contacts, require physical presence info
       const merged = { ...business, ...update };
       if (merged.showContactsPublicly === false) {
@@ -722,7 +1587,137 @@ async function route(request, method, path) {
       }
       await db.collection('businesses').updateOne({ id: path[1] }, { $set: update });
       const updated = await db.collection('businesses').findOne({ id: path[1] });
-      return json({ business: updated });
+
+      // Recuperación segura de escrows bloqueados cuando se configura la billetera.
+      // Solo actualiza el registro; nunca firma ni transmite transacciones.
+      let recoveredEscrows = 0;
+      if ('cryptoPayoutWallets' in body) {
+        const blockedLedgers = await db.collection('settlement_ledger')
+          .find({
+            businessId: path[1],
+            releaseStatus: 'pending_custody_integration',
+            releaseTxHash: null,
+            $or: [
+              { status: 'blocked_missing_seller_wallet' },
+              {
+                status: 'confirmed_pending_release',
+                $or: [
+                  { payoutAddress: null },
+                  { payoutAddress: { $exists: false } },
+                  { payoutAddress: '' },
+                ],
+              },
+            ],
+          })
+          .batchSize(100);
+
+        for await (const ledger of blockedLedgers) {
+          const network = String(ledger.payoutNetwork || ledger.network || '').toUpperCase();
+          const payoutAddress = updated?.cryptoPayoutWallets?.[network];
+          if (!payoutAddress || typeof payoutAddress !== 'string' || !payoutAddress.trim()) continue;
+
+          const order = await db.collection('orders').findOne({
+        id: ledger.orderId,
+        businessId: path[1],
+        publicInvoiceId: ledger.publicInvoiceId,
+      });
+
+      if (
+        !order ||
+        order.buyerId !== ledger.buyerId ||
+        !order.buyerReceiptConfirmation?.confirmedAt ||
+        !order.sellerDeliveryConfirmation?.confirmedAt
+      ) continue;
+
+      const invoice = ledger.cryptoInvoiceId
+        ? await db.collection('crypto_invoices').findOne({
+            id: ledger.cryptoInvoiceId,
+            orderId: order.id,
+          })
+        : await db.collection('crypto_invoices').findOne({ orderId: order.id });
+
+      if (
+        !invoice ||
+        invoice.status !== 'approved' ||
+        invoice.orderId !== order.id ||
+        invoice.buyerId !== order.buyerId ||
+        invoice.businessId !== order.businessId ||
+        invoice.network?.toUpperCase() !== network ||
+        (order.cryptoInvoiceId && invoice.id !== order.cryptoInvoiceId)
+      ) continue;
+
+      // Reconstruir importes solo desde la factura aprobada.
+      const decimals = Number(invoice.decimals);
+      const invoiceRaw = String(invoice.expectedAmountRaw ?? '');
+      if (
+        !Number.isInteger(decimals) ||
+        decimals < 0 ||
+        decimals > 36 ||
+        !/^\d+$/.test(invoiceRaw) ||
+        BigInt(invoiceRaw) <= 0n
+      ) continue;
+
+      const rate = invoice.commissionRateBps;
+      const commissionRateBps = Number(rate);
+      if (
+        !Number.isInteger(commissionRateBps) ||
+        commissionRateBps < 0 ||
+        commissionRateBps > 3000
+      ) continue;
+
+      const grossAmountRaw = BigInt(invoiceRaw);
+      const commissionAmountRaw =
+        (grossAmountRaw * BigInt(commissionRateBps) + 5000n) / 10000n;
+      const sellerNetAmountRaw = grossAmountRaw - commissionAmountRaw;
+
+      const grossAmount = Number(formatUnits(grossAmountRaw, decimals));
+      const commissionAmount = Number(formatUnits(commissionAmountRaw, decimals));
+      const sellerNetAmount = Number(formatUnits(sellerNetAmountRaw, decimals));
+      if (![grossAmount, commissionAmount, sellerNetAmount].every(Number.isFinite)) continue;
+
+      const result = await db.collection('settlement_ledger').updateOne(
+        {
+          publicInvoiceId: ledger.publicInvoiceId,
+          businessId: path[1],
+          status: ledger.status,
+          releaseStatus: 'pending_custody_integration',
+          releaseTxHash: null,
+          amountDecimals: { $in: [null, decimals] },
+          commissionRateBps: { $in: [null, commissionRateBps] },
+          grossAmountRaw: { $in: [null, grossAmountRaw.toString()] },
+          commissionAmountRaw: { $in: [null, commissionAmountRaw.toString()] },
+          sellerNetAmountRaw: { $in: [null, sellerNetAmountRaw.toString()] },
+          grossAmount: { $in: [null, grossAmount] },
+          commissionAmount: { $in: [null, commissionAmount] },
+          sellerNetAmount: { $in: [null, sellerNetAmount] },
+        },
+        {
+          $set: {
+            payoutNetwork: network,
+            payoutAddress: payoutAddress.trim(),
+            payoutDestinationStatus: 'configured_pending_custody_integration',
+            amountDecimals: decimals,
+            grossAmountRaw: grossAmountRaw.toString(),
+            commissionAmountRaw: commissionAmountRaw.toString(),
+            sellerNetAmountRaw: sellerNetAmountRaw.toString(),
+            grossAmount,
+            commissionRateBps,
+            commissionAmount,
+            sellerNetAmount,
+            status: 'confirmed_pending_release',
+            releaseStatus: 'pending_custody_integration',
+            releaseTxHash: null,
+            buyerConfirmedAt: order.buyerReceiptConfirmation.confirmedAt,
+            sellerConfirmedAt: order.sellerDeliveryConfirmation.confirmedAt,
+            updatedAt: new Date().toISOString(),
+          },
+        }
+      );
+      if (result.modifiedCount === 1) recoveredEscrows++;
+        }
+      }
+
+      return json({ business: updated, recoveredEscrows });
     }
   }
 
@@ -912,9 +1907,12 @@ async function route(request, method, path) {
       const { user, error } = await requireUser(request);
       if (error) return error;
       const body = await request.json();
+      const parsed = productSchema.safeParse(body);
+      if (!parsed.success) {
+        return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+      }
       const { name, price, description, category, subcategory, stock, image, available, featured, location, currency,
-        showPublicContact, province, municipality, address, openingHours, closingHours } = body || {};
-      if (!name || price == null || !category) return json({ error: 'Faltan campos obligatorios' }, 400);
+        showPublicContact, province, municipality, address, openingHours, closingHours } = parsed.data;
 
       const count = await db.collection('products').countDocuments({ businessId: user.businessId });
       const isPremium = user.plan === 'premium';
@@ -982,10 +1980,11 @@ async function route(request, method, path) {
       if (!product) return json({ error: 'No encontrado' }, 404);
       if (product.businessId !== user.businessId && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
       const body = await request.json();
-      const allowed = ['name', 'price', 'description', 'category', 'subcategory', 'stock', 'image', 'available', 'featured', 'location', 'currency',
-        'showPublicContact', 'province', 'municipality', 'address', 'openingHours', 'closingHours'];
-      const update = {};
-      for (const k of allowed) if (k in body) update[k] = body[k];
+      const parsed = productSchema.partial().safeParse(body);
+      if (!parsed.success) {
+        return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+      }
+      const update = parsed.data;
       if (update.price != null) update.price = Number(update.price);
       if (update.stock != null) update.stock = Number(update.stock);
       if (update.currency) update.currency = ['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC'].includes(update.currency) ? update.currency : 'CUP';
@@ -1043,8 +2042,11 @@ async function route(request, method, path) {
     const { user, error } = await requireUser(request);
     if (error) return error;
     const body = await request.json();
-    const { plan, paymentMethod, reference, screenshot } = body || {};
-    if (!['basico', 'premium'].includes(plan)) return json({ error: 'Plan inválido' }, 400);
+    const parsed = subscriptionSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+    }
+    const { plan, paymentMethod, reference, screenshot } = parsed.data;
     const settings = await getSettings(db);
     const payment = {
       id: uuidv4(),
@@ -1070,7 +2072,1675 @@ async function route(request, method, path) {
     if (error) return error;
     const items = await db.collection('payments').find({ userId: user.id }).sort({ createdAt: -1 }).toArray();
     const out = items.map(({ screenshot, ...p }) => p);
-    return json({ payments: out });
+return json({ payments: out });
+  }
+
+  // ===== ORDERS =====
+  // POST /api/orders - Create order (validates prices server-side, prevents duplicates)
+  if (path[0] === 'orders' && !path[1] && method === 'POST') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    const body = await request.json();
+    const orderSchema = body.paymentMethod === 'crypto'
+      ? createOrderCryptoSchema
+      : createOrderSchema;
+    const parsed = orderSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+    }
+    const { items, shippingName, shippingPhone, shippingAddress, shippingRecipientId, shippingEmail, shippingNotes, idempotencyKey } = parsed.data;
+    const deliveryMethod = parsed.data.deliveryMethod || 'pickup';
+
+    // Idempotency: if key provided and order exists, return existing
+    if (idempotencyKey) {
+      const existing = await db.collection('orders').findOne({ idempotencyKey, buyerId: user.id });
+      if (existing) {
+        return json({ order: existing, duplicate: true });
+      }
+    }
+
+    // Fetch products and validate prices server-side
+    const productIds = items.map((i) => i.productId);
+    const products = await db.collection('products')
+      .find({ id: { $in: productIds }, available: true })
+      .toArray();
+    const productMap = Object.fromEntries(products.map((p) => [p.id, p]));
+
+    let subtotal = 0;
+    const currency = products.length ? String(products[0].currency || 'CUP').toUpperCase() : 'CUP';
+    const orderItems = [];
+    const requestedQuantities = new Map();
+    for (const item of items) {
+      requestedQuantities.set(
+        item.productId,
+        (requestedQuantities.get(item.productId) || 0) + item.quantity
+      );
+    }
+    for (const item of items) {
+      const product = productMap[item.productId];
+    if (product && String(product.currency || 'CUP').toUpperCase() !== currency) {
+      return json({ error: 'No se pueden combinar productos con monedas diferentes en un mismo pedido.' }, 400);
+    }
+      if (!product) {
+        return json({ error: `Producto no encontrado o no disponible: ${item.productId}` }, 400);
+      }
+      // Validate stock
+      if (product.stock != null && product.stock < requestedQuantities.get(item.productId)) {
+        return json({ error: `Stock insuficiente para ${product.name} (disponible: ${product.stock})` }, 400);
+      }
+      // Use server-side price (not client-provided)
+      const lineTotal = Number(product.price) * item.quantity;
+      subtotal += lineTotal;
+      orderItems.push({
+        productId: product.id,
+        productName: product.name,
+        quantity: item.quantity,
+        unitPrice: Number(product.price),
+        lineTotal,
+        currency: product.currency,
+        businessId: product.businessId,
+      });
+    }
+
+    // For now, single-business orders only (simplifies shipping/payment)
+    const businessIds = [...new Set(orderItems.map((i) => i.businessId))];
+    if (businessIds.length > 1) {
+      return json({ error: 'Por ahora solo se permite un negocio por pedido. Haz pedidos separados.' }, 400);
+    }
+    const businessId = businessIds[0];
+    const business = await db.collection('businesses').findOne({ id: businessId });
+
+    // Enforce delivery eligibility on the server, never trust the client.
+    if (deliveryMethod === 'delivery' && (user.plan !== 'premium' || business?.deliveryEnabled !== true)) {
+      return json({ error: 'La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.' }, 403);
+    }
+    const finalShippingAddress = deliveryMethod === 'pickup'
+      ? `Recogida en el negocio: ${String(business?.name || 'negocio')}`.slice(0, 500)
+      : shippingAddress;
+
+    const now = new Date().toISOString();
+    const order = {
+      id: uuidv4(),
+      publicInvoiceId: uuidv4(),
+      buyerId: user.id,
+      buyerEmail: user.email,
+      businessId,
+      businessName: business?.name || '',
+      items: orderItems,
+      subtotal,
+      total: subtotal, // no tax/shipping for now
+      currency,
+      deliveryMethod,
+      shipping: {
+        deliveryMethod,
+        recipientId: shippingRecipientId || '',
+        name: shippingName,
+        email: shippingEmail || '',
+        phone: shippingPhone,
+        address: finalShippingAddress,
+        notes: shippingNotes || '',
+      },
+      paymentStatus: 'pending_payment',
+      shippingStatus: 'pending',
+      status: 'pending_payment', // legacy alias
+      statusHistory: [{ status: 'pending_payment', at: now, by: user.id }],
+      idempotencyKey: idempotencyKey || null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+
+    // If paymentMethod is crypto, create crypto_invoice
+    let invoice = null;
+    const paymentMethod = body.paymentMethod || 'crypto'; // default to crypto for now
+    if (paymentMethod === 'crypto') {
+      const cryptoCurrency = body.cryptoCurrency;
+      const cryptoNetwork = body.cryptoNetwork;
+
+      if (!cryptoCurrency || !cryptoNetwork) {
+        return json({ error: 'cryptoCurrency y cryptoNetwork requeridos para pago crypto' }, 400);
+      }
+
+      // Validate network/currency combination is enabled
+      const config = getCryptoConfig();
+      const networkConfig = config.enabled.find(n => n.currency === cryptoCurrency && n.network === cryptoNetwork);
+      if (!networkConfig) {
+        return json({ error: `Combinación no habilitada: ${cryptoCurrency} en ${cryptoNetwork}` }, 400);
+      }
+
+      // Convertir según la moneda original del pedido.
+      // usdRate representa CUP por 1 USD; USD, USDT y USDC usan paridad 1:1.
+      const settings = await getSettings(db);
+      const configuredUsdRate = Number(settings.usdRate);
+      const usdRate = Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120;
+      const orderCurrency = String(order.currency || 'CUP').toUpperCase();
+      let amountInCrypto;
+
+      if (orderCurrency === 'CUP') {
+        amountInCrypto = Number(order.total) / usdRate;
+      } else if (['USD', 'USDT', 'USDC'].includes(orderCurrency)) {
+        amountInCrypto = Number(order.total);
+      } else {
+        return json({
+          error: `No hay una conversión configurada de ${orderCurrency} a ${cryptoCurrency}.`
+        }, 400);
+      }
+
+      if (!Number.isFinite(amountInCrypto) || amountInCrypto <= 0) {
+        return json({ error: 'No se pudo calcular un importe de pago válido.' }, 400);
+      }
+
+      // Cuantizar al número de decimales admitido por el token y derivar
+      // el importe visible del mismo valor entero usado para verificar la cadena.
+      // Convertir a unidades enteras sin multiplicaciones imprecisas.
+      // El importe de origen ya puede tener precisión limitada por Number.
+      const amountDecimal = amountInCrypto.toFixed(networkConfig.decimals);
+      const expectedAmountRaw = parseUnits(amountDecimal, networkConfig.decimals).toString();
+      const expectedAmount = Number(formatUnits(BigInt(expectedAmountRaw), networkConfig.decimals));
+
+      const expiresAt = new Date();
+      expiresAt.setMinutes(expiresAt.getMinutes() + config.expiryMinutes);
+      const commissionRateBps = business?.commissionRateBps !== undefined
+        && Number.isInteger(Number(business.commissionRateBps))
+        && Number(business.commissionRateBps) >= 0
+        && Number(business.commissionRateBps) <= 3000
+        ? Number(business.commissionRateBps) : 300;
+
+      invoice = {
+        id: uuidv4(),
+        orderId: order.id,
+        buyerId: user.id,
+        businessId: order.businessId,
+        commissionRateBps,
+        currency: cryptoCurrency,
+        network: cryptoNetwork,
+        tokenContract: networkConfig.contract,
+        decimals: networkConfig.decimals,
+        expectedAmount,
+        expectedAmountRaw,
+        receiverAddress: networkConfig.receiverAddress,
+        status: 'pending',
+        expiresAt: expiresAt.toISOString(),
+        submittedAt: null,
+        confirmedAt: null,
+        txHash: null,
+        txHashNormalized: null,
+        senderAddress: null,
+        approvedBy: null,
+        approvedAt: null,
+        rejectReason: null,
+        rejectedBy: null,
+        rejectedAt: null,
+        verification: {
+          lastCheckedAt: null,
+          confirmations: 0,
+          requiredConfirmations: networkConfig.minConfirmations,
+          txData: null,
+          error: null,
+          retryCount: 0,
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+
+
+      // Save the invoice reference before inserting the order; updating before insert lost it.
+      order.paymentMethod = 'crypto';
+      order.cryptoInvoiceId = invoice.id;
+    }
+
+    const reservedStock = [];
+
+    for (const [productId, quantity] of requestedQuantities) {
+      const product = productMap[productId];
+      if (product.stock == null) continue;
+
+      const reservation = await db.collection('products').updateOne(
+        {
+          id: productId,
+          available: true,
+          stock: { $type: 'number', $gte: quantity }
+        },
+        { $inc: { stock: -quantity } }
+      );
+
+      if (reservation.modifiedCount !== 1) {
+        for (const reserved of [...reservedStock].reverse()) {
+          try {
+            await db.collection('products').updateOne(
+              { id: reserved.productId },
+              { $inc: { stock: reserved.quantity } }
+            );
+          } catch (rollbackError) {
+            console.error('[Inventory] Falló la reversión:', reserved.productId, rollbackError?.message || rollbackError);
+          }
+        }
+        return json({
+          error: 'Stock insuficiente o producto no disponible. Actualiza el carrito e inténtalo de nuevo.',
+          productId
+        }, 409);
+      }
+
+      reservedStock.push({ productId, quantity });
+    }
+
+    try {
+      if (invoice) {
+        await db.collection('crypto_invoices').insertOne(invoice);
+      }
+      await db.collection('orders').insertOne(order);
+    } catch (creationError) {
+      if (invoice) {
+        try {
+          await db.collection('crypto_invoices').deleteOne({ id: invoice.id });
+        } catch (cleanupError) {
+          console.error('[Orders] Falló la limpieza de factura:', invoice.id, cleanupError?.message || cleanupError);
+        }
+      }
+
+      for (const reserved of [...reservedStock].reverse()) {
+        try {
+          await db.collection('products').updateOne(
+            { id: reserved.productId },
+            { $inc: { stock: reserved.quantity } }
+          );
+        } catch (rollbackError) {
+          console.error('[Inventory] Falló la reversión:', reserved.productId, rollbackError?.message || rollbackError);
+        }
+      }
+
+      if (creationError?.code === 11000 && idempotencyKey) {
+        const existing = await db.collection('orders').findOne({
+          idempotencyKey,
+          buyerId: user.id
+        });
+        if (existing) return json({ order: existing, duplicate: true });
+      }
+
+      throw creationError;
+    }
+
+    // Send order confirmation email (async, don't block response)
+    sendOrderConfirmationEmail(user.email, user.name || '', order).catch((e) =>
+      console.error('[Email] failed to send order confirmation:', e?.message || e)
+    );
+
+    return json({ order, invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
+  }
+
+  // Seller order management: only the verified owner of the business.
+  if (path[0] === 'seller' && path[1] === 'orders' &&
+      (method === 'GET' || (method === 'PUT' && path[2]))) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    if (method === 'GET') {
+      const orders = await db.collection('orders')
+        .find({ businessId: business.id })
+        .sort({ createdAt: -1 })
+        .limit(200)
+        .toArray();
+
+      return json({ orders });
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'El cuerpo de la solicitud no es JSON válido.' }, 400);
+    }
+
+    const parsed = sellerOrderUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({
+        error: 'Datos inválidos',
+        details: parsed.error.flatten().fieldErrors,
+      }, 400);
+    }
+
+    const order = await db.collection('orders').findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu comercio.' }, 404);
+    }
+
+    const effectivePaymentStatus =
+      order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+
+    if (effectivePaymentStatus !== 'paid') {
+      return json({
+        error: 'El pedido debe tener el pago confirmado antes de gestionar su entrega.',
+      }, 409);
+    }
+
+    const shippingStates = ['processing', 'shipped', 'delivered'];
+    const currentShippingStatus = shippingStates.includes(order.shippingStatus)
+      ? order.shippingStatus
+      : (shippingStates.includes(order.status) ? order.status : 'processing');
+    const effectiveDeliveryMethod = order.deliveryMethod || order.shipping?.deliveryMethod || 'pickup';
+    let allowedStatuses;
+    if (currentShippingStatus === 'delivered') {
+      allowedStatuses = ['delivered'];
+    } else if (effectiveDeliveryMethod === 'pickup') {
+      allowedStatuses = currentShippingStatus === 'processing'
+        ? ['processing', 'delivered']
+        : [currentShippingStatus, 'delivered'];
+    } else {
+      allowedStatuses = currentShippingStatus === 'processing'
+        ? ['processing', 'shipped']
+        : currentShippingStatus === 'shipped'
+          ? ['shipped', 'delivered']
+          : [currentShippingStatus];
+    }
+    if (!allowedStatuses.includes(parsed.data.status)) {
+      return json({
+        error: effectiveDeliveryMethod === 'pickup'
+          ? 'Para recogida, primero prepara el pedido y después márcalo como entregado.'
+          : 'Transición no válida. Usa preparación, envío y entrega en ese orden.',
+      }, 409);
+    }
+
+    const { status, trackingNumber, trackingCarrier, notes, deliveryPhotos = [] } = parsed.data;
+
+    if (deliveryPhotos.some((photo) =>
+      !photo.startsWith('data:image/') &&
+      !/^https:\/\/res\.cloudinary\.com\//i.test(photo)
+    )) {
+      return json({
+        error: 'Las fotos deben ser imágenes nuevas o URLs seguras de Cloudinary.',
+      }, 400);
+    }
+
+    if (deliveryPhotos.some((photo) =>
+      photo.startsWith('data:image/') &&
+      !/^data:image\/(jpeg|jpg|png|webp);base64,/i.test(photo)
+    )) {
+      return json({ error: 'Formato de foto no admitido. Usa JPG, PNG o WebP.' }, 400);
+    }
+
+    const existingPhotos = Array.isArray(order.deliveryPhotos)
+      ? order.deliveryPhotos
+      : [];
+
+    if (existingPhotos.length + deliveryPhotos.length > 12) {
+      return json({ error: 'Este pedido admite un máximo de 12 fotos de entrega.' }, 400);
+    }
+
+    let uploadedPhotos = [];
+    try {
+      for (const photo of deliveryPhotos) {
+        uploadedPhotos.push(
+          await uploadToCloudinary(photo, 'deliveries')
+        );
+      }
+    } catch (e) {
+      console.error('[Seller orders] Error subiendo fotos:', e?.message || e);
+      return json({
+        error: 'No se pudieron guardar las fotos. Comprueba la configuración de Cloudinary.',
+      }, 503);
+    }
+
+    const now = new Date().toISOString();
+    const historyEntry = { status, at: now, by: user.id };
+    if (notes) historyEntry.notes = notes;
+    if (trackingNumber !== undefined) historyEntry.trackingNumber = trackingNumber;
+    if (trackingCarrier !== undefined) historyEntry.trackingCarrier = trackingCarrier;
+    if (uploadedPhotos.length) historyEntry.deliveryPhotos = uploadedPhotos;
+
+    const updateSet = {
+      status,
+      shippingStatus: status,
+      updatedAt: now,
+    };
+    // Conserva el pago confirmado en pedidos antiguos sin paymentStatus.
+    if (order.paymentStatus !== 'paid' && order.status === 'paid') {
+      updateSet.paymentStatus = 'paid';
+    }
+
+    if (trackingNumber !== undefined) updateSet.trackingNumber = trackingNumber;
+    if (trackingCarrier !== undefined) updateSet.trackingCarrier = trackingCarrier;
+
+    const updateDoc = {
+      $set: updateSet,
+      $push: { statusHistory: historyEntry },
+    };
+
+    if (uploadedPhotos.length) {
+      updateDoc.$push.deliveryPhotos = { $each: uploadedPhotos };
+    }
+
+    const updateResult = await db.collection('orders').updateOne(
+      {
+        id: path[2],
+        businessId: business.id,
+        $or: [
+          { paymentStatus: 'paid' },
+          { status: 'paid', paymentStatus: { $exists: false } },
+          { status: 'paid', paymentStatus: null },
+          { status: 'paid', paymentStatus: '' },
+        ],
+      },
+      updateDoc
+    );
+
+    if (updateResult.matchedCount !== 1) {
+      return json({
+        error: 'No se actualizó el pedido. Comprueba que el pago siga confirmado y vuelve a cargarlo.',
+      }, 409);
+    }
+
+    const updated = await db.collection('orders').findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!updated) {
+      return json({ error: 'No se pudo recuperar el pedido actualizado.' }, 500);
+    }
+
+    return json({ order: updated });
+  }
+
+
+
+  // POST /api/seller/orders/:id/confirm-delivery
+  // Confirmación explícita del vendedor; no libera fondos del escrow.
+  if (
+    path[0] === 'seller' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'confirm-delivery' &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'El cuerpo de la solicitud no es JSON válido.' }, 400);
+    }
+
+    const suppliedInvoiceId = String(body?.publicInvoiceId || '');
+    if (!suppliedInvoiceId) {
+      return json({ error: 'Falta el identificador de la factura QR.' }, 400);
+    }
+
+    const orders = db.collection('orders');
+    const order = await orders.findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu comercio.' }, 404);
+    }
+
+    if (!order.publicInvoiceId || suppliedInvoiceId !== order.publicInvoiceId) {
+      return json({ error: 'El identificador de factura QR no coincide.' }, 409);
+    }
+
+    const effectivePaymentStatus =
+      order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+
+    if (effectivePaymentStatus !== 'paid') {
+      return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
+    }
+
+    if (order.shippingStatus !== 'delivered' && order.status !== 'delivered') {
+      return json({ error: 'Primero debes marcar el pedido como entregado.' }, 409);
+    }
+
+    if (order.sellerDeliveryConfirmation?.confirmedAt) {
+      return json({
+        order,
+        alreadyConfirmed: true,
+        message: 'La entrega ya estaba confirmada por el vendedor.',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const confirmation = {
+      confirmedAt: now,
+      sellerId: user.id,
+      businessId: business.id,
+      publicInvoiceId: order.publicInvoiceId,
+    };
+
+    const result = await orders.updateOne(
+      {
+        id: order.id,
+        businessId: business.id,
+        publicInvoiceId: order.publicInvoiceId,
+        $and: [
+          {
+            $or: [
+              { paymentStatus: 'paid' },
+              { status: 'paid', paymentStatus: { $exists: false } },
+              { status: 'paid', paymentStatus: null },
+              { status: 'paid', paymentStatus: '' },
+            ],
+          },
+          {
+            $or: [
+              { shippingStatus: 'delivered' },
+              { status: 'delivered' },
+            ],
+          },
+          {
+            $or: [
+              { 'sellerDeliveryConfirmation.confirmedAt': { $exists: false } },
+              { 'sellerDeliveryConfirmation.confirmedAt': null },
+            ],
+          },
+        ],
+      },
+      {
+        $set: {
+          sellerDeliveryConfirmation: confirmation,
+          updatedAt: now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'seller_delivery_confirmed',
+            at: now,
+            by: user.id,
+            publicInvoiceId: order.publicInvoiceId,
+          },
+        },
+      }
+    );
+
+    const updated = await orders.findOne({
+      id: order.id,
+      businessId: business.id,
+    });
+
+    if (result.matchedCount !== 1) {
+      if (updated?.sellerDeliveryConfirmation?.confirmedAt) {
+        return json({
+          order: updated,
+          alreadyConfirmed: true,
+          message: 'La entrega ya estaba confirmada por el vendedor.',
+        });
+      }
+      return json({
+        error: 'El pedido cambió de estado. Recarga e inténtalo de nuevo.',
+      }, 409);
+    }
+
+    if (!updated?.sellerDeliveryConfirmation?.confirmedAt) {
+      return json({ error: 'No se pudo verificar la confirmación guardada.' }, 500);
+    }
+
+    return json({
+      order: updated,
+      alreadyConfirmed: false,
+      message: 'Entrega confirmada por el vendedor.',
+    });
+  }
+
+  // POST /api/orders/:id/confirm-receipt
+  // Solo el comprador autenticado puede confirmar una entrega ya pagada.
+  if (
+    path[0] === 'orders' &&
+    path[1] &&
+    path[2] === 'confirm-receipt' &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'El cuerpo de la solicitud no es JSON válido.' }, 400);
+    }
+
+    const suppliedInvoiceId = String(body?.publicInvoiceId || '');
+    const orders = db.collection('orders');
+    const order = await orders.findOne({
+      id: path[1],
+      buyerId: user.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu cuenta.' }, 404);
+    }
+
+    if (
+      !order.publicInvoiceId ||
+      suppliedInvoiceId !== order.publicInvoiceId
+    ) {
+      return json({ error: 'El identificador de factura no coincide.' }, 409);
+    }
+
+    // Registro idempotente de liquidación. No transfiere fondos.
+    const ensureSettlementLedger = async (confirmedOrder, confirmedAt) => {
+      // No registrar liquidación hasta que ambas partes confirmen.
+      if (
+        !confirmedOrder?.buyerReceiptConfirmation?.confirmedAt ||
+        !confirmedOrder?.sellerDeliveryConfirmation?.confirmedAt
+      ) {
+        return;
+      }
+
+      const invoice = confirmedOrder.cryptoInvoiceId
+        ? await db.collection('crypto_invoices').findOne({
+            id: confirmedOrder.cryptoInvoiceId,
+            orderId: confirmedOrder.id,
+          })
+        : await db.collection('crypto_invoices').findOne({
+            orderId: confirmedOrder.id,
+          });
+
+      if (
+        !invoice ||
+        invoice.orderId !== confirmedOrder.id ||
+        invoice.buyerId !== confirmedOrder.buyerId ||
+        invoice.businessId !== confirmedOrder.businessId ||
+        (confirmedOrder.cryptoInvoiceId && invoice.id !== confirmedOrder.cryptoInvoiceId)
+      ) {
+        return;
+      }
+
+      const existingLedger = await db.collection('settlement_ledger').findOne({
+        publicInvoiceId: confirmedOrder.publicInvoiceId,
+      });
+      if (existingLedger && (
+        existingLedger.orderId !== confirmedOrder.id ||
+        existingLedger.buyerId !== confirmedOrder.buyerId ||
+        existingLedger.businessId !== confirmedOrder.businessId
+      )) {
+        return;
+      }
+
+      const decimals = Number.isInteger(Number(invoice?.decimals))
+      && Number(invoice.decimals) >= 0
+      && Number(invoice.decimals) <= 36
+      ? Number(invoice.decimals) : 6;
+
+    let grossAmountRaw = null;
+    if (invoice?.status === 'approved') {
+      try {
+        const savedRaw = String(invoice.expectedAmountRaw ?? '');
+        if (/^\d+$/.test(savedRaw)) {
+          grossAmountRaw = BigInt(savedRaw);
+        } else if (
+          Number.isFinite(Number(invoice.expectedAmount))
+          && Number(invoice.expectedAmount) > 0
+        ) {
+          // Compatibilidad con facturas antiguas sin importe entero guardado.
+          grossAmountRaw = BigInt(
+            parseUnits(Number(invoice.expectedAmount).toFixed(decimals), decimals).toString()
+          );
+        }
+      } catch {
+        grossAmountRaw = null;
+      }
+    }
+
+    const verified = grossAmountRaw !== null && grossAmountRaw > 0n;
+    // La liquidación solo acepta la comisión congelada y válida de la factura.
+    const validCommissionRate = invoice?.commissionRateBps !== undefined
+      && Number.isInteger(Number(invoice.commissionRateBps))
+      && Number(invoice.commissionRateBps) >= 0
+      && Number(invoice.commissionRateBps) <= 3000;
+    if (!validCommissionRate) {
+      console.warn('[Escrow] Liquidación bloqueada: factura sin comisión congelada válida', {
+        orderId: confirmedOrder.id,
+        invoiceId: invoice.id,
+      });
+      return;
+    }
+    const commissionRateBps = Number(invoice.commissionRateBps);
+    const commissionAmountRaw = verified
+      ? (grossAmountRaw * BigInt(commissionRateBps) + 5000n) / 10000n : null;
+    const sellerNetAmountRaw = verified
+      ? grossAmountRaw - commissionAmountRaw : null;
+
+    const amount = verified
+      ? Number(formatUnits(grossAmountRaw, decimals)) : null;
+    const commissionAmount = verified
+      ? Number(formatUnits(commissionAmountRaw, decimals)) : null;
+    const sellerNetAmount = verified
+      ? Number(formatUnits(sellerNetAmountRaw, decimals)) : null;
+    const business = await db.collection('businesses').findOne({
+        id: confirmedOrder.businessId,
+      });
+      const payoutNetwork = String(invoice.network || '').toUpperCase();
+      const payoutAddress = business?.cryptoPayoutWallets?.[payoutNetwork] || null;
+      const payoutDestinationStatus = payoutAddress
+        ? 'configured_pending_custody_integration'
+        : 'missing_seller_wallet';
+      const createdAt = new Date().toISOString();
+
+      await db.collection('settlement_ledger').updateOne(
+        { publicInvoiceId: confirmedOrder.publicInvoiceId },
+        {
+          $setOnInsert: {
+            id: uuidv4(),
+            publicInvoiceId: confirmedOrder.publicInvoiceId,
+            orderId: confirmedOrder.id,
+            buyerId: confirmedOrder.buyerId,
+            businessId: confirmedOrder.businessId,
+            sellerUserId: business?.userId || null,
+            cryptoInvoiceId: invoice?.id || null,
+            currency: invoice?.currency || confirmedOrder.currency || null,
+            network: invoice?.network || null,
+            payoutNetwork,
+            payoutAddress,
+            payoutDestinationStatus,
+            amountDecimals: decimals,
+            grossAmountRaw: verified ? grossAmountRaw.toString() : null,
+            commissionAmountRaw: verified ? commissionAmountRaw.toString() : null,
+            sellerNetAmountRaw: verified ? sellerNetAmountRaw.toString() : null,
+            grossAmount: amount,
+            commissionRateBps,
+            commissionAmount,
+            sellerNetAmount,
+            buyerConfirmedAt: confirmedAt,
+            sellerConfirmedAt: confirmedOrder.sellerDeliveryConfirmation?.confirmedAt || null,
+            status: !verified ? 'blocked_payment_verification' : (payoutAddress ? 'confirmed_pending_release' : 'blocked_missing_seller_wallet'),
+            releaseStatus: 'pending_custody_integration',
+            releaseTxHash: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        },
+        { upsert: true }
+      );
+
+      // Si la factura se verificó después, desbloquear el registro existente.
+      if (verified) {
+        await db.collection('settlement_ledger').updateOne(
+          {
+            publicInvoiceId: confirmedOrder.publicInvoiceId,
+            status: { $in: ['blocked_payment_verification', 'blocked_missing_seller_wallet'] },
+          },
+          {
+            $set: {
+              cryptoInvoiceId: invoice.id,
+              currency: invoice.currency || confirmedOrder.currency || null,
+              network: invoice.network || null,
+              payoutNetwork,
+              payoutAddress,
+              payoutDestinationStatus,
+              amountDecimals: decimals,
+            grossAmountRaw: verified ? grossAmountRaw.toString() : null,
+            commissionAmountRaw: verified ? commissionAmountRaw.toString() : null,
+            sellerNetAmountRaw: verified ? sellerNetAmountRaw.toString() : null,
+            grossAmount: amount,
+              commissionRateBps,
+              commissionAmount,
+              sellerNetAmount,
+              buyerConfirmedAt: confirmedOrder.buyerReceiptConfirmation?.confirmedAt || confirmedAt,
+              sellerConfirmedAt: confirmedOrder.sellerDeliveryConfirmation?.confirmedAt || null,
+              status: payoutAddress ? 'confirmed_pending_release' : 'blocked_missing_seller_wallet',
+              updatedAt: new Date().toISOString(),
+            },
+          }
+        );
+      }
+    };
+
+    if (order.buyerReceiptConfirmation?.confirmedAt) {
+      await ensureSettlementLedger(
+        order,
+        order.buyerReceiptConfirmation.confirmedAt
+      );
+      return json({
+        order,
+        alreadyConfirmed: true,
+        message: 'La recepción ya estaba confirmada.',
+      });
+    }
+
+    const paid =
+      order.paymentStatus === 'paid' ||
+      (
+        ['paid', 'processing', 'shipped', 'delivered'].includes(order.status) &&
+        (order.paymentStatus === undefined || order.paymentStatus === null || order.paymentStatus === '')
+      );
+
+    if (!paid) {
+      return json({ error: 'El pedido todavía no tiene el pago confirmado.' }, 409);
+    }
+
+    if (order.shippingStatus !== 'delivered' && order.status !== 'delivered') {
+      return json({ error: 'El vendedor todavía no ha marcado el pedido como entregado.' }, 409);
+    }
+
+    if (!order.sellerDeliveryConfirmation?.confirmedAt) {
+      return json({
+        error: 'El vendedor debe confirmar explícitamente la entrega antes de que puedas confirmar la recepción.',
+        code: 'SELLER_DELIVERY_CONFIRMATION_REQUIRED',
+      }, 409);
+    }
+
+    const now = new Date().toISOString();
+    const confirmation = {
+      confirmedAt: now,
+      buyerId: user.id,
+      publicInvoiceId: order.publicInvoiceId,
+    };
+
+    const result = await orders.updateOne(
+      {
+        id: order.id,
+        buyerId: user.id,
+        publicInvoiceId: order.publicInvoiceId,
+        $and: [
+          {
+            $or: [
+              { paymentStatus: 'paid' },
+              { status: { $in: ['paid', 'processing', 'shipped', 'delivered'] }, paymentStatus: { $exists: false } },
+              { status: { $in: ['paid', 'processing', 'shipped', 'delivered'] }, paymentStatus: null },
+              { status: { $in: ['paid', 'processing', 'shipped', 'delivered'] }, paymentStatus: '' },
+            ],
+          },
+          {
+            $or: [
+              { shippingStatus: 'delivered' },
+              { status: 'delivered' },
+            ],
+          },
+          {
+            $or: [
+              { 'buyerReceiptConfirmation.confirmedAt': { $exists: false } },
+              { 'buyerReceiptConfirmation.confirmedAt': null },
+            ],
+          },
+        ],
+      },
+      {
+        $set: {
+          buyerReceiptConfirmation: confirmation,
+          updatedAt: now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'buyer_received',
+            at: now,
+            by: user.id,
+            publicInvoiceId: order.publicInvoiceId,
+          },
+        },
+      }
+    );
+
+    const updated = await orders.findOne({ id: order.id, buyerId: user.id });
+
+    if (result.matchedCount !== 1) {
+      if (updated?.buyerReceiptConfirmation?.confirmedAt) {
+        await ensureSettlementLedger(
+          updated,
+          updated.buyerReceiptConfirmation.confirmedAt
+        );
+        return json({
+          order: updated,
+          alreadyConfirmed: true,
+          message: 'La recepción ya estaba confirmada.',
+        });
+      }
+      return json({
+        error: 'El pedido cambió de estado. Recarga tus pedidos e inténtalo de nuevo.',
+      }, 409);
+    }
+
+    if (!updated?.buyerReceiptConfirmation?.confirmedAt) {
+      return json({ error: 'No se pudo verificar la confirmación guardada.' }, 500);
+    }
+
+    await ensureSettlementLedger(
+      updated,
+      updated.buyerReceiptConfirmation.confirmedAt
+    );
+
+    return json({
+      order: updated,
+      alreadyConfirmed: false,
+      message: 'Recepción confirmada. Liquidación registrada para su procesamiento.',
+    });
+  }
+
+  // GET /api/my/orders - List buyer's orders
+  if (path[0] === 'my' && path[1] === 'orders' && method === 'GET') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    const orders = await db.collection('orders')
+      .find({ buyerId: user.id })
+      .sort({ createdAt: -1 })
+      .toArray();
+    return json({ orders });
+  }
+
+  // GET /api/orders/:id - Get order detail (buyer or admin)
+  if (path[0] === 'orders' && path.length === 2 && path[1] && method === 'GET') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    const order = await db.collection('orders').findOne({ id: path[1] });
+    if (!order) return json({ error: 'Pedido no encontrado' }, 404);
+    // Authorization: buyer owns it OR admin
+    if (order.buyerId !== user.id && user.role !== 'admin') {
+      return json({ error: 'Sin permiso' }, 403);
+    }
+    return json({ order });
+  }
+
+  // PUT /api/admin/orders/:id - Admin update order status (with history)
+  if (path[0] === 'admin' && path[1] === 'orders' && path[2] && method === 'PUT') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+    const body = await request.json();
+    const parsed = updateOrderStatusSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+    }
+    const { status, trackingNumber, trackingCarrier, adminNotes } = parsed.data;
+
+    const order = await db.collection('orders').findOne({ id: path[2] });
+    if (!order) return json({ error: 'Pedido no encontrado' }, 404);
+
+    const effectivePaymentStatus = order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+    if (effectivePaymentStatus !== 'paid') {
+      return json({ error: 'El pedido debe tener el pago confirmado antes de gestionar su preparación o entrega.' }, 409);
+    }
+
+    const now = new Date().toISOString();
+    const historyEntry = { status, at: now, by: user.id };
+    if (adminNotes) historyEntry.notes = adminNotes;
+    if (trackingNumber) historyEntry.trackingNumber = trackingNumber;
+    if (trackingCarrier) historyEntry.trackingCarrier = trackingCarrier;
+
+    const updateSet = {
+      status,
+      updatedAt: now,
+    };
+
+    // Solo estos estados representan cambios en el pago.
+    if (['pending_payment', 'paid', 'payment_failed'].includes(status)) {
+      updateSet.paymentStatus = status;
+    }
+
+    // Los estados de preparación y entrega no deben sobrescribir el pago.
+    if (['processing', 'shipped', 'delivered', 'cancelled'].includes(status)) {
+      updateSet.shippingStatus = status;
+    }
+
+    const update = {
+      $set: updateSet,
+      $push: { statusHistory: historyEntry },
+    };
+    if (trackingNumber) update.$set.trackingNumber = trackingNumber;
+    if (trackingCarrier) update.$set.trackingCarrier = trackingCarrier;
+
+    await db.collection('orders').updateOne({ id: path[2] }, update);
+    const updated = await db.collection('orders').findOne({ id: path[2] });
+
+    // Send transactional emails based on status change (async, don't block)
+    if (status === 'shipped' && updated.trackingNumber) {
+      sendOrderShippedEmail(updated.buyerEmail, '', updated, {
+        number: updated.trackingNumber,
+        carrier: updated.trackingCarrier,
+      }).catch((e) => console.error('[Email] failed to send shipped:', e?.message || e));
+    } else if (status === 'delivered') {
+      sendOrderDeliveredEmail(updated.buyerEmail, '', updated).catch((e) => console.error('[Email] failed to send delivered:', e?.message || e));
+    } else if (status === 'cancelled' || status === 'payment_failed') {
+      sendPaymentFailedEmail(updated.buyerEmail, '', updated, adminNotes).catch((e) => console.error('[Email] failed to send failed:', e?.message || e));
+    }
+
+    return json({ order: updated });
+  }
+
+  // GET /api/admin/orders - Admin list all orders
+  if (path[0] === 'admin' && path[1] === 'orders' && method === 'GET') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+    const status = new URL(request.url).searchParams.get('status');
+    const filter = status ? { status } : {};
+    const orders = await db.collection('orders')
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .toArray();
+    return json({ orders });
+  }
+
+  // ===== CRYPTO PAYMENTS (Own Wallets - Self Custody) =====
+  // No external gateway. Direct to own wallets.
+
+  // GET /api/payments/crypto/config - Public config for checkout
+  if (path[0] === 'payments' && path[1] === 'crypto' && path[2] === 'config' && method === 'GET') {
+    const config = getCryptoConfig();
+    return jsonCached(config, 200, 300); // cache 5 min
+  }
+
+
+  // PDF de factura: requiere autenticación y pertenencia al pedido.
+  if (path[0] === 'orders' && path[1] && path[2] === 'invoice' &&
+      path[3] === 'pdf' && path.length === 4 && method === 'GET') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const orderId = path[1];
+    let order = await db.collection('orders').findOne({ id: orderId });
+    if (!order) return json({ error: 'Pedido no encontrado' }, 404);
+    const isInvoiceBuyer = order.buyerId === user.id;
+    const isInvoiceAdmin = user.role === 'admin';
+    let isInvoiceSeller = false;
+
+    if (!isInvoiceBuyer && !isInvoiceAdmin && order.businessId) {
+      let sellerBusiness = null;
+      if (user.businessId) {
+        sellerBusiness = await db.collection('businesses').findOne({ id: user.businessId });
+      }
+      if (!sellerBusiness) {
+        sellerBusiness = await db.collection('businesses').findOne({ userId: user.id });
+      }
+      isInvoiceSeller = Boolean(sellerBusiness && sellerBusiness.id === order.businessId);
+    }
+
+    if (!isInvoiceBuyer && !isInvoiceAdmin && !isInvoiceSeller) {
+      return json({ error: 'Sin permiso' }, 403);
+    }
+
+    // Compatibilidad con pedidos anteriores a la factura pública.
+    if (!order.publicInvoiceId) {
+      const newToken = uuidv4();
+      await db.collection('orders').updateOne(
+        { id: orderId, $or: [
+          { publicInvoiceId: { $exists: false } },
+          { publicInvoiceId: null },
+          { publicInvoiceId: '' }
+        ]},
+        { $set: { publicInvoiceId: newToken } }
+      );
+      order = await db.collection('orders').findOne({ id: orderId });
+    }
+    if (!order?.publicInvoiceId) {
+      return json({ error: 'No se pudo preparar la verificación de la factura' }, 500);
+    }
+
+    const pdf = await PDFDocument.create();
+    pdf.setTitle('Factura UBIK2YEMG');
+    pdf.setSubject('Factura comercial y verificación pública');
+    pdf.setCreator('UBIK2YEMG');
+
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    const pageSize = [595.28, 841.89];
+    let currentPage = pdf.addPage(pageSize);
+    let y = 790;
+
+    const drawLine = (text, options = {}) => {
+      if (y < 55) {
+        currentPage = pdf.addPage(pageSize);
+        y = 790;
+      }
+      currentPage.drawText(String(text ?? '').slice(0, 150), {
+        x: options.x ?? 48,
+        y,
+        size: options.size ?? 10,
+        font: options.bold ? bold : font,
+        color: rgb(0.12, 0.16, 0.22),
+        maxWidth: options.maxWidth ?? 495
+      });
+      y -= options.gap ?? 18;
+    };
+
+    drawLine('UBIK2YEMG', { size: 22, bold: true, gap: 30 });
+    drawLine('FACTURA COMERCIAL', { size: 15, bold: true, gap: 25 });
+    drawLine('Número de factura: ' + String(order.publicInvoiceId).toUpperCase());
+    drawLine('Pedido: ' + String(order.id).slice(0, 80));
+    drawLine('Negocio: ' + String(order.businessName || 'No indicado').slice(0, 120));
+    drawLine('Fecha: ' + (order.createdAt || 'No indicada'));
+    drawLine('Método de entrega: ' + String(order.deliveryMethod || 'No indicado'));
+    drawLine('DATOS DEL DESTINATARIO', { size: 12, bold: true, gap: 23 });
+    drawLine('Nombre: ' + String(order.shipping?.name || 'No indicado'));
+    drawLine('Teléfono: ' + String(order.shipping?.phone || 'No indicado'));
+    drawLine('Carnet/ID: ' + String(order.shipping?.recipientId || 'No indicado'));
+    drawLine('Dirección: ' + String(order.shipping?.address || 'No indicada'));
+    y -= 8;
+    drawLine('PRODUCTOS', { size: 12, bold: true, gap: 23 });
+
+    const items = Array.isArray(order.items) ? order.items : [];
+    for (const item of items) {
+      const name = String(item.name || item.productName || item.title || 'Producto').slice(0, 100);
+      const qty = Number(item.quantity || item.qty || 1) || 1;
+      const price = Number(item.price ?? item.unitPrice ?? 0) || 0;
+      const lineTotal = Number(item.total ?? item.subtotal ?? item.lineTotal ?? (price * qty)) || 0;
+      drawLine(name, { bold: true, gap: 15 });
+      drawLine('  Cantidad: ' + qty + ' | Precio unitario: ' + price.toFixed(2) +
+        ' | Importe: ' + lineTotal.toFixed(2), { size: 9, gap: 20 });
+    }
+
+    y -= 8;
+    drawLine('Total: ' + (Number(order.total ?? order.subtotal ?? 0) || 0).toFixed(2) +
+      ' ' + String(order.currency || 'CUP'), { size: 14, bold: true, gap: 25 });
+
+    const paymentStatus = String(order.paymentStatus || order.status || 'unknown');
+    const statusLabels = {
+      paid: 'PAGO CONFIRMADO',
+      confirmed: 'PAGO CONFIRMADO',
+      pending_payment: 'PENDIENTE DE PAGO',
+      pending: 'PENDIENTE',
+      failed: 'PAGO FALLIDO',
+      cancelled: 'CANCELADO',
+      refunded: 'REEMBOLSADO'
+    };
+    drawLine('Estado real del pago: ' + (statusLabels[paymentStatus] || paymentStatus));
+    drawLine('La validez de esta factura no demuestra por sí sola que el pago esté confirmado.', {
+      size: 9, gap: 16
+    });
+
+    // Página de verificación separada: el QR no cambia estados ni aprueba pagos.
+    const qrPage = pdf.addPage(pageSize);
+    qrPage.drawText('VERIFICACIÓN PÚBLICA DE FACTURA', {
+      x: 48, y: 780, size: 16, font: bold, color: rgb(0.12, 0.16, 0.22)
+    });
+    const requestOrigin = new URL(request.url).origin;
+    const base = BASE_URL && !BASE_URL.includes('localhost')
+      ? BASE_URL : requestOrigin;
+    const verifyUrl = base.replace(/\/+$/, '') + '/invoice/' +
+      encodeURIComponent(order.publicInvoiceId);
+    const qrData = await QRCode.toDataURL(verifyUrl, {
+      errorCorrectionLevel: 'M', margin: 2, width: 320
+    });
+    const qrImage = await pdf.embedPng(qrData);
+    qrPage.drawImage(qrImage, { x: 177, y: 390, width: 240, height: 240 });
+    qrPage.drawText('Escanea el QR para consultar la información pública.', {
+      x: 80, y: 350, size: 11, font, color: rgb(0.12, 0.16, 0.22)
+    });
+    qrPage.drawText('La consulta no confirma pagos ni libera fondos.', {
+      x: 95, y: 328, size: 10, font: bold, color: rgb(0.12, 0.16, 0.22)
+    });
+    qrPage.drawText(verifyUrl.slice(0, 100), {
+      x: 48, y: 295, size: 8, font, color: rgb(0.12, 0.16, 0.22),
+      maxWidth: 495
+    });
+
+    const bytes = await pdf.save();
+    return new NextResponse(Buffer.from(bytes), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="factura-' +
+          String(order.publicInvoiceId).slice(0, 8) + '.pdf"',
+        'Cache-Control': 'private, no-store, max-age=0'
+      }
+    });
+  }
+
+  // GET /api/orders/:id/invoice - Get crypto invoice for order (buyer or admin)
+  if (path[0] === 'orders' && path[1] && path[2] === 'invoice' && method === 'GET') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    const orderId = path[1];
+    const order = await db.collection('orders').findOne({ id: orderId });
+    if (!order) return json({ error: 'Pedido no encontrado' }, 404);
+    if (order.buyerId !== user.id && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
+
+    if (!order.cryptoInvoiceId) return json({ error: 'Este pedido no tiene factura crypto' }, 404);
+
+    const invoice = await db.collection('crypto_invoices').findOne({ id: order.cryptoInvoiceId });
+    if (!invoice) return json({ error: 'Factura no encontrada' }, 404);
+
+    // Don't expose verification internals to buyer
+    const { verification, ...invoiceOut } = invoice;
+    return json({ invoice: invoiceOut });
+  }
+
+  // POST /api/orders/:id/invoice/submit-tx - Buyer submits txHash
+  if (path[0] === 'orders' && path[1] && path[2] === 'invoice' && path[3] === 'submit-tx' && method === 'POST') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    const orderId = path[1];
+
+    const body = await request.json();
+    const parsed = submitTxSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+    }
+    const { txHash } = parsed.data;
+
+    const order = await db.collection('orders').findOne({ id: orderId, buyerId: user.id });
+    if (!order) return json({ error: 'Pedido no encontrado' }, 404);
+    if (!order.cryptoInvoiceId) return json({ error: 'Este pedido no tiene factura crypto' }, 404);
+
+    const invoice = await db.collection('crypto_invoices').findOne({ id: order.cryptoInvoiceId });
+    if (!invoice) return json({ error: 'Factura no encontrada' }, 404);
+
+    // Check status
+    if (invoice.status === 'approved') return json({ error: 'Factura ya aprobada' }, 400);
+    if (invoice.status === 'rejected') return json({ error: 'Factura rechazada' }, 400);
+    if (new Date(invoice.expiresAt) < new Date() && !invoice.txHash) {
+      const expiredAt = new Date().toISOString();
+      const expiry = await db.collection('crypto_invoices').updateOne(
+        {
+          id: invoice.id,
+          status: { $in: ['pending', 'submitted'] },
+          txHash: null,
+          expiresAt: { $lt: expiredAt }
+        },
+        { $set: { status: 'expired', updatedAt: expiredAt } }
+      );
+
+      if (expiry.modifiedCount === 1 && order.items) {
+        for (const item of order.items) {
+          await db.collection('products').updateOne(
+            { id: item.productId },
+            { $inc: { stock: item.quantity } }
+          );
+        }
+      }
+
+      return json({
+        error: expiry.modifiedCount === 1
+          ? 'Factura expirada'
+          : 'La factura cambió de estado; recarga e inténtalo de nuevo'
+      }, expiry.modifiedCount === 1 ? 400 : 409);
+    }
+
+    // Normalize txHash for uniqueness check
+    const txHashNormalized = normalizeTxHash(txHash);
+
+    // Check if txHash already used (global unique)
+    const existingTx = await db.collection('crypto_invoices').findOne({ txHashNormalized });
+    if (existingTx && existingTx.id !== invoice.id) {
+      return json({ error: 'Este hash de transacción ya fue utilizado en otra factura' }, 400);
+    }
+
+    const now = new Date().toISOString();
+    let submitted;
+    try {
+      submitted = await db.collection('crypto_invoices').updateOne(
+        { id: invoice.id, status: { $in: ['pending', 'submitted'] }, expiresAt: { $gt: now } },
+        { $set: { status: 'submitted', txHash, txHashNormalized, submittedAt: now, updatedAt: now } }
+      );
+    } catch (writeError) {
+      if (writeError?.code === 11000) {
+        return json({ error: 'Este hash de transacción ya fue utilizado en otra factura' }, 409);
+      }
+      throw writeError;
+    }
+    if (submitted.modifiedCount !== 1) {
+      return json({ error: 'La factura expiró o cambió de estado. Actualiza la página.' }, 409);
+    }
+
+    // Update order status
+    await db.collection('orders').updateOne(
+      { id: orderId },
+      { $set: { paymentStatus: 'pending_payment', status: 'pending_payment', updatedAt: now }, $push: { statusHistory: { status: 'pending_payment', at: now, by: user.id, notes: `TxHash enviado: ${txHash}` } } }
+    );
+
+    // Intentar verificar automáticamente la factura recién enviada.
+    // Si el explorador/RPC falla temporalmente, el hash queda guardado
+    // y la factura continúa pendiente para un nuevo intento.
+    try {
+      await verifyPendingInvoices(db, 1, invoice.id);
+    } catch (verificationError) {
+      console.error('[Crypto] Error en verificación automática:', verificationError?.message || verificationError);
+    }
+
+    const updatedInvoice = await db.collection('crypto_invoices').findOne({ id: invoice.id });
+    const { verification, ...invOut } = updatedInvoice || {};
+    const isApproved = updatedInvoice?.status === 'approved';
+
+    return json({
+      invoice: invOut,
+      message: isApproved
+        ? 'Transacción verificada y pago confirmado.'
+        : 'Hash recibido. La transacción se comprobará de nuevo hasta alcanzar las confirmaciones requeridas.'
+    });
+  }
+
+  // GET /api/admin/crypto-invoices - Admin list crypto invoices
+  if (path[0] === 'admin' && path[1] === 'crypto-invoices' && method === 'GET') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    const url = new URL(request.url);
+    const status = url.searchParams.get('status');
+    const businessId = url.searchParams.get('businessId');
+    const from = url.searchParams.get('from');
+    const to = url.searchParams.get('to');
+    const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10)));
+    const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10));
+
+    const filter = {};
+    if (status) filter.status = status;
+    if (businessId) filter.businessId = businessId;
+    if (from || to) {
+      filter.createdAt = {};
+      if (from) filter.createdAt.$gte = from;
+      if (to) filter.createdAt.$lte = to;
+    }
+
+    const [items, total] = await Promise.all([
+      db.collection('crypto_invoices').find(filter).sort({ createdAt: -1 }).skip(offset).limit(limit).toArray(),
+      db.collection('crypto_invoices').countDocuments(filter),
+    ]);
+
+    // Enrich with buyer/business info
+    const buyerIds = [...new Set(items.map(i => i.buyerId))];
+    const businessIds = [...new Set(items.map(i => i.businessId))];
+    const [buyers, businesses] = await Promise.all([
+      db.collection('users').find({ id: { $in: buyerIds } }, { projection: { id: 1, email: 1, name: 1 } }).toArray(),
+      db.collection('businesses').find({ id: { $in: businessIds } }, { projection: { id: 1, name: 1 } }).toArray(),
+    ]);
+    const buyerMap = Object.fromEntries(buyers.map(b => [b.id, b]));
+    const businessMap = Object.fromEntries(businesses.map(b => [b.id, b]));
+
+    const enriched = items.map(inv => ({
+      ...inv,
+      buyer: buyerMap[inv.buyerId] || null,
+      business: businessMap[inv.businessId] || null,
+    }));
+
+    return json({ invoices: enriched, total, limit, offset });
+  }
+
+  // POST /api/admin/crypto-invoices/:id/approve - Admin approves invoice
+  if (path[0] === 'admin' && path[1] === 'crypto-invoices' && path[2] && path[3] === 'approve' && method === 'POST') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    // El panel puede enviar un POST sin cuerpo. Aceptar JSON vacío,
+    // pero rechazar un cuerpo JSON malformado.
+    let body = {};
+    const rawBody = await request.text();
+    if (rawBody.trim()) {
+      try {
+        body = JSON.parse(rawBody);
+      } catch {
+        return json({ error: 'El cuerpo de la solicitud no contiene JSON válido' }, 400);
+      }
+    }
+
+    const parsed = approveInvoiceSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+    }
+    const { notes } = parsed.data;
+
+    const invoice = await db.collection('crypto_invoices').findOne({ id: path[2] });
+    if (!invoice) return json({ error: 'Factura no encontrada' }, 404);
+    if (invoice.status === 'approved') return json({ error: 'Factura ya aprobada' }, 400);
+    if (invoice.status === 'rejected') return json({ error: 'Factura rechazada, no se puede aprobar' }, 400);
+    if (invoice.status !== 'submitted' || !invoice.txHash) {
+      return json({ error: 'El comprador debe enviar el hash de la transacción antes de aprobar la factura' }, 409);
+    }
+
+    const order = await db.collection('orders').findOne({ id: invoice.orderId });
+    if (!order) return json({ error: 'No se encontró el pedido asociado a la factura' }, 404);
+
+    // Usar los mismos mínimos de confirmaciones que el verificador automático.
+    const confirmationRequirements = {
+      TRC20: 1,
+      ERC20: 12,
+      POLYGON: 20,
+      BASE: 2,
+      ARBITRUM: 20,
+  BEP20: 15,
+    };
+    const requiredConfirmations = confirmationRequirements[invoice.network];
+    if (!requiredConfirmations) {
+      return json({ error: 'Red de pago no admitida para la verificación' }, 400);
+    }
+
+    // Verificar la transferencia real antes de aprobar.
+    let verification;
+    try {
+      verification = await verifyCryptoInvoice(invoice);
+    } catch (verificationError) {
+      console.error('[Crypto] Error verificando factura:', verificationError?.message || verificationError);
+      verification = {
+        success: false,
+        confirmations: 0,
+        error: 'Error al consultar el verificador de blockchain',
+        verifiedAt: new Date().toISOString(),
+      };
+    }
+
+    const checkedAt = new Date().toISOString();
+    const verificationUpdate = {
+      ...(invoice.verification || {}),
+      lastCheckedAt: checkedAt,
+      confirmations: Number(verification.confirmations) || 0,
+      txData: verification.txData || null,
+      error: verification.success ? null : (verification.error || 'No se pudo verificar la transferencia'),
+      requiredConfirmations,
+      retryCount: (invoice.verification?.retryCount || 0) + 1,
+    };
+
+    // Guardar el resultado, pero mantener la factura sin aprobar si falla
+    // la verificación o si todavía faltan confirmaciones.
+    if (!verification.success || verification.confirmations < requiredConfirmations) {
+      await db.collection('crypto_invoices').updateOne(
+        { id: invoice.id, status: 'submitted', txHash: invoice.txHash },
+        { $set: { verification: verificationUpdate, updatedAt: checkedAt } }
+      );
+
+      return json({
+        error: verification.success
+          ? `La transacción todavía no tiene las ${requiredConfirmations} confirmaciones requeridas`
+          : 'No se pudo verificar el pago en la blockchain. La factura sigue pendiente de verificación.',
+        status: 'submitted',
+        confirmations: Number(verification.confirmations) || 0,
+        requiredConfirmations,
+      }, 409);
+    }
+
+    // Actualización atómica: si el verificador automático ya ganó la carrera,
+    // esta operación no puede volver a aprobar la factura.
+    const now = new Date().toISOString();
+    const approval = await db.collection('crypto_invoices').updateOne(
+      { id: invoice.id, status: 'submitted', txHash: invoice.txHash },
+      {
+        $set: {
+          status: 'approved',
+          approvedBy: user.id,
+          approvedAt: now,
+          confirmedAt: now,
+          updatedAt: now,
+          verification: {
+            ...verificationUpdate,
+            lastCheckedAt: verification.verifiedAt || now,
+            error: null,
+          },
+        },
+      }
+    );
+
+    if (approval.modifiedCount !== 1) {
+      return json({
+        error: 'La factura cambió de estado durante la verificación. Recarga para comprobar su estado actual.',
+      }, 409);
+    }
+
+    // Marcar el pedido como pagado solo después de ganar la actualización
+    // atómica de la factura. No duplicar el historial ni el correo.
+    const orderUpdate = await db.collection('orders').updateOne(
+      { id: order.id, paymentStatus: { $ne: 'paid' } },
+      {
+        $set: {
+          paymentStatus: 'paid',
+          status: 'paid',
+          updatedAt: now,
+          'paymentRef.txHash': invoice.txHash,
+          'paymentRef.confirmedAt': now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'paid',
+            at: now,
+            by: user.id,
+            notes: notes || `Pago verificado en ${invoice.network} con ${verification.confirmations} confirmaciones`,
+          },
+        },
+      }
+    );
+
+    if (orderUpdate.modifiedCount === 1) {
+      sendOrderConfirmationEmail(
+        order.buyerEmail,
+        '',
+        {
+          ...order,
+          paymentStatus: 'paid',
+          status: 'paid',
+          paymentRef: { txHash: invoice.txHash, confirmedAt: now },
+        }
+      ).catch(e => console.error('[Email] failed to send payment confirmed:', e?.message || e));
+    }
+
+    const updatedInvoice = await db.collection('crypto_invoices').findOne({ id: invoice.id });
+    const { verification: _verification, ...invOut } = updatedInvoice;
+    return json({
+      invoice: invOut,
+      message: 'Factura verificada y aprobada. Pedido actualizado.',
+    });
+  }
+
+  // POST /api/admin/crypto-invoices/:id/reject - Admin rejects invoice
+  if (path[0] === 'admin' && path[1] === 'crypto-invoices' && path[2] && path[3] === 'reject' && method === 'POST') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    const body = await request.json();
+    const parsed = rejectInvoiceSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+    }
+    const { reason } = parsed.data;
+
+    const invoice = await db.collection('crypto_invoices').findOne({ id: path[2] });
+    if (!invoice) return json({ error: 'Factura no encontrada' }, 404);
+    if (invoice.status === 'approved') return json({ error: 'Factura ya aprobada, no se puede rechazar' }, 400);
+    if (invoice.status === 'rejected') return json({ error: 'Factura ya rechazada' }, 400);
+
+    const now = new Date().toISOString();
+
+    // Update invoice
+    const rejection = await db.collection('crypto_invoices').updateOne(
+      { id: invoice.id, status: { $in: ['pending', 'submitted'] } },
+      { $set: { status: 'rejected', rejectedBy: user.id, rejectedAt: now, rejectReason: reason, updatedAt: now } }
+    );
+    if (rejection.modifiedCount !== 1) {
+      return json({ error: 'La factura cambió de estado. Recarga e inténtalo de nuevo.' }, 409);
+    }
+
+    // Update order and RESTORE STOCK
+    const order = await db.collection('orders').findOne({ id: invoice.orderId });
+    if (order) {
+      await db.collection('orders').updateOne(
+        { id: order.id },
+        { $set: { paymentStatus: 'payment_failed', status: 'payment_failed', updatedAt: now }, $push: { statusHistory: { status: 'payment_failed', at: now, by: user.id, notes: reason || 'Pago rechazado por administrador' } } }
+      );
+
+      // Restore stock
+      for (const item of order.items) {
+        await db.collection('products').updateOne(
+          { id: item.productId },
+          { $inc: { stock: item.quantity } }
+        );
+      }
+
+      // Send failed email
+      sendPaymentFailedEmail(order.buyerEmail, '', { ...order, paymentStatus: 'payment_failed' }, reason).catch(e => console.error('[Email] failed to send payment failed:', e?.message || e));
+    }
+
+    const updatedInvoice = await db.collection('crypto_invoices').findOne({ id: invoice.id });
+    const { verification, ...invOut } = updatedInvoice;
+    return json({ invoice: invOut, message: 'Factura rechazada. Stock restaurado.' });
+  }
+
+  // POST /api/admin/crypto-invoices/:id/retry-verification - Force re-check
+  if (path[0] === 'admin' && path[1] === 'crypto-invoices' && path[2] && path[3] === 'retry-verification' && method === 'POST') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    const invoice = await db.collection('crypto_invoices').findOne({ id: path[2] });
+    if (!invoice) return json({ error: 'Factura no encontrada' }, 404);
+    if (!['pending', 'submitted'].includes(invoice.status)) return json({ error: 'Solo facturas pendientes/enviadas pueden re-verificarse' }, 400);
+
+    // verifyCryptoInvoice is already imported at top of file
+    const verification = await verifyCryptoInvoice(invoice);
+
+    const now = new Date().toISOString();
+    const update = {
+      $set: {
+        'verification.lastCheckedAt': now,
+        'verification.confirmations': verification.confirmations,
+        'verification.txData': verification.txData || null,
+        'verification.error': verification.error || null,
+        'verification.retryCount': (invoice.verification?.retryCount || 0) + 1,
+        updatedAt: now,
+      },
+    };
+
+    await db.collection('crypto_invoices').updateOne({ id: invoice.id }, update);
+
+    const updatedInvoice = await db.collection('crypto_invoices').findOne({ id: invoice.id });
+    const { verification: v, ...invOut } = updatedInvoice;
+    return json({ invoice: invOut, verification });
+  }
+
+  // POST /api/cron/crypto-verify - Verificación programada protegida por secreto
+  if (path[0] === 'cron' && path[1] === 'crypto-verify' && method === 'POST') {
+    const cronSecret = process.env.CRON_SECRET;
+    const auth = request.headers.get('authorization') || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+
+    if (!cronSecret || !token || token !== cronSecret) {
+      return json({ error: 'No autorizado' }, 401);
+    }
+
+    const results = await verifyPendingInvoices(db, 50);
+    return json({ results, message: `Verificadas ${results.length} facturas` });
+  }
+
+  // POST /api/admin/crypto-invoices/verify-pending - Batch verify all pending (for cron/scheduler)
+  if (path[0] === 'admin' && path[1] === 'crypto-invoices' && path[2] === 'verify-pending' && method === 'POST') {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    // verifyPendingInvoices is already imported at top of file
+    const results = await verifyPendingInvoices(db, 50);
+    return json({ results, message: `Verificadas ${results.length} facturas` });
   }
 
   // ===== SEED =====
@@ -1081,14 +3751,19 @@ async function route(request, method, path) {
     await getSettings(db);
 
     // === Admin reconciliation (idempotent) ===
-    // Target: ubik2yemg@gmail.com with password Yisel.112729
-    const ADMIN_EMAIL = 'ubik2yemg@gmail.com';
-    const ADMIN_PASSWORD = 'Yisel.112729';
+    // Credenciales del administrador SOLO desde variables de entorno del servidor.
+    // Si faltan, se omite la reconciliación (nunca se usan valores por defecto).
+    const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
     const ADMIN_NAME = 'Administrador UBIK2 YEMG';
-    const LEGACY_EMAILS = ['yiselnr811@gmail.com', 'admin@ubik2.com'];
+    const LEGACY_EMAILS = (process.env.ADMIN_LEGACY_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
+    const adminConfigured = Boolean(ADMIN_EMAIL && ADMIN_PASSWORD && ADMIN_PASSWORD.length >= 12);
+    if (!adminConfigured) console.warn('[Seed] ADMIN_EMAIL/ADMIN_PASSWORD no configuradas (mín. 12 caracteres): se omite la reconciliación de admin.');
 
+    let adminReconciled = 'skipped';
+    if (adminConfigured) {
+    adminReconciled = 'none';
     const newHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
-    let adminReconciled = 'none';
 
     // 1) Try to find any legacy admin email and migrate it to the new one
     const legacyAdmin = await db.collection('users').findOne({ email: { $in: LEGACY_EMAILS } });
@@ -1132,6 +3807,8 @@ async function route(request, method, path) {
         adminReconciled = 'created';
       }
     }
+
+    } // end if (adminConfigured)
 
     if (existing > 0) return json({ message: 'Ya hay datos cargados', count: existing, adminReconciled });
 
@@ -1196,6 +3873,9 @@ async function route(request, method, path) {
       transfermovilName: s.transfermovilName,
       premiumPriceUSD: s.premiumPriceUSD,
       premiumPriceCUP: s.premiumPriceCUP || 0,
+      usdRate: Number.isFinite(Number(s.usdRate)) && Number(s.usdRate) > 0
+        ? Number(s.usdRate)
+        : 120,
       plansEnabled: s.plansEnabled !== false,
       contactPhone: s.contactPhone || '+5359195051',
       contactEmail: s.contactEmail || 'UBIK2YEMG@gmail.com',
@@ -1229,6 +3909,19 @@ async function route(request, method, path) {
     const { user, error } = await requireAdmin(request);
     if (error) return error;
 
+    if (path[1] === 'privy' && path[2] === 'status' && method === 'GET') {
+      try {
+        const result = await checkPrivyConnection();
+        return json({ ok: true, ...result });
+      } catch (e) {
+        console.error('[Privy] Status check failed:', e?.message || e);
+        return json({
+          ok: false,
+          error: 'No se pudo comprobar la conexión de Privy. Revisa la configuración del servidor.'
+        }, 503);
+      }
+    }
+
     if (path[1] === 'stats' && method === 'GET') {
       const [products, businesses, users, pendingPayments, approvedPayments] = await Promise.all([
         db.collection('products').countDocuments(),
@@ -1246,12 +3939,12 @@ async function route(request, method, path) {
     }
     if (path[1] === 'settings' && method === 'PUT') {
       const body = await request.json();
-      const allowed = ['usdcWallet', 'usdcNetwork', 'transfermovilNumber', 'transfermovilName',
-        'premiumPriceUSD', 'premiumPriceCUP', 'plansEnabled',
-        'contactPhone', 'contactEmail', 'facebookUrl'];
-      const update = { updatedAt: new Date().toISOString() };
-      for (const k of allowed) if (k in body) update[k] = body[k];
-      // Coerce numeric prices
+      const parsed = settingsSchema.safeParse(body);
+      if (!parsed.success) {
+        return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
+      }
+      const update = { ...parsed.data, updatedAt: new Date().toISOString() };
+      // Coerce numeric prices (already handled by schema, but ensure)
       if ('premiumPriceUSD' in update) update.premiumPriceUSD = Number(update.premiumPriceUSD) || 0;
       if ('premiumPriceCUP' in update) update.premiumPriceCUP = Number(update.premiumPriceCUP) || 0;
       await db.collection('settings').updateOne({ id: 'global' }, { $set: update }, { upsert: true });
@@ -1335,7 +4028,7 @@ async function route(request, method, path) {
         .collection('businesses')
         .find(
           { id: { $in: users.map((u) => u.businessId) } },
-          { projection: { id: 1, name: 1 } }
+          { projection: { id: 1, name: 1, deliveryEnabled: 1, verified: 1, verifiedAt: 1, verifiedBy: 1 } }
         )
         .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
@@ -1377,9 +4070,40 @@ async function route(request, method, path) {
 
     if (path[1] === 'businesses' && path[2] && method === 'PUT') {
       const body = await request.json();
-      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook', 'verified'];
+      const existing = await db.collection('businesses').findOne({ id: path[2] });
+      if (!existing) return json({ error: 'Negocio no encontrado' }, 404);
+
+      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      if ('commissionRateBps' in body) {
+        if (!Number.isInteger(body.commissionRateBps) || body.commissionRateBps < 0 || body.commissionRateBps > 3000) {
+          return json({ error: 'La comisión debe ser un entero entre 0 y 3000 puntos básicos (0 % a 30 %).' }, 400);
+        }
+        update.commissionRateBps = body.commissionRateBps;
+      }
+
+      if ('verified' in body) {
+        if (typeof body.verified !== 'boolean') {
+          return json({ error: 'El estado de verificación debe ser verdadero o falso' }, 400);
+        }
+        update.verified = body.verified;
+        update.verifiedAt = body.verified ? new Date().toISOString() : null;
+        update.verifiedBy = body.verified ? user.id : null;
+      }
+
+      if ('deliveryEnabled' in body) {
+        if (typeof body.deliveryEnabled !== 'boolean') {
+          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+        }
+        update.deliveryEnabled = body.deliveryEnabled;
+      }
+
+      if (Object.keys(update).length === 0) {
+        return json({ error: 'No hay cambios válidos para guardar' }, 400);
+      }
+
       await db.collection('businesses').updateOne({ id: path[2] }, { $set: update });
       const updated = await db.collection('businesses').findOne({ id: path[2] });
       return json({ business: updated });
@@ -1409,6 +4133,39 @@ async function route(request, method, path) {
         .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
       return json({ products: items.map((p) => ({ ...p, business: bm[p.businessId] || null })) });
+    }
+
+    if (path[1] === 'products' && path[2] && method === 'GET') {
+      const product = await db.collection('products').findOne({
+        id: path[2],
+      });
+
+      if (!product) {
+        return json({ error: 'Producto no encontrado' }, 404);
+      }
+
+      const business = product.businessId
+        ? await db.collection('businesses').findOne(
+            { id: product.businessId },
+            {
+              projection: {
+                id: 1,
+                name: 1,
+                logo: 1,
+                location: 1,
+                whatsapp: 1,
+                telegram: 1,
+                sms: 1,
+                instagram: 1,
+                facebook: 1,
+              },
+            }
+          )
+        : null;
+
+      return json({
+        product: { ...product, business },
+      });
     }
 
     if (path[1] === 'products' && path[2] && method === 'DELETE') {

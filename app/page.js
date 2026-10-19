@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import jsQR from 'jsqr';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,6 +17,15 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
 import {
   Sheet,
   SheetContent,
@@ -45,11 +55,12 @@ import {
   Heart, Share2, Flag, Filter, Globe, Sun, Moon, ShieldCheck, Phone, Mail,
   Send, Sparkles, ChevronRight, Tag, Clock, X, Menu, Star, TrendingUp,
   Leaf, ImageOff, ImageIcon,
+  AlertCircle, CheckCircle, XCircle, CreditCard, Wallet, Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 const API = '/api';
-const LOGO = '/logo.png';
+const LOGO = '/logo.svg';
 
 // ========= i18n =========
 const TRANSLATIONS = {
@@ -103,6 +114,29 @@ const TRANSLATIONS = {
     outOfStock: 'Agotado',
     featured: 'Destacado',
     new: 'Nuevo',
+    // Crypto
+    buyingWithCrypto: 'Comprar con Crypto',
+    invoiceExpired: 'Factura expirada',
+    pendingPayment: 'Pendiente de pago',
+    txHashSubmitted: 'TxHash enviado - En verificación',
+    paymentConfirmed: 'Pago confirmado y aprobado',
+    paymentRejected: 'Pago rechazado',
+    sendTxHash: 'Enviar hash de transacción',
+    txHashPlaceholder: '0x... o hash de Tron (64 hex)',
+    copyAddress: 'Copiar dirección',
+    receiverAddress: 'Dirección receptora (solo depósito)',
+    expectedAmount: 'Importe esperado',
+    paymentDetails: 'Detalles del pago',
+    orderSummary: 'Resumen del pedido',
+    verificationNote: 'El administrador verificará la transacción en el blockchain. No se marca pagado solo por enviar el hash.',
+    pendingVerification: 'En verificación',
+    verificationDesc: 'Un administrador lo verificará manualmente en el explorer. Recibirás notificación cuando se apruebe o rechace.',
+    paymentApproved: '¡Pago confirmado!',
+    approvedDesc: 'Tu pedido ha sido marcado como pagado. El vendedor preparará tu pedido.',
+    paymentRejectedDesc: 'Pago rechazado',
+    rejectedDesc: 'Motivo: {reason}',
+    stockRestored: 'El stock ha sido restaurado. Puedes crear un nuevo pedido.',
+    invoiceExpiredDesc: 'El tiempo para pagar ha terminado. El stock ha sido restaurado.',
   },
   en: {
     slogan: 'All in one place.',
@@ -140,6 +174,29 @@ const TRANSLATIONS = {
     officialContact: 'Official contact',
     filters: 'Filters',
     location: 'Location',
+    // Crypto
+    buyingWithCrypto: 'Buy with Crypto',
+    invoiceExpired: 'Invoice expired',
+    pendingPayment: 'Pending payment',
+    txHashSubmitted: 'TxHash submitted - Under verification',
+    paymentConfirmed: 'Payment confirmed and approved',
+    paymentRejected: 'Payment rejected',
+    sendTxHash: 'Send transaction hash',
+    txHashPlaceholder: '0x... or Tron hash (64 hex)',
+    copyAddress: 'Copy address',
+    receiverAddress: 'Receiver address (deposit only)',
+    expectedAmount: 'Expected amount',
+    paymentDetails: 'Payment details',
+    orderSummary: 'Order summary',
+    verificationNote: 'Admin will verify transaction on blockchain. Not marked paid just by sending hash.',
+    pendingVerification: 'Under verification',
+    verificationDesc: 'Admin will verify manually on explorer. You\'ll be notified when approved or rejected.',
+    paymentApproved: 'Payment confirmed!',
+    approvedDesc: 'Your order has been marked as paid. Seller will prepare your order.',
+    paymentRejectedDesc: 'Payment rejected',
+    rejectedDesc: 'Reason: {reason}',
+    stockRestored: 'Stock restored. You can create a new order.',
+    invoiceExpiredDesc: 'Payment time expired. Stock restored.',
     priceMin: 'Min price',
     priceMax: 'Max price',
     date: 'Date',
@@ -205,6 +262,29 @@ const TRANSLATIONS = {
     outOfStock: 'Esaurito',
     featured: 'In evidenza',
     new: 'Nuovo',
+    // Crypto
+    buyingWithCrypto: 'Compra con Crypto',
+    invoiceExpired: 'Fattura scaduta',
+    pendingPayment: 'Pagamento in attesa',
+    txHashSubmitted: 'TxHash inviato - In verifica',
+    paymentConfirmed: 'Pagamento confermato e approvato',
+    paymentRejected: 'Pagamento rifiutato',
+    sendTxHash: 'Invia hash transazione',
+    txHashPlaceholder: '0x... o hash Tron (64 hex)',
+    copyAddress: 'Copia indirizzo',
+    receiverAddress: 'Indirizzo ricevente (solo deposito)',
+    expectedAmount: 'Importo atteso',
+    paymentDetails: 'Dettagli pagamento',
+    orderSummary: 'Riepilogo ordine',
+    verificationNote: 'L\'admin verificherà la transazione sulla blockchain. Non segnato come pagato solo inviando l\'hash.',
+    pendingVerification: 'In verifica',
+    verificationDesc: 'L\'admin verificherà manualmente sull\'explorer. Sarai notificato quando approvato o rifiutato.',
+    paymentApproved: 'Pagamento confermato!',
+    approvedDesc: 'Il tuo ordine è stato segnato come pagato. Il venditore preparerà il tuo ordine.',
+    paymentRejectedDesc: 'Pagamento rifiutato',
+    rejectedDesc: 'Motivo: {reason}',
+    stockRestored: 'Stock ripristinato. Puoi creare un nuovo ordine.',
+    invoiceExpiredDesc: 'Tempo di pagamento scaduto. Stock ripristinato.',
   },
   ru: {
     slogan: 'Всё в одном месте.',
@@ -256,6 +336,29 @@ const TRANSLATIONS = {
     outOfStock: 'Нет в наличии',
     featured: 'Топ',
     new: 'Новый',
+    // Crypto
+    buyingWithCrypto: 'Купить криптой',
+    invoiceExpired: 'Счёт истёк',
+    pendingPayment: 'Оплата ожидается',
+    txHashSubmitted: 'TxHash отправлен — на проверке',
+    paymentConfirmed: 'Оплата подтверждена и одобрена',
+    paymentRejected: 'Оплата отклонена',
+    sendTxHash: 'Отправить хэш транзакции',
+    txHashPlaceholder: '0x... или хэш Tron (64 hex)',
+    copyAddress: 'Копировать адрес',
+    receiverAddress: 'Адрес получателя (только для депозита)',
+    expectedAmount: 'Ожидаемая сумма',
+    paymentDetails: 'Детали оплаты',
+    orderSummary: 'Сводка заказа',
+    verificationNote: 'Админ проверит транзакцию в блокчейне. Не помечается как оплачено просто отсылкой хэша.',
+    pendingVerification: 'На проверке',
+    verificationDesc: 'Админ проверит вручную в эксплорере. Вас уведомят при одобрении или отклонении.',
+    paymentApproved: 'Оплата подтверждена!',
+    approvedDesc: 'Ваш заказ помечен как оплаченный. Продавец подготовит заказ.',
+    paymentRejectedDesc: 'Оплата отклонена',
+    rejectedDesc: 'Причина: {reason}',
+    stockRestored: 'Склад восстановлен. Можно создать новый заказ.',
+    invoiceExpiredDesc: 'Время оплаты истекло. Склад восстановлен.',
   },
 };
 const FLAGS = { es: '🇪🇸', en: '🇬🇧', it: '🇮🇹', ru: '🇷🇺' };
@@ -308,7 +411,10 @@ const buildContactLinks = (p) => {
   const cleanPhone = (s) => String(s || '').replace(/[^0-9+]/g, '').replace(/^\+/, '');
   const wa = cleanPhone(b.whatsapp);
   const tgRaw = (b.telegram || '').trim();
-  const sms = cleanPhone(b.sms || b.whatsapp);
+  // El teléfono solo se habilita si el vendedor lo configuró explícitamente.
+  const phoneRaw = String(b.sms || '').trim();
+  const phone = phoneRaw.replace(/[^0-9+]/g, '');
+  const sms = cleanPhone(phoneRaw);
 
   const name = p.name || 'tu producto';
   const price = formatPrice(p.price, p.currency);
@@ -330,13 +436,14 @@ const buildContactLinks = (p) => {
   const tgUser = tgRaw.replace(/^@/, '').replace(/^https?:\/\/(t\.me|telegram\.me)\//i, '');
   const tgLink = tgUser ? `https://t.me/${tgUser}` : '';
   // SMS: spec is sms:NUMBER?body=... (iOS uses `&body=`, Android `?body=`; ?body works on both).
+  const phoneLink = phone ? `tel:${phone}` : '';
   const smsLink = sms ? `sms:${sms}?body=${encoded}` : '';
 
   return {
     msg, encoded,
-    wa, tg: tgUser, sms,
-    waLink, tgLink, smsLink,
-    anyAvailable: !!(waLink || tgLink || smsLink),
+    wa, tg: tgUser, phone, sms,
+    waLink, tgLink, phoneLink, smsLink,
+    anyAvailable: !!(waLink || tgLink || phoneLink || smsLink),
   };
 };
 
@@ -436,6 +543,7 @@ const App = () => {
   const [lang, setLang] = useState('es');
   const [dark, setDark] = useState(false);
   const [favorites, setFavorites] = useState([]);
+  const [cart, setCart] = useState([]);
 
   // Dialogs
   const [authOpen, setAuthOpen] = useState(false);
@@ -474,8 +582,24 @@ const App = () => {
   const [bizDetail, setBizDetail] = useState(null);
   const [myProducts, setMyProducts] = useState([]);
 
+  // Crypto checkout
+  const [checkoutOrder, setCheckoutOrder] = useState(null);
+  const [checkoutInvoice, setCheckoutInvoice] = useState(null);
+  const [checkoutTxHash, setCheckoutTxHash] = useState('');
+  const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
+  const [cryptoConfig, setCryptoConfig] = useState(null);
+  const [cryptoSelectorOpen, setCryptoSelectorOpen] = useState(false);
+  const [cryptoSelectedKey, setCryptoSelectedKey] = useState('');
+  const [cryptoPendingCheckout, setCryptoPendingCheckout] = useState(null);
+  const [checkoutBusiness, setCheckoutBusiness] = useState(null);
+  const [deliveryMethod, setDeliveryMethod] = useState('pickup');
+  const canUseHomeDelivery = user?.plan === 'premium' && checkoutBusiness?.deliveryEnabled === true;
+  const [cryptoRecipientData, setCryptoRecipientData] = useState({
+    recipientId: '', name: '', address: '', email: '', phone: '',
+  });
+
   // Admin
-  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [] });
+  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [] });
   const [adminTab, setAdminTab] = useState('payments');
   const [adminSettings, setAdminSettings] = useState(null);
 
@@ -503,6 +627,10 @@ const App = () => {
       const fav = JSON.parse(localStorage.getItem('ubik2_favs') || '[]');
       setFavorites(Array.isArray(fav) ? fav : []);
     } catch {}
+    try {
+      const savedCart = JSON.parse(localStorage.getItem('ubik2_cart') || '[]');
+      setCart(Array.isArray(savedCart) ? savedCart.filter((item) => item?.product?.id && Number(item.quantity) > 0) : []);
+    } catch { setCart([]); }
     (async () => {
       try {
         const st = await api('/stats');
@@ -968,6 +1096,231 @@ const App = () => {
     } catch (err) { toast.error(err.message); }
   };
 
+  // === Crypto Checkout ===
+  const fetchCryptoConfig = async () => {
+    try {
+      const config = await api('/payments/crypto/config');
+      setCryptoConfig(config);
+      return config;
+    } catch (err) {
+      toast.error('Error cargando configuración crypto: ' + err.message);
+      return null;
+    }
+  };
+
+  const saveCart = (nextCart) => {
+    setCart(nextCart);
+    try { localStorage.setItem('ubik2_cart', JSON.stringify(nextCart)); } catch {}
+  };
+
+  const addToCart = (product) => {
+    if (!product?.id || !product.stock || product.stock <= 0) return toast.error('Producto sin stock');
+    setCart((current) => {
+      const currentBusiness = current[0]?.product?.businessId;
+      if (currentBusiness && product.businessId && currentBusiness !== product.businessId) {
+        toast.error('El carrito solo admite productos de una tienda por pedido.');
+        return current;
+      }
+      const existing = current.find((item) => item.product.id === product.id);
+      const next = existing
+        ? current.map((item) => item.product.id === product.id ? { ...item, quantity: Math.min(Number(product.stock) || 99, item.quantity + 1) } : item)
+        : [...current, { product, quantity: 1 }];
+      try { localStorage.setItem('ubik2_cart', JSON.stringify(next)); } catch {}
+      toast.success('Producto añadido al carrito');
+      return next;
+    });
+  };
+  const updateCartQuantity = (productId, quantity) => saveCart(cart.map((item) => item.product.id === productId ? { ...item, quantity: Math.max(1, Math.min(Number(item.product.stock) || 99, Number(quantity) || 1)) } : item));
+  const removeFromCart = (productId) => saveCart(cart.filter((item) => item.product.id !== productId));
+
+  const startCryptoCheckout = async (productOrItems) => {
+    if (!token) {
+      toast.error('Inicia sesión para pagar; tu carrito se conservará.');
+      setAuthMode('login'); setAuthOpen(true); return;
+    }
+    const checkoutItems = Array.isArray(productOrItems) ? productOrItems : [{ product: productOrItems, quantity: 1 }];
+    if (!checkoutItems.length) return toast.error('El carrito está vacío');
+    for (const item of checkoutItems) {
+      if (!item?.product?.id || !item.product.stock || item.product.stock < item.quantity) return toast.error(`Stock insuficiente para ${item?.product?.name || 'un producto'}`);
+    }
+    const businessIds = [...new Set(checkoutItems.map((item) => item.product.businessId).filter(Boolean))];
+    if (businessIds.length > 1) return toast.error('El carrito debe contener productos de una sola tienda.');
+
+    setCheckoutSubmitting(true);
+    try {
+      let businessInfo = null;
+      if (businessIds[0]) {
+        try {
+          const businessRes = await api(`/businesses/${encodeURIComponent(businessIds[0])}`, { token });
+          businessInfo = businessRes?.business || null;
+        } catch {
+          // La recogida sigue disponible aunque falle la consulta del negocio.
+        }
+      }
+      setCheckoutBusiness(businessInfo);
+      setDeliveryMethod('pickup');
+
+      const config = cryptoConfig || await fetchCryptoConfig();
+      if (!config?.enabled?.length) return toast.error('No hay redes crypto configuradas');
+      setCryptoConfig(config);
+      setCryptoPendingCheckout({
+        items: checkoutItems,
+        clearCart: Array.isArray(productOrItems),
+      });
+      setCryptoSelectedKey(`${config.enabled[0].currency}:${config.enabled[0].network}`);
+      setCryptoSelectorOpen(true);
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const confirmCryptoCheckout = async () => {
+    if (!cryptoPendingCheckout) return;
+
+    const recipient = {
+      recipientId: cryptoRecipientData.recipientId.trim(),
+      name: cryptoRecipientData.name.trim(),
+      address: cryptoRecipientData.address.trim(),
+      email: cryptoRecipientData.email.trim(),
+      phone: cryptoRecipientData.phone.trim(),
+    };
+
+    if ([recipient.recipientId, recipient.name, recipient.email, recipient.phone].some((value) => !value)) {
+      toast.error('Completa los datos del destinatario');
+      return;
+    }
+    if (deliveryMethod === 'delivery' && !recipient.address) {
+      toast.error('Introduce la dirección de entrega');
+      return;
+    }
+    if (deliveryMethod === 'delivery' && !canUseHomeDelivery) {
+      toast.error('La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.');
+      setDeliveryMethod('pickup');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient.email)) {
+      toast.error('Introduce un correo electrónico válido');
+      return;
+    }
+
+    const selectedNetwork = cryptoConfig?.enabled?.find(
+      (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
+    );
+    if (!selectedNetwork) {
+      toast.error('Selecciona una red crypto habilitada');
+      return;
+    }
+
+    setCheckoutSubmitting(true);
+    try {
+      const orderRes = await api('/orders', {
+        method: 'POST', token,
+        body: {
+          items: cryptoPendingCheckout.items.map(({ product, quantity }) => ({
+            productId: product.id,
+            quantity,
+          })),
+          shippingRecipientId: recipient.recipientId,
+          shippingName: recipient.name,
+          shippingPhone: recipient.phone,
+          shippingAddress: deliveryMethod === 'delivery'
+            ? recipient.address
+            : `Recogida en el negocio: ${checkoutBusiness?.name || 'negocio'}`,
+          deliveryMethod,
+          shippingEmail: recipient.email,
+          shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
+          paymentMethod: 'crypto',
+          cryptoCurrency: selectedNetwork.currency,
+          cryptoNetwork: selectedNetwork.network,
+        },
+      });
+      setCheckoutOrder(orderRes.order);
+      setCheckoutInvoice(orderRes.invoice);
+      if (cryptoPendingCheckout.clearCart) saveCart([]);
+      setCryptoSelectorOpen(false);
+      setCryptoPendingCheckout(null);
+      setView('checkout');
+    } catch (err) {
+      toast.error('Error creando pedido: ' + err.message);
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const closeCryptoSelector = () => {
+    if (checkoutSubmitting) return;
+    setCryptoSelectorOpen(false);
+    setCryptoPendingCheckout(null);
+    setCryptoSelectedKey('');
+  };
+
+  const submitTxHash = async () => {
+    if (!checkoutTxHash.trim()) return toast.error('Ingresa el hash de transacción');
+    if (!checkoutOrder?.cryptoInvoiceId) return toast.error('No hay factura asociada');
+
+    setCheckoutSubmitting(true);
+    try {
+      const res = await api(`/orders/${checkoutOrder.id}/invoice/submit-tx`, {
+        method: 'POST',
+        token,
+        body: { txHash: checkoutTxHash.trim() },
+      });
+      setCheckoutInvoice(res.invoice);
+      toast.success('TxHash enviado. Pendiente de verificación.');
+    } catch (err) {
+      toast.error('Error enviando hash: ' + err.message);
+    } finally {
+      setCheckoutSubmitting(false);
+    }
+  };
+
+  const cancelCheckout = () => {
+    setCheckoutOrder(null);
+    setCheckoutInvoice(null);
+    setCheckoutTxHash('');
+    setView('home');
+  };
+
+  // Admin crypto invoices
+  const [rejectCryptoInvoiceId, setRejectCryptoInvoiceId] = useState(null);
+  const [rejectCryptoReason, setRejectCryptoReason] = useState('');
+
+  const loadAdminCryptoInvoices = async () => {
+    try {
+      const res = await api('/admin/crypto-invoices', { token });
+      setAdminData((d) => ({ ...d, cryptoInvoices: res.invoices || [] }));
+    } catch (err) {
+      toast.error('Error cargando facturas crypto: ' + err.message);
+    }
+  };
+
+  const onApproveCryptoInvoice = async (invoiceId) => {
+    try {
+      await api(`/admin/crypto-invoices/${invoiceId}/approve`, { method: 'POST', token });
+      toast.success('Factura aprobada');
+      loadAdminCryptoInvoices();
+    } catch (err) {
+      toast.error('Error aprobando: ' + err.message);
+    }
+  };
+
+  const onRejectCryptoInvoice = async () => {
+    if (!rejectCryptoInvoiceId) return;
+    if (!rejectCryptoReason.trim()) return toast.error('Ingresa un motivo');
+    try {
+      await api(`/admin/crypto-invoices/${rejectCryptoInvoiceId}/reject`, {
+        method: 'POST', token,
+        body: { reason: rejectCryptoReason }
+      });
+      toast.success('Factura rechazada');
+      setRejectCryptoInvoiceId(null);
+      setRejectCryptoReason('');
+      loadAdminCryptoInvoices();
+    } catch (err) {
+      toast.error('Error rechazando: ' + err.message);
+    }
+  };
+
   // === Report ===
   const submitReport = async () => {
     if (!reportForm.reason) return toast.error('Selecciona un motivo');
@@ -996,17 +1349,21 @@ const App = () => {
     adminLoadingRef.current = true;
     setAdminLoading(true);
     try {
-      const [pays, usrs, prods, st, settingsRes, reps] = await Promise.all([
+      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
         api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
         api('/admin/stats', { token }),
         api('/admin/settings', { token }),
         api('/admin/reports', { token }).catch(() => ({ reports: [] })),
+        api('/admin/crypto-invoices', { token }).catch(() => ({ invoices: [] })),
+        api('/admin/orders', { token }).catch(() => ({ orders: [] })),
       ]);
       setAdminData({
         payments: pays.payments || [], users: usrs.users || [],
         products: prods.products || [], stats: st, reports: reps.reports || [],
+        cryptoInvoices: cryptoInvoices.invoices || [],
+        orders: ordersRes.orders || [],
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
@@ -1023,6 +1380,47 @@ const App = () => {
 
   const approvePayment = async (id) => { try { await api(`/admin/payments/${id}/approve`, { method: 'POST', token }); toast.success('Aprobado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const rejectPayment = async (id) => { const r = prompt('Motivo') || ''; try { await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason: r } }); toast.success('Rechazado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
+
+  const adminUpdateOrder = async (order) => {
+    const allowed = ['processing', 'shipped', 'delivered'];
+    const currentShippingStatus = allowed.includes(order.shippingStatus)
+      ? order.shippingStatus
+      : 'processing';
+    const status = prompt(
+      'Nuevo estado de preparación/entrega:\n' + allowed.join(', '),
+      currentShippingStatus
+    );
+    if (status === null) return;
+    if (!allowed.includes(status.trim())) {
+      toast.error('Estado no válido. Usa uno de los estados indicados.');
+      return;
+    }
+
+    const trackingNumber = prompt('Número de seguimiento (deja vacío si no aplica):', order.trackingNumber || '');
+    if (trackingNumber === null) return;
+    const trackingCarrier = prompt('Transportista:', order.trackingCarrier || '');
+    if (trackingCarrier === null) return;
+    const adminNotes = prompt('Notas administrativas:', order.adminNotes || '');
+    if (adminNotes === null) return;
+
+    try {
+      await api(`/admin/orders/${order.id}`, {
+        method: 'PUT',
+        token,
+        body: {
+          status: status.trim(),
+          trackingNumber: trackingNumber.trim(),
+          trackingCarrier: trackingCarrier.trim(),
+          adminNotes: adminNotes.trim(),
+        },
+      });
+      toast.success('Pedido actualizado');
+      await loadAdmin();
+    } catch (e) {
+      toast.error('No se pudo actualizar el pedido: ' + e.message);
+    }
+  };
+
   // Optimistic UI: update local state immediately, then sync from server. Prevents UI freeze when changing plan.
   const adminUpdateUser = async (id, patch) => {
     setAdminData((d) => ({ ...d, users: (d.users || []).map((u) => u.id === id ? { ...u, ...patch } : u) }));
@@ -1127,6 +1525,7 @@ const App = () => {
       <Header
         t={t} lang={lang} setLang={setLang} dark={dark} setDark={setDark}
         user={user} business={business} onLogout={logout}
+        cartCount={cart.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)}
         onLogin={() => { setAuthMode('login'); setAuthOpen(true); }}
         onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
         onPublish={() => {
@@ -1180,6 +1579,9 @@ const App = () => {
             onShare={shareProduct} onReport={openReport}
             token={token} isLogged={!!user}
             onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
+            startCryptoCheckout={startCryptoCheckout}
+            onAddToCart={addToCart}
+            checkoutSubmitting={checkoutSubmitting}
           />
         )}
 
@@ -1194,6 +1596,8 @@ const App = () => {
           />
         )}
 
+        {view === 'cart' && <CartView items={cart} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
+
         {view === 'favorites' && (
           <FavoritesView
             t={t} favorites={favorites} onProduct={openProduct} toggleFav={toggleFav}
@@ -1201,17 +1605,35 @@ const App = () => {
           />
         )}
 
+        {view === 'checkout' && checkoutOrder && checkoutInvoice && (
+          <CryptoCheckout
+            t={t}
+            order={checkoutOrder}
+            invoice={checkoutInvoice}
+            config={cryptoConfig}
+            txHash={checkoutTxHash}
+            setTxHash={setCheckoutTxHash}
+            onSubmit={submitTxHash}
+            onCancel={cancelCheckout}
+            submitting={checkoutSubmitting}
+            onBack={() => setView('home')}
+          />
+        )}
+
         {view === 'dashboard' && user && business && (
           <Dashboard
-            user={user} business={business} products={myProducts}
+            user={user} business={business} products={myProducts} token={token}
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
             onShareBusiness={() => shareBusiness(business)}
-            compressLogo={compressLogo} onLogoChange={updateMyLogo}
+            compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo}
           />
         )}
         {view === 'dashboard' && user && !business && (
-          <BuyerDashboard user={user} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard user={user} token={token} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+        )}
+        {view === 'buyer-orders' && user && (
+          <BuyerDashboard user={user} token={token} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'dashboard' && !user && (
           <div className="container mx-auto py-32 text-center">
@@ -1223,7 +1645,7 @@ const App = () => {
         {view === 'admin' && user?.role === 'admin' && (
           <AdminDashboard
             data={adminData} settings={adminSettings} setSettings={setAdminSettings}
-            onApprove={approvePayment} onReject={rejectPayment}
+            onApprove={approvePayment} onReject={rejectPayment} onUpdateOrder={adminUpdateOrder}
             onUpdateUser={adminUpdateUser} onDeleteUser={adminDeleteUser}
             onUpdateBusiness={adminUpdateBusiness} onDeleteBusiness={adminDeleteBusiness}
             onDeleteProduct={adminDeleteProduct}
@@ -1233,6 +1655,12 @@ const App = () => {
             tab={adminTab} setTab={setAdminTab} onRefresh={loadAdmin}
             compressLogo={compressLogo}
             businessTypes={businessTypes}
+            onApproveCryptoInvoice={onApproveCryptoInvoice}
+            onRejectCryptoInvoice={onRejectCryptoInvoice}
+            rejectCryptoInvoiceId={rejectCryptoInvoiceId}
+            setRejectCryptoInvoiceId={setRejectCryptoInvoiceId}
+            rejectCryptoReason={rejectCryptoReason}
+            setRejectCryptoReason={setRejectCryptoReason}
           />
         )}
       </main>
@@ -1285,6 +1713,205 @@ const App = () => {
         onClear={() => { setFilters({ location: '', businessName: '', country: '', province: '', municipality: '', businessType: '', subcategory: '', currency: '', physicalOnly: false, priceMin: '', priceMax: '', since: '', featuredOnly: false, availableOnly: true }); setFiltersOpen(false); }}
         categories={categories} category={category} businessTypes={businessTypes}
       />
+      <Dialog
+        open={cryptoSelectorOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setCryptoSelectorOpen(true);
+          } else {
+            closeCryptoSelector();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Elige tu criptomoneda y red</DialogTitle>
+            <DialogDescription>
+              Selecciona cómo deseas pagar. El pedido se creará después de confirmar.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[70vh] space-y-4 overflow-y-auto py-2 pr-1">
+            <div className="space-y-3">
+              <h3 className="font-semibold">Datos de la persona que recibirá el pedido</h3>
+
+              <div className="space-y-3 rounded-lg border p-3">
+                <p className="font-medium">¿Cómo recibirás tu pedido?</p>
+                <label className="flex cursor-pointer items-start gap-2">
+                  <input
+                    type="radio"
+                    name="delivery-method"
+                    value="pickup"
+                    checked={deliveryMethod === 'pickup'}
+                    onChange={() => setDeliveryMethod('pickup')}
+                    disabled={checkoutSubmitting}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Recogida en el negocio</span>
+                    <span className="block text-sm text-muted-foreground">
+                      Opción disponible para todos los compradores.
+                    </span>
+                  </span>
+                </label>
+
+                {canUseHomeDelivery ? (
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <input
+                      type="radio"
+                      name="delivery-method"
+                      value="delivery"
+                      checked={deliveryMethod === 'delivery'}
+                      onChange={() => setDeliveryMethod('delivery')}
+                      disabled={checkoutSubmitting}
+                      className="mt-1"
+                    />
+                    <span>
+                      <span className="font-medium">Entrega a domicilio</span>
+                      <span className="block text-sm text-muted-foreground">
+                        Disponible para tu cuenta Premium en este negocio.
+                      </span>
+                    </span>
+                  </label>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {user?.plan !== 'premium'
+                      ? 'La entrega a domicilio requiere el plan Premium.'
+                      : 'Este negocio no tiene habilitada la entrega a domicilio.'}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-id">ID del destinatario</Label>
+                <Input id="crypto-recipient-id" autoComplete="off" maxLength={50}
+                  value={cryptoRecipientData.recipientId}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, recipientId: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="ID de identificación" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-name">Nombre y apellidos</Label>
+                <Input id="crypto-recipient-name" autoComplete="name" maxLength={100}
+                  value={cryptoRecipientData.name}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, name: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="Nombre completo" />
+              </div>
+              {deliveryMethod === 'delivery' ? (
+                <div className="space-y-1">
+                  <Label htmlFor="crypto-recipient-address">Dirección de entrega</Label>
+                  <Input id="crypto-recipient-address" autoComplete="street-address" maxLength={500}
+                    value={cryptoRecipientData.address}
+                    onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, address: e.target.value }))}
+                    disabled={checkoutSubmitting} required placeholder="Calle, número, ciudad y país" />
+                </div>
+              ) : (
+                <p className="rounded-md bg-muted p-3 text-sm">
+                  Recogerás el pedido en el negocio. No necesitas introducir una dirección de entrega.
+                </p>
+              )}
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-email">Correo electrónico</Label>
+                <Input id="crypto-recipient-email" type="email" autoComplete="email" maxLength={254}
+                  value={cryptoRecipientData.email}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, email: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="correo@ejemplo.com" />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="crypto-recipient-phone">Teléfono</Label>
+                <Input id="crypto-recipient-phone" type="tel" autoComplete="tel" maxLength={20}
+                  value={cryptoRecipientData.phone}
+                  onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, phone: e.target.value }))}
+                  disabled={checkoutSubmitting} required placeholder="+34 600 000 000" />
+              </div>
+            </div>
+            <div className="space-y-3 border-t pt-4">
+              <Label htmlFor="crypto-network-select">Red de pago</Label>
+            <Select
+              value={cryptoSelectedKey}
+              onValueChange={setCryptoSelectedKey}
+              disabled={checkoutSubmitting}
+            >
+              <SelectTrigger id="crypto-network-select">
+                <SelectValue placeholder="Selecciona una red" />
+              </SelectTrigger>
+              <SelectContent>
+                {(cryptoConfig?.enabled || []).map((network) => {
+                  const key = `${network.currency}:${network.network}`;
+                  return (
+                    <SelectItem key={key} value={key}>
+                      {network.label || `${network.currency} (${network.network})`}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+            {(() => {
+              const items = cryptoPendingCheckout?.items || [];
+              if (!items.length) return null;
+
+              const total = items.reduce(
+                (sum, item) => sum + (Number(item.product?.price) || 0) * (Number(item.quantity) || 0),
+                0
+              );
+              const orderCurrency = String(items[0]?.product?.currency || 'CUP').toUpperCase();
+              const configuredRate = Number(settings?.usdRate);
+              const usdRate = Number.isFinite(configuredRate) && configuredRate > 0
+                ? configuredRate
+                : 120;
+
+              const amount = orderCurrency === 'CUP'
+                ? total / usdRate
+                : ['USD', 'USDT', 'USDC'].includes(orderCurrency)
+                  ? total
+                  : null;
+
+              const selected = cryptoConfig?.enabled?.find(
+                (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
+              );
+
+              if (amount === null) {
+                return (
+                  <p className="text-sm text-destructive" role="alert">
+                    No hay conversión configurada de {orderCurrency} a criptomonedas.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="rounded-md bg-muted p-3 space-y-1" aria-live="polite">
+                  <p className="font-semibold">
+                    Importe estimado: {amount.toLocaleString('es-ES', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 8
+                    })} {selected?.currency || ''}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {selected?.network ? `Red: ${selected.network}. ` : ''}
+                    El importe definitivo se confirmará al crear la factura.
+                  </p>
+                </div>
+              );
+            })()}
+          </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={checkoutSubmitting}
+              onClick={closeCryptoSelector}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              disabled={checkoutSubmitting || !cryptoSelectedKey}
+              onClick={confirmCryptoCheckout}
+            >
+              {checkoutSubmitting ? 'Procesando...' : 'Confirmar y crear pedido'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <LegalDialog open={!!legalOpen} onOpenChange={(v) => !v && setLegalOpen(null)} kind={legalOpen} settings={settings} />
     </div>
   );
@@ -1376,73 +2003,24 @@ const LogoUploader = ({ value, onChange, compressLogo, label = 'Logo del negocio
 
 
 const LogoSVG = ({ size = 40, showText = false, textWhite = false }) => (
-  <svg
-    width={size}
+  <img
+    src="/ubik2-logo.jpg"
+    width={Math.round(size * 2.7)}
     height={size}
-    viewBox="0 0 100 100"
-    xmlns="http://www.w3.org/2000/svg"
-    className="flex-shrink-0"
-    aria-label="UBIK2 YEMG"
-  >
-    <defs>
-      <linearGradient id="ubikGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#1565C0" />
-        <stop offset="100%" stopColor="#00A86B" />
-      </linearGradient>
-    </defs>
-    {/* Pin/location marker outline */}
-    <path
-      d="M50 8 C32 8 18 22 18 40 C18 58 50 92 50 92 C50 92 82 58 82 40 C82 22 68 8 50 8 Z"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="4.5"
-      strokeLinejoin="round"
-    />
-    {/* Shopping cart body */}
-    <path
-      d="M30 38 L66 38 L62 58 L36 58 Z"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="3.5"
-      strokeLinejoin="round"
-    />
-    {/* Cart handle */}
-    <path
-      d="M26 32 L31 32 L36 58"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="3.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    {/* Cart wheels */}
-    <circle cx="40" cy="66" r="3" fill="url(#ubikGrad)" />
-    <circle cx="58" cy="66" r="3" fill="url(#ubikGrad)" />
-    {/* Check mark inside cart */}
-    <path
-      d="M40 47 L46 53 L57 42"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
+    alt="UBIK2 YEMG"
+    loading="eager"
+    decoding="async"
+    className="flex-shrink-0 object-contain"
+    style={{ width: `${Math.round(size * 2.7)}px`, height: `${size}px` }}
+  />
 );
 
-const Logo = ({ size = 'md', withText = true, onDark = false }) => {
+const Logo = ({ size = 'md', withText = false, onDark = false }) => {
   const px = size === 'lg' ? 56 : size === 'sm' ? 32 : 44;
   return (
     <div className="flex items-center gap-2.5">
-      <div className={`relative flex-shrink-0 rounded-xl bg-black flex items-center justify-center ${size === 'lg' ? 'h-16 w-16' : size === 'sm' ? 'h-10 w-10' : 'h-12 w-12'} shadow-md`}>
-        <LogoSVG size={px - 8} />
-      </div>
-      {withText && (
-        <div className="flex flex-col leading-none">
-          <span className={`${size === 'lg' ? 'text-3xl' : 'text-xl'} font-extrabold tracking-tight ${onDark ? 'text-white' : 'brand-text-gradient'}`}>UBIK2 YEMG</span>
-          <span className={`text-[10px] tracking-wider uppercase hidden sm:block ${onDark ? 'text-white/80' : 'text-muted-foreground'}`}>Todo en un solo lugar</span>
-        </div>
-      )}
+      <LogoSVG size={px} />
+
     </div>
   );
 };
@@ -1506,7 +2084,7 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
   );
 };
 
-const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
+const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, cartCount = 0, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
   const isBuyer = user && !business;
   return (
   <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
@@ -1546,6 +2124,10 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
               {favorites.length}
             </span>
           )}
+        </Button>
+        <Button variant="ghost" size="icon" onClick={() => setView('cart')} className="relative" aria-label="Abrir carrito" title="Carrito de compras">
+          <ShoppingBag className="h-5 w-5" />
+          {cartCount > 0 && <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[9px] rounded-full h-4 min-w-4 px-1 flex items-center justify-center font-bold">{cartCount}</span>}
         </Button>
 
         {/* Data saver toggle (ahorro de datos para conexiones lentas) */}
@@ -1605,6 +2187,9 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
                   <Store className="h-4 w-4 mr-2" /> Hazte vendedor
                 </DropdownMenuItem>
               )}
+              <DropdownMenuItem onClick={() => setView('buyer-orders')}>
+                <ShoppingBag className="h-4 w-4 mr-2" /> Mis compras y facturas
+              </DropdownMenuItem>
               {user.role === 'admin' && (
                 <DropdownMenuItem onClick={() => setView('admin')}>
                   <Crown className="h-4 w-4 mr-2 text-[#00A86B]" /> {t.admin}
@@ -1650,7 +2235,239 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 };
 
 // ============ HOME ============
+
+function PublicInvoiceScanner() {
+  const [open, setOpen] = React.useState(false);
+  const [scanning, setScanning] = React.useState(false);
+  const [value, setValue] = React.useState('');
+  const [invoice, setInvoice] = React.useState(null);
+  const [error, setError] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const videoRef = React.useRef(null);
+
+  const stopCamera = React.useCallback(() => {
+    const video = videoRef.current;
+    if (video && video.srcObject) {
+      video.srcObject.getTracks().forEach(track => track.stop());
+      video.srcObject = null;
+    }
+  }, []);
+
+  React.useEffect(() => () => stopCamera(), [stopCamera]);
+
+  const lookup = async (input) => {
+    const raw = String(input || '').trim();
+    if (!raw) return;
+    let token = raw;
+    try {
+      if (/^https?:\/\//i.test(raw)) {
+        const url = new URL(raw);
+        const match = url.pathname.match(/\/invoice\/([^/]+)/);
+        if (!match) throw new Error('El QR no contiene un enlace de factura reconocido.');
+        token = decodeURIComponent(match[1]);
+      }
+    } catch (e) {
+      setError(e.message || 'Código QR no válido.');
+      return;
+    }
+
+    if (!/^[0-9a-f-]{36}$/i.test(token)) {
+      setError('Introduce un QR de factura o su identificador válido.');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setInvoice(null);
+    try {
+      const response = await fetch('/api/public/invoices/' + encodeURIComponent(token), {
+        method: 'GET',
+        cache: 'no-store'
+      });
+      const data = await response.json();
+      if (!response.ok || !data.valid) {
+        throw new Error(data.error || 'Factura no encontrada o no válida.');
+      }
+      setInvoice(data);
+      setValue(raw);
+      setScanning(false);
+      stopCamera();
+    } catch (e) {
+      setError(e.message || 'No se pudo verificar la factura.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!open || !scanning) return;
+    let cancelled = false;
+    let stream = null;
+    let frame = null;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    const scanFrame = async () => {
+      if (cancelled) return;
+      const video = videoRef.current;
+      if (video && ctx && video.readyState >= 2 && video.videoWidth > 0) {
+        try {
+          const width = Math.min(video.videoWidth, 640);
+          const height = Math.max(1, Math.round(width * video.videoHeight / video.videoWidth));
+          canvas.width = width;
+          canvas.height = height;
+          ctx.drawImage(video, 0, 0, width, height);
+          const pixels = ctx.getImageData(0, 0, width, height);
+          const code = jsQR(pixels.data, width, height, { inversionAttempts: 'attemptBoth' });
+          if (code && code.data) {
+            setValue(code.data);
+            setScanning(false);
+            await lookup(code.data);
+            return;
+          }
+        } catch (_) {}
+      }
+      if (!cancelled) frame = requestAnimationFrame(scanFrame);
+    };
+
+    const start = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error('Este navegador no permite acceder a la cámara. Utiliza una imagen QR o pega el enlace de la factura.');
+        }
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' } },
+          audio: false
+        });
+        if (cancelled) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        const video = videoRef.current;
+        if (!video) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        video.srcObject = stream;
+        await video.play();
+        if (!cancelled) scanFrame();
+      } catch (e) {
+        setError(e.message || 'No se pudo abrir la cámara. Comprueba los permisos o utiliza una imagen QR.');
+        setScanning(false);
+      }
+    };
+
+    start();
+    return () => {
+      cancelled = true;
+      if (frame) cancelAnimationFrame(frame);
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+  }, [open, scanning]);
+
+  const scanImage = async (file) => {
+    if (!file) return;
+    setError('');
+    let bitmap = null;
+    let objectUrl = null;
+    try {
+      let source;
+      if (typeof createImageBitmap === 'function') {
+        bitmap = await createImageBitmap(file);
+        source = bitmap;
+      } else {
+        objectUrl = URL.createObjectURL(file);
+        source = await new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('No se pudo abrir la imagen seleccionada.'));
+          image.src = objectUrl;
+        });
+      }
+
+      const width = source.width || source.naturalWidth;
+      const height = source.height || source.naturalHeight;
+      if (!width || !height) throw new Error('La imagen no tiene dimensiones válidas.');
+
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 1200 / Math.max(width, height));
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) throw new Error('No se pudo procesar la imagen.');
+
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(pixels.data, canvas.width, canvas.height, { inversionAttempts: 'attemptBoth' });
+      if (!code || !code.data) {
+        throw new Error('No se encontró un QR legible. Prueba con una imagen más nítida.');
+      }
+      setValue(code.data);
+      await lookup(code.data);
+    } catch (e) {
+      setError(e.message || 'No se pudo leer esa imagen.');
+    } finally {
+      if (bitmap && typeof bitmap.close === 'function') bitmap.close();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+  };
+
+  return (
+    <div className="mt-4 mx-auto max-w-2xl rounded-2xl border border-white/30 bg-white/95 p-4 text-left text-gray-900 shadow-lg">
+      <button type="button" onClick={() => { setOpen(!open); setError(''); }}
+        className="w-full rounded-xl bg-[#1565C0] px-4 py-3 font-bold text-white">
+        {open ? 'Cerrar verificador de facturas' : '📷 Escanear QR / verificar factura'}
+      </button>
+      {open && (
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-gray-700">Disponible sin iniciar sesión. Consultar una factura no confirma el pago ni libera fondos.</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => { setError(''); setInvoice(null); setScanning(true); }}
+              className="rounded-lg border px-3 py-2 text-sm font-semibold">Abrir cámara</button>
+            <label className="cursor-pointer rounded-lg border px-3 py-2 text-sm font-semibold">
+              Leer imagen QR
+              <input type="file" accept="image/*" className="sr-only"
+                onChange={e => scanImage(e.target.files?.[0])} />
+            </label>
+          </div>
+          <video ref={videoRef} autoPlay playsInline muted
+            className={scanning ? 'w-full max-h-64 rounded-xl bg-black object-contain' : 'hidden'} />
+          <form onSubmit={e => { e.preventDefault(); lookup(value); }} className="flex gap-2">
+            <input value={value} onChange={e => setValue(e.target.value)}
+              placeholder="Pega el enlace o ID de la factura"
+              className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            <button disabled={loading} className="rounded-lg bg-gray-900 px-3 py-2 text-sm font-bold text-white">
+              {loading ? 'Verificando…' : 'Verificar'}
+            </button>
+          </form>
+          {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+          {invoice && (
+            <div className="space-y-2 rounded-xl border border-green-300 bg-green-50 p-3 text-sm">
+              <h3 className="font-bold text-green-900">Factura válida según el servidor</h3>
+              <p><b>Número:</b> {invoice.invoiceNumber || invoice.publicInvoiceId || '—'}</p>
+              <p><b>Negocio:</b> {invoice.businessName || '—'}</p>
+              <div><b>Productos:</b>
+                {Array.isArray(invoice.items) && invoice.items.length
+                  ? <ul className="list-disc pl-5">{invoice.items.map((item, i) =>
+                      <li key={i}>{item.name || item.title || item.productName || 'Producto'} × {item.quantity ?? item.qty ?? 1}</li>
+                    )}</ul>
+                  : <p>Sin detalles de productos disponibles.</p>}
+              </div>
+              <p><b>Total:</b> {invoice.total ?? '—'} {invoice.currency || '—'}</p>
+              <p><b>Estado del pago:</b> {invoice.paymentStatus || 'No disponible'}</p>
+              <p className="text-xs text-gray-700">La validez de la factura no demuestra por sí sola que el pago esté confirmado. Este escáner no modifica pedidos, pagos ni escrow.</p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
+  const [showFeaturedProducts, setShowFeaturedProducts] = React.useState(true);
+  const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
 
   // Smooth scroll helper
@@ -1702,15 +2519,6 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.15),transparent_50%)]" />
         <div className="relative container mx-auto px-4 pt-6 pb-10 md:pt-8 md:pb-12 text-white">
           <div className="max-w-3xl mx-auto text-center">
-            {/* Compact brand bar */}
-            <div className="mx-auto mb-4 inline-flex items-center justify-center rounded-2xl bg-black/85 backdrop-blur-sm px-4 py-2 shadow-xl ring-1 ring-white/15">
-              <LogoSVG size={40} />
-              <div className="ml-2 text-left">
-                <div className="text-base md:text-lg font-extrabold tracking-tight brand-text-gradient leading-none">UBIK2 YEMG</div>
-                <div className="text-[9px] text-white/70 tracking-widest uppercase mt-0.5">Todo en un solo lugar</div>
-              </div>
-            </div>
-
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight leading-tight drop-shadow">
               {t.slogan}
             </h1>
@@ -1732,6 +2540,8 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
                 />
               </div>
             </div>
+
+            <PublicInvoiceScanner />
 
             {/* CTA buttons compact */}
             <div className="mt-3 flex gap-2 justify-center max-w-xl mx-auto">
@@ -1760,27 +2570,6 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               <div className="flex items-center gap-1"><TrendingUp className="h-3.5 w-3.5" /> Rápido</div>
               <div className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Sin comisiones</div>
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* QUICK NAV — visible always for fast access */}
-      <section className="container mx-auto px-4 -mt-6 relative z-20">
-        <div className="bg-card border border-border rounded-2xl shadow-xl p-3 md:p-4">
-          <div
-            className="flex md:grid md:grid-cols-7 gap-2 overflow-x-auto scroll-smooth"
-            style={{ scrollbarWidth: 'thin' }}
-          >
-            {navActions.map((a) => (
-              <button
-                key={a.id}
-                onClick={a.onClick}
-                className="flex flex-col items-center justify-center gap-1 min-w-[80px] md:min-w-0 px-3 py-2.5 rounded-xl border border-border bg-card hover:bg-[#1565C0]/5 hover:border-[#1565C0]/40 transition shrink-0"
-              >
-                <span className="text-2xl leading-none">{a.icon}</span>
-                <span className="text-[11px] font-semibold text-foreground whitespace-nowrap">{a.label}</span>
-              </button>
-            ))}
           </div>
         </div>
       </section>
@@ -1819,16 +2608,25 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
       {!hasFiltersOrQuery && featured.length > 0 && (
         <section className="container mx-auto px-4 mt-8 mb-8">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
-              <Star className="h-5 w-5 text-amber-500 fill-amber-500" /> Destacados
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+                <Star className="h-5 w-5 text-amber-500 fill-amber-500" /> Destacados
+              </h2>
+              <button type="button" onClick={() => setShowFeaturedProducts(v => !v)}
+                aria-expanded={showFeaturedProducts}
+                className="text-xs font-semibold rounded-lg border border-border px-3 py-2 hover:bg-muted">
+                {showFeaturedProducts ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
             <span className="text-xs text-muted-foreground">{featured.length}</span>
           </div>
+{showFeaturedProducts && (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
             {featured.map((p) => (
               <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
             ))}
           </div>
+          )}
         </section>
       )}
 
@@ -1836,11 +2634,19 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
       {!hasFiltersOrQuery && topBusinesses.length > 0 && (
         <section className="container mx-auto px-4 mb-10">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
-              <Store className="h-5 w-5 text-[#00A86B]" /> Negocios destacados
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+                <Store className="h-5 w-5 text-[#00A86B]" /> Negocios destacados
+              </h2>
+              <button type="button" onClick={() => setShowFeaturedBusinesses(v => !v)}
+                aria-expanded={showFeaturedBusinesses}
+                className="text-xs font-semibold rounded-lg border border-border px-3 py-2 hover:bg-muted">
+                {showFeaturedBusinesses ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
             <span className="text-xs text-muted-foreground">{topBusinesses.length}</span>
           </div>
+{showFeaturedBusinesses && (
           <div className="flex gap-3 overflow-x-auto pb-3 -mx-4 px-4 snap-x snap-mandatory" style={{ scrollbarWidth: 'thin' }}>
             {topBusinesses.map((b) => (
               <button
@@ -1880,6 +2686,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               </button>
             ))}
           </div>
+          )}
         </section>
       )}
 
@@ -2087,17 +2894,17 @@ const ProductGridSkeleton = () => (
 );
 
 // ============ PRODUCT DETAIL ============
-const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded }) => {
+const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded, startCryptoCheckout, onAddToCart, checkoutSubmitting }) => {
   if (!product) {
     return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   }
   const contact = buildContactLinks(product);
-  const { waLink, tgLink, smsLink, anyAvailable } = contact;
-
-  // Smart unified CTA: prefers WhatsApp, then Telegram, then SMS.
-  // Opens the first available channel directly so user doesn't have to choose if there's only one.
-  const primaryHref = waLink || tgLink || smsLink || '#';
-  const primaryLabel = waLink ? 'WhatsApp' : tgLink ? 'Telegram' : smsLink ? 'SMS' : '';
+  const { waLink, tgLink, phoneLink, smsLink, anyAvailable } = contact;
+  const contactsHidden =
+    product.contactsHidden === true ||
+    product.showPublicContact === false ||
+    product.business?.contactsHidden === true ||
+    product.business?.showContactsPublicly === false;
   const isFav = favorites.includes(product.id);
 
   return (
@@ -2141,9 +2948,8 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 
           {/* Contact section */}
           <div className="mt-6 p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
-            {/* Privacy mode: product or business hides digital contacts → show physical info */}
-            {(product.contactsHidden || product.business?.contactsHidden) ? (() => {
-              // Effective physical info: product-level fields override business-level
+            {/* Mostrar solo los canales configurados y respetar la privacidad. */}
+            {contactsHidden ? (() => {
               const province = product.province || product.business?.province;
               const municipality = product.municipality || product.business?.municipality;
               const address = product.address || product.business?.address;
@@ -2162,10 +2968,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   {(address || locLine) && (
                     <div className="text-sm text-muted-foreground flex items-start gap-2">
                       <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0 text-[#00A86B]" />
-                      <span>
-                        {address && <>{address}<br /></>}
-                        {locLine}
-                      </span>
+                      <span>{address && <>{address}<br /></>}{locLine}</span>
                     </div>
                   )}
                   {(opening || closing) && (
@@ -2176,51 +2979,58 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   )}
                 </div>
               );
-            })() : anyAvailable ? (
-              <>
-                {/* Primary CTA — Web3-style */}
-                <a
-                  href={primaryHref}
-                  target={primaryHref.startsWith('sms:') ? undefined : '_blank'}
-                  rel="noopener noreferrer"
-                  className="block w-full h-14 rounded-xl brand-gradient text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
-                  aria-label="Contactar vendedor"
-                >
-                  <MessageCircle className="h-5 w-5" />
-                  Contactar vendedor
-                  <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
-                </a>
-
-                {/* Secondary channels — only shown if there are 2+ channels */}
-                {((!!waLink + !!tgLink + !!smsLink) > 1) && (
-                  <>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-4 mb-2 text-center font-semibold">
-                      O elige otro canal
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {waLink && (
-                        <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <MessageCircle className="h-4 w-4" /> {t.whatsapp}
-                        </a>
-                      )}
-                      {tgLink && (
-                        <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <Send className="h-4 w-4" /> {t.telegram}
-                        </a>
-                      )}
-                      {smsLink && (
-                        <a href={smsLink} className="h-11 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <Phone className="h-4 w-4" /> {t.sms}
-                        </a>
-                      )}
-                    </div>
-                  </>
+            })() : (
+              <div className="space-y-3">
+                <div className="font-semibold text-base">Contactar vendedor</div>
+                {anyAvailable ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {waLink && (
+                      <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <MessageCircle className="h-5 w-5" /> WhatsApp
+                      </a>
+                    )}
+                    {tgLink && (
+                      <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <Send className="h-5 w-5" /> Telegram
+                      </a>
+                    )}
+                    {phoneLink && (
+                      <a href={phoneLink} className="h-12 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <Phone className="h-5 w-5" /> Llamar
+                      </a>
+                    )}
+                    {smsLink && (
+                      <a href={smsLink} className="h-12 rounded-xl border border-border hover:bg-muted font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <MessageCircle className="h-5 w-5" /> SMS
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Este vendedor no configuró canales de contacto.
+                  </div>
                 )}
-              </>
-            ) : (
-              <div className="text-center py-3 text-sm text-muted-foreground">
-                Este vendedor no configuró canales de contacto.
               </div>
+            )}
+
+            {/* Las opciones de compra no dependen de los canales de contacto. */}
+            {product.stock > 0 && (
+              <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-4 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
+                <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
+              </Button>
+            )}
+
+            {product.stock > 0 && (
+              <Button
+                onClick={() => startCryptoCheckout(product)}
+                disabled={checkoutSubmitting}
+                className="w-full h-14 rounded-xl mt-3 bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg"
+                aria-label="Comprar con criptomonedas"
+              >
+                {checkoutSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CreditCard className="h-5 w-5" />}
+                Comprar con Crypto
+                <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
+              </Button>
             )}
           </div>
 
@@ -2240,7 +3050,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   />
                 ) : (
                   <div className="h-14 w-14 rounded-full brand-gradient flex items-center justify-center text-white font-bold text-xl">
-                    {product.business.name[0]?.toUpperCase()}
+                    {product.business?.name?.[0]?.toUpperCase() || "N"}
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
@@ -2494,74 +3304,712 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
   );
 };
 
+// ============ SHOPPING CART ============
+const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting }) => {
+  const total = items.reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
+  return (
+    <section className="container mx-auto px-4 py-8 max-w-4xl">
+      <div className="flex items-center justify-between gap-3 mb-6"><div><h1 className="text-3xl font-extrabold">Mi carrito</h1><p className="text-muted-foreground">Revisa tus productos antes de pagar.</p></div><Button variant="outline" onClick={onBack}>Seguir comprando</Button></div>
+      {!items.length ? <Card><CardContent className="p-10 text-center"><ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/><h2 className="text-xl font-bold mb-2">Tu carrito está vacío</h2><p className="text-muted-foreground mb-4">Abre un producto y pulsa «Añadir al carrito».</p><Button onClick={onBack}>Ver productos</Button></CardContent></Card> : <>
+        <div className="space-y-3">{items.map(({ product, quantity }) => <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
+          {product.image ? <img src={product.image} alt={product.name || 'Producto'} className="w-20 h-20 rounded-lg object-cover bg-muted"/> : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
+          <div className="flex-1 min-w-0"><div className="font-bold truncate">{product.name || 'Producto'}</div><div className="text-sm text-muted-foreground">{product.price} {product.currency || 'CUP'} c/u</div><div className="flex items-center gap-2 mt-2"><Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button><span>{quantity}</span><Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>Quitar</Button></div></div>
+          <div className="font-bold whitespace-nowrap">{((Number(product.price) || 0) * quantity).toLocaleString('es-ES')} {product.currency || 'CUP'}</div>
+        </CardContent></Card>)}</div>
+        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">Subtotal estimado</div><div className="text-2xl font-extrabold">{total.toLocaleString('es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">El servidor calcula el importe definitivo al crear el pedido.</p></div><Button size="lg" disabled={submitting} onClick={() => onCheckout(items)} className="brand-gradient text-white font-bold">{submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}Pagar carrito con crypto</Button></CardContent></Card>
+      </>}
+    </section>
+  );
+};
+
 // ============ BUYER DASHBOARD ============
-const BuyerDashboard = ({ user, onBecomeSeller, onFavorites, favoritesCount }) => (
-  <section className="container mx-auto px-4 py-8">
-    <div className="mb-6">
-      <h1 className="text-3xl font-extrabold">Hola, {user.name || user.email.split('@')[0]} 👋</h1>
-      <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
-    </div>
+const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount }) => {
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState('');
+  const [openInvoiceId, setOpenInvoiceId] = useState(null);
+  const [invoices, setInvoices] = useState({});
+  const [invoiceLoading, setInvoiceLoading] = useState({});
+  const [invoiceErrors, setInvoiceErrors] = useState({});
+  const [invoiceTxHashes, setInvoiceTxHashes] = useState({});
+  const [invoiceSubmitLoading, setInvoiceSubmitLoading] = useState({});
+  const [invoiceSubmitMessages, setInvoiceSubmitMessages] = useState({});
+  const [receiptConfirmLoading, setReceiptConfirmLoading] = useState({});
+  const [receiptConfirmMessages, setReceiptConfirmMessages] = useState({});
 
-    {/* Upgrade banner */}
-    <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
-      <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
-        <div>
-          <Badge className="bg-white/20 text-white border-0 mb-2">Próximo: Plan PRO</Badge>
-          <h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2>
-          <p className="text-white/90 mt-1 max-w-lg">
-            Conviértete en vendedor gratis y publica hasta 10 productos. Cuando lo necesites, pásate a PRO para productos ilimitados.
-          </p>
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!token) {
+      setOrders([]);
+      setOrdersLoading(false);
+      setOrdersError('Inicia sesión para consultar tus pedidos.');
+      return () => { cancelled = true; };
+    }
+
+    setOrdersLoading(true);
+    setOrdersError('');
+
+    api('/my/orders', { token })
+      .then((data) => {
+        if (!cancelled) {
+          setOrders(Array.isArray(data.orders) ? data.orders : []);
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setOrdersError(error?.message || 'No se pudieron cargar tus pedidos.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOrdersLoading(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const loadInvoice = async (order) => {
+    if (openInvoiceId === order.id) {
+      setOpenInvoiceId(null);
+      return;
+    }
+
+    setOpenInvoiceId(order.id);
+    if (invoices[order.id] || invoiceLoading[order.id]) return;
+
+    setInvoiceLoading((prev) => ({ ...prev, [order.id]: true }));
+    setInvoiceErrors((prev) => ({ ...prev, [order.id]: '' }));
+
+    try {
+      const data = await api(`/orders/${encodeURIComponent(order.id)}/invoice`, { token });
+      setInvoices((prev) => ({ ...prev, [order.id]: data.invoice }));
+    } catch (error) {
+      setInvoiceErrors((prev) => ({
+        ...prev,
+        [order.id]: error?.message || 'No se pudo cargar la factura.',
+      }));
+    } finally {
+      setInvoiceLoading((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+
+  const downloadOrderInvoice = async (order) => {
+    try {
+      const response = await fetch(
+        `${API}/orders/${encodeURIComponent(order.id)}/invoice/pdf`,
+        { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' }
+      );
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'No se pudo descargar la factura.');
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `factura-${String(order.id || 'pedido').slice(0, 8)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+    } catch (error) {
+      toast.error(error?.message || 'No se pudo descargar la factura.');
+    }
+  };
+
+  const downloadInvoiceQR = async (order) => {
+    if (!order?.publicInvoiceId) {
+      toast.error('La factura todavía no tiene identificador.');
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${API}/public/invoices/${encodeURIComponent(order.publicInvoiceId)}/qr.png`,
+        { cache: 'no-store' }
+      );
+      if (!response.ok) throw new Error('No se pudo descargar el QR.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `qr-factura-${String(order.publicInvoiceId).slice(0, 8)}.png`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (error) {
+      toast.error(error?.message || 'Error descargando el QR.');
+    }
+  };
+
+  const confirmOrderReceipt = async (order) => {
+    if (!order?.publicInvoiceId) {
+      setReceiptConfirmMessages((prev) => ({
+        ...prev,
+        [order.id]: 'Esta factura todavía no tiene identificador válido.'
+      }));
+      return;
+    }
+
+    setReceiptConfirmLoading((prev) => ({ ...prev, [order.id]: true }));
+    setReceiptConfirmMessages((prev) => ({ ...prev, [order.id]: '' }));
+
+    try {
+      const data = await api(
+        `/orders/${encodeURIComponent(order.id)}/confirm-receipt`,
+        {
+          method: 'POST',
+          token,
+          body: { publicInvoiceId: order.publicInvoiceId }
+        }
+      );
+
+      if (data.order) {
+        setOrders((prev) =>
+          prev.map((item) => item.id === order.id ? data.order : item)
+        );
+      }
+
+      setReceiptConfirmMessages((prev) => ({
+        ...prev,
+        [order.id]: data.message || 'Recepción confirmada correctamente.'
+      }));
+    } catch (error) {
+      setReceiptConfirmMessages((prev) => ({
+        ...prev,
+        [order.id]: error?.message || 'No se pudo confirmar la recepción.'
+      }));
+    } finally {
+      setReceiptConfirmLoading((prev) => ({ ...prev, [order.id]: false }));
+    }
+  };
+
+  const submitInvoiceTxHash = async (order) => {
+    const txHash = (invoiceTxHashes[order.id] || '').trim();
+
+    if (!txHash) {
+      setInvoiceSubmitMessages((prev) => ({
+        ...prev,
+        [order.id]: 'Introduce el hash de la transacción.',
+      }));
+      return;
+    }
+
+    setInvoiceSubmitLoading((prev) => ({ ...prev, [order.id]: true }));
+    setInvoiceSubmitMessages((prev) => ({ ...prev, [order.id]: '' }));
+
+    try {
+      const result = await api(
+        `/orders/${encodeURIComponent(order.id)}/invoice/submit-tx`,
+        {
+          method: 'POST',
+          token,
+          body: { txHash },
+        }
+      );
+
+      setInvoices((prev) => ({
+        ...prev,
+        [order.id]: result.invoice,
+      }));
+
+      setInvoiceTxHashes((prev) => ({
+        ...prev,
+        [order.id]: '',
+      }));
+
+      setInvoiceSubmitMessages((prev) => ({
+        ...prev,
+        [order.id]: result.message || 'Hash enviado. Pago pendiente de verificación.',
+      }));
+    } catch (error) {
+      setInvoiceSubmitMessages((prev) => ({
+        ...prev,
+        [order.id]: error?.message || 'No se pudo enviar el hash.',
+      }));
+    } finally {
+      setInvoiceSubmitLoading((prev) => ({
+        ...prev,
+        [order.id]: false,
+      }));
+    }
+  };
+
+  const formatMoney = (amount, currency = 'USD') => {
+    const value = Number(amount);
+    if (!Number.isFinite(value)) return `— ${currency}`;
+    try {
+      return new Intl.NumberFormat('es-ES', {
+        style: 'currency',
+        currency: currency || 'USD',
+      }).format(value);
+    } catch {
+      return `${value.toFixed(2)} ${currency || 'USD'}`;
+    }
+  };
+
+  const formatDate = (value) => {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? '—'
+      : date.toLocaleString('es-ES');
+  };
+
+  return (
+    <section className="container mx-auto px-4 py-8">
+      <div className="mb-6">
+        <h1 className="text-3xl font-extrabold">
+          Hola, {user.name || user.email?.split('@')[0] || 'comprador'} 👋
+        </h1>
+        <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
+      </div>
+
+      {showBecomeSeller && (
+        <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
+          <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div><Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge><h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2><p className="text-white/90 mt-1 max-w-lg">Conviértete en vendedor gratis y publica hasta 10 productos.</p></div>
+            <Button size="lg" onClick={onBecomeSeller} className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6"><Store className="h-5 w-5 mr-2" /> Hazte vendedor</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      <div className="grid md:grid-cols-3 gap-4">
+        <Card className="hover-lift cursor-pointer" onClick={onFavorites}>
+          <CardContent className="p-6">
+            <Heart className="h-8 w-8 text-red-500 mb-2" />
+            <div className="text-2xl font-bold">{favoritesCount}</div>
+            <div className="text-sm text-muted-foreground">Productos guardados</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <Mail className="h-8 w-8 text-[#1565C0] mb-2" />
+            <div className="text-sm font-semibold break-all">{user.email}</div>
+            <div className="text-xs text-muted-foreground">Email de tu cuenta</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <Sparkles className="h-8 w-8 text-amber-500 mb-2" />
+            <div className="text-2xl font-bold capitalize">{user.plan || 'free'}</div>
+            <div className="text-xs text-muted-foreground">Tu plan actual</div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="mt-8">
+        <h2 className="text-2xl font-bold mb-4">Mis pedidos y facturas</h2>
+
+        {ordersLoading && (
+          <Card><CardContent className="p-6">Cargando tus pedidos…</CardContent></Card>
+        )}
+
+        {!ordersLoading && ordersError && (
+          <Card>
+            <CardContent className="p-6">
+              <p className="text-sm text-red-600">{ordersError}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {!ordersLoading && !ordersError && orders.length === 0 && (
+          <Card>
+            <CardContent className="p-6 text-muted-foreground">
+              Todavía no tienes pedidos asociados a esta cuenta.
+            </CardContent>
+          </Card>
+        )}
+
+        <div className="space-y-4">
+          {orders.map((order) => (
+            <Card key={order.id || order._id}>
+              <CardContent className="p-5 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold break-all">
+                      Pedido {order.id || order._id}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Fecha: {formatDate(order.createdAt)}
+                    </p>
+                    <p className="text-sm">
+                      Estado del pedido: <strong>{order.status || order.shippingStatus || 'Pendiente'}</strong>
+                    </p>
+                    <p className="text-sm">
+                      Estado del pago: <strong>{order.paymentStatus || 'Pendiente'}</strong>
+                    </p>
+                  </div>
+                  <div className="md:text-right">
+                    <div className="text-xl font-bold">
+                      {formatMoney(order.total, order.currency || 'USD')}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {order.businessName || 'Comercio'}
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Productos</h4>
+                  {Array.isArray(order.items) && order.items.length > 0 ? (
+                    <ul className="list-disc pl-5 space-y-1">
+                      {order.items.map((item, index) => (
+                        <li key={item.productId || item.id || index} className="text-sm">
+                          {item.name || item.title || 'Producto'}
+                          {' · Cantidad: '}{item.quantity ?? 1}
+                          {' · '}{formatMoney(
+                            item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 1)),
+                            item.currency || order.currency || 'USD'
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No hay detalles de productos disponibles.</p>
+                  )}
+                </div>
+
+                {order.shipping && (
+                  <div className="rounded-lg border p-3">
+                    <h4 className="font-semibold mb-1">Datos de entrega</h4>
+                    {order.shipping.recipientId && <p className="text-sm">ID del destinatario: {order.shipping.recipientId}</p>}
+                    {order.shipping.name && <p className="text-sm">Nombre: {order.shipping.name}</p>}
+                    {order.shipping.email && <p className="text-sm">Correo electrónico: {order.shipping.email}</p>}
+                    {order.shipping.phone && <p className="text-sm">Teléfono: {order.shipping.phone}</p>}
+                    {order.shipping.address && <p className="text-sm">Dirección: {order.shipping.address}</p>}
+                    {order.shipping.notes && <p className="text-sm">Notas: {order.shipping.notes}</p>}
+                  </div>
+                )}
+
+                {order.trackingNumber && (
+                  <p className="text-sm">
+                    Seguimiento: {order.trackingNumber}
+                    {order.trackingCarrier ? ` · ${order.trackingCarrier}` : ''}
+                  </p>
+                )}
+
+                {/* Seguimiento del envío visible para el comprador */}
+                {(order.shippingStatus || order.trackingNumber || order.trackingCarrier ||
+                  (Array.isArray(order.statusHistory) && order.statusHistory.length > 0) ||
+                  (Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0)) && (
+                  <div className="rounded-lg border p-3 space-y-3">
+                    <h3 className="font-semibold">Seguimiento del envío</h3>
+                    {order.shippingStatus && (
+                      <p className="text-sm">
+                        Estado:
+                        <strong className="ml-1">
+                          {{
+                            processing: 'Preparando pedido',
+                            shipped: 'Enviado',
+                            delivered: 'Entregado'
+                          }[order.shippingStatus] || order.shippingStatus}
+                        </strong>
+                      </p>
+                    )}
+                    {(order.trackingNumber || order.trackingCarrier) && (
+                      <p className="text-sm">
+                        Transportista: {order.trackingCarrier || 'No indicado'}
+                        {' · '}Seguimiento: {order.trackingNumber || 'Pendiente'}
+                      </p>
+                    )}
+                    {Array.isArray(order.statusHistory) && order.statusHistory.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Historial del envío</h4>
+                        {[...order.statusHistory].reverse().map((entry, index) => (
+                          <div key={entry.id || `${entry.at || entry.createdAt || 'evento'}-${index}`}
+                               className="border-l-2 pl-3 py-1 space-y-1">
+                            <p className="text-sm font-medium">
+                              {{
+                                processing: 'Preparando pedido',
+                                shipped: 'Enviado',
+                                delivered: 'Entregado'
+                              }[entry.status] || entry.status || 'Actualización'}
+                            </p>
+                            {(entry.at || entry.createdAt) && (
+                              <p className="text-xs text-muted-foreground">
+                                {new Date(entry.at || entry.createdAt).toLocaleString()}
+                              </p>
+                            )}
+                            {entry.trackingCarrier && (
+                              <p className="text-sm">Transportista: {entry.trackingCarrier}</p>
+                            )}
+                            {entry.trackingNumber && (
+                              <p className="text-sm">Seguimiento: {entry.trackingNumber}</p>
+                            )}
+                            {entry.notes && <p className="text-sm">{entry.notes}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium">Fotos de entrega</h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          {order.deliveryPhotos.map((photo, index) => (
+                            <a key={`${photo}-${index}`} href={photo}
+                               target="_blank" rel="noopener noreferrer"
+                               className="block">
+                              <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                                   loading="lazy"
+                                   className="w-full h-28 object-cover rounded-md border" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => downloadOrderInvoice(order)}
+                  >
+                    Descargar factura PDF con QR
+                  </Button>
+                  {order.publicInvoiceId && (
+                    <Button variant="outline" onClick={() => downloadInvoiceQR(order)}>
+                      Descargar QR en PNG
+                    </Button>
+                  )}
+                  {order.publicInvoiceId && (
+                    <Button variant="outline" onClick={() =>
+                      window.open(`/invoice/${encodeURIComponent(order.publicInvoiceId)}`, '_blank', 'noopener,noreferrer')
+                    }>
+                      Verificar factura
+                    </Button>
+                  )}
+                </div>
+
+                {order.publicInvoiceId && (
+                  <p className="text-xs text-muted-foreground pt-2 break-all">
+                    Número de factura: <strong>{order.publicInvoiceId}</strong>
+                  </p>
+                )}
+
+                {(
+                  order.paymentStatus === 'paid' ||
+                  order.status === 'paid' ||
+                  order.status === 'delivered'
+                ) && (
+                  <>
+                    {(order.shippingStatus === 'delivered' || order.status === 'delivered') &&
+                     (
+                       order.paymentStatus === 'paid' ||
+                       order.status === 'paid' ||
+                       (!order.paymentStatus && ['processing', 'shipped', 'delivered'].includes(order.status))
+                     ) && (
+                      <div className="pt-3 space-y-2">
+                        {order.buyerReceiptConfirmation?.confirmedAt ? (
+                          <p className="text-sm text-green-700 font-medium">
+                            Recepción confirmada.
+                          </p>
+                        ) : (
+                          <Button
+                            onClick={() => confirmOrderReceipt(order)}
+                            disabled={
+                              !!receiptConfirmLoading[order.id] ||
+                              !order.publicInvoiceId
+                            }
+                          >
+                            {receiptConfirmLoading[order.id]
+                              ? 'Confirmando recepción…'
+                              : 'Confirmar recepción'}
+                          </Button>
+                        )}
+                        {receiptConfirmMessages[order.id] && (
+                          <p className="text-sm" role="status">
+                            {receiptConfirmMessages[order.id]}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {order.cryptoInvoiceId && (
+                  <div className="pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => loadInvoice(order)}
+                      disabled={!!invoiceLoading[order.id]}
+                    >
+                      {invoiceLoading[order.id]
+                        ? 'Cargando factura…'
+                        : openInvoiceId === order.id
+                          ? 'Ocultar factura'
+                          : 'Ver factura de pago'}
+                    </Button>
+
+                    {openInvoiceId === order.id && invoiceErrors[order.id] && (
+                      <p className="text-sm text-red-600 mt-2">{invoiceErrors[order.id]}</p>
+                    )}
+
+                    {openInvoiceId === order.id && invoices[order.id] && (
+                      <div className="rounded-lg border p-4 mt-3 space-y-1 break-words">
+                        <h4 className="font-semibold">Factura de pago</h4>
+                        <p className="text-sm">
+                          Estado: <strong>{invoices[order.id].status || 'Pendiente'}</strong>
+                        </p>
+                        <p className="text-sm">
+                          Importe esperado: <strong>
+                            {formatMoney(
+                              invoices[order.id].expectedAmount,
+                              invoices[order.id].currency || 'USDT'
+                            )}
+                          </strong>
+                        </p>
+                        <p className="text-sm">Red: {invoices[order.id].network || '—'}</p>
+                        <p className="text-sm">
+                          Dirección de pago: {invoices[order.id].receiverAddress || '—'}
+                        </p>
+                        <p className="text-sm">
+                          Vence: {formatDate(invoices[order.id].expiresAt)}
+                        </p>
+                        {invoices[order.id].txHash && (
+                          <p className="text-sm break-all">
+                            Transacción enviada: {invoices[order.id].txHash}
+                          </p>
+                        )}
+
+                        {!['approved', 'rejected', 'expired', 'submitted'].includes(
+                          String(invoices[order.id].status || '').toLowerCase()
+                        ) && (
+                          <div className="pt-3 space-y-2">
+                            <Label htmlFor={`invoice-tx-${order.id}`}>
+                              Hash de la transacción
+                            </Label>
+                            <Input
+                              id={`invoice-tx-${order.id}`}
+                              value={
+                                invoiceTxHashes[order.id] ??
+                                invoices[order.id].txHash ??
+                                ''
+                              }
+                              onChange={(event) => {
+                                const value = event.target.value;
+                                setInvoiceTxHashes((prev) => ({
+                                  ...prev,
+                                  [order.id]: value,
+                                }));
+                              }}
+                              placeholder="Pega aquí el hash de la operación"
+                              autoComplete="off"
+                              spellCheck={false}
+                              className="font-mono text-sm"
+                              disabled={!!invoiceSubmitLoading[order.id]}
+                            />
+                            <Button
+                              type="button"
+                              onClick={() => submitInvoiceTxHash(order)}
+                              disabled={
+                                !!invoiceSubmitLoading[order.id] ||
+                                !(invoiceTxHashes[order.id] ??
+                                  invoices[order.id].txHash ??
+                                  '').trim()
+                              }
+                            >
+                              {invoiceSubmitLoading[order.id]
+                                ? 'Enviando hash…'
+                                : 'Enviar hash'}
+                            </Button>
+                            {invoiceSubmitMessages[order.id] && (
+                              <p className="text-sm break-words" role="status">
+                                {invoiceSubmitMessages[order.id]}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
         </div>
-        <Button size="lg" onClick={onBecomeSeller} className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6">
-          <Store className="h-5 w-5 mr-2" /> Hazte vendedor
-        </Button>
-      </CardContent>
-    </Card>
+      </div>
 
-    {/* Grid de info */}
-    <div className="grid md:grid-cols-3 gap-4">
-      <Card className="hover-lift cursor-pointer" onClick={onFavorites}>
-        <CardContent className="p-6">
-          <Heart className="h-8 w-8 text-red-500 mb-2" />
-          <div className="text-2xl font-bold">{favoritesCount}</div>
-          <div className="text-sm text-muted-foreground">Productos guardados</div>
+      <Card className="mt-6 border-dashed">
+        <CardContent className="p-6 text-center">
+          <Crown className="h-10 w-10 mx-auto text-amber-500 mb-3" />
+          <h3 className="text-xl font-bold mb-2">UBIK2 YEMG PRO — Próximamente</h3>
+          <p className="text-muted-foreground max-w-lg mx-auto text-sm">
+            Funciones premium para compradores: alertas de precios, búsquedas guardadas,
+            contacto directo prioritario y mucho más.
+          </p>
         </CardContent>
       </Card>
-      <Card>
-        <CardContent className="p-6">
-          <Mail className="h-8 w-8 text-[#1565C0] mb-2" />
-          <div className="text-sm font-semibold truncate">{user.email}</div>
-          <div className="text-xs text-muted-foreground">Email de tu cuenta</div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-6">
-          <Sparkles className="h-8 w-8 text-amber-500 mb-2" />
-          <div className="text-2xl font-bold capitalize">{user.plan || 'free'}</div>
-          <div className="text-xs text-muted-foreground">Tu plan actual</div>
-        </CardContent>
-      </Card>
-    </div>
-
-    {/* Próximamente PRO */}
-    <Card className="mt-6 border-dashed">
-      <CardContent className="p-6 text-center">
-        <Crown className="h-10 w-10 mx-auto text-amber-500 mb-3" />
-        <h3 className="text-xl font-bold mb-2">UBIK2 YEMG PRO — Próximamente</h3>
-        <p className="text-muted-foreground max-w-lg mx-auto text-sm">
-          Funciones premium para compradores: alertas de precios, búsquedas guardadas, contacto directo prioritario, comparador y mucho más.
-        </p>
-      </CardContent>
-    </Card>
-  </section>
-);
+    </section>
+  );
+};
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, onLogoChange }) => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token }) => {
+  const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
   const [tab, setTab] = React.useState('all');
   const [groupByCategory, setGroupByCategory] = React.useState(false);
+  const [sellerOrders, setSellerOrders] = React.useState([]);
+  const [sellerOrdersLoading, setSellerOrdersLoading] = React.useState(true);
+  const [sellerOrdersError, setSellerOrdersError] = React.useState('');
+  const [sellerOrderForms, setSellerOrderForms] = React.useState({});
+  const [sellerOrderSaving, setSellerOrderSaving] = React.useState({});
+  const [sellerOrderMessage, setSellerOrderMessage] = React.useState({});
+
+  const [cryptoPayoutWallets, setCryptoPayoutWallets] = React.useState({ ...(business?.cryptoPayoutWallets || {}) });
+  const [walletSaving, setWalletSaving] = React.useState(false);
+  const [walletMessage, setWalletMessage] = React.useState('');
+
+  React.useEffect(() => {
+    setCryptoPayoutWallets({ ...(business?.cryptoPayoutWallets || {}) });
+  }, [business?.id]);
+
+  const saveCryptoPayoutWallets = async () => {
+    if (!business?.id || walletSaving) return;
+    setWalletSaving(true);
+    setWalletMessage('');
+    try {
+      const result = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: { cryptoPayoutWallets }
+      });
+      if (result?.error) throw new Error(result.error);
+      setWalletMessage('Billeteras guardadas correctamente.');
+    } catch (error) {
+      setWalletMessage(error?.message || 'No se pudieron guardar las billeteras.');
+    } finally {
+      setWalletSaving(false);
+    }
+  };
+
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setSellerOrdersLoading(true);
+      setSellerOrdersError('');
+      try {
+        const result = await api('/seller/orders', { token });
+        if (!cancelled) {
+          setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+        }
+      } finally {
+        if (!cancelled) setSellerOrdersLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, business?.id]);
 
   // Stats derived once
   const stats = React.useMemo(() => {
@@ -2660,6 +4108,12 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            Pedidos y entregas ({sellerOrders.length})
+          </Button>
           <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio">
             <Share2 className="h-4 w-4 mr-2" /> Compartir negocio
           </Button>
@@ -2694,7 +4148,53 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
         </Card>
       )}
 
-      {/* Stats — 4 cards instead of 3 */}
+
+<div className="mb-6 rounded-xl border border-gray-200 p-4">
+  <h2 className="mb-2 text-lg font-semibold">Billeteras para recibir pagos</h2>
+  <p className="mb-4 text-sm text-gray-600">
+    Configura las direcciones de destino de tu negocio. Deja vacío un campo para borrar esa dirección.
+    Guardar estos datos no activa transferencias automáticas.
+  </p>
+  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+    {[
+      ['TRC20', 'TRON (TRC20) — USDT'],
+      ['ERC20', 'Ethereum (ERC20)'],
+      ['POLYGON', 'Polygon'],
+      ['BASE', 'Base'],
+      ['ARBITRUM', 'Arbitrum'],
+      ['BEP20', 'BNB Smart Chain']
+    ].map(([network, label]) => (
+      <label key={network} className="block text-sm font-medium">
+        {label}
+        <input
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          value={cryptoPayoutWallets[network] || ''}
+          onChange={(event) => setCryptoPayoutWallets((previous) => ({
+            ...previous,
+            [network]: event.target.value
+          }))}
+          placeholder={`Dirección ${network}`}
+          className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+        />
+      </label>
+    ))}
+  </div>
+  <div className="mt-4 flex flex-wrap items-center gap-3">
+    <button
+      type="button"
+      onClick={saveCryptoPayoutWallets}
+      disabled={walletSaving}
+      className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white disabled:opacity-50"
+    >
+      {walletSaving ? 'Guardando…' : 'Guardar billeteras'}
+    </button>
+    <span role="status" aria-live="polite" className="text-sm">{walletMessage}</span>
+  </div>
+</div>
+
+{/* Stats — 4 cards instead of 3 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <Card><CardContent className="p-4">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Total productos</div>
@@ -2769,16 +4269,321 @@ const Dashboard = ({ user, business, products, onNew, onEdit, onDelete, onPlan, 
           {visibleProducts.map(renderProductCard)}
         </div>
       )}
+
+      {/* Seguimiento de pedidos del vendedor - Fase 5 */}
+      <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-4">
+        <div>
+          <h2 className="text-xl font-bold">Pedidos y entregas</h2>
+          <p className="text-sm text-muted-foreground">
+            Actualiza el envío de los pedidos de tu comercio. Solo puedes gestionar pedidos con el pago confirmado.
+          </p>
+        </div>
+
+        {sellerOrdersLoading && (
+          <Card><CardContent className="p-4 text-sm">Cargando pedidos...</CardContent></Card>
+        )}
+
+        {sellerOrdersError && (
+          <Card className="border-destructive">
+            <CardContent className="p-4 text-sm text-destructive">
+              {sellerOrdersError}
+              <Button size="sm" variant="outline" className="ml-3"
+                onClick={async () => {
+                  setSellerOrdersLoading(true);
+                  setSellerOrdersError('');
+                  try {
+                    const result = await api('/seller/orders', { token });
+                    setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
+                  } catch (error) {
+                    setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+                  } finally {
+                    setSellerOrdersLoading(false);
+                  }
+                }}>
+                Reintentar
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {!sellerOrdersLoading && !sellerOrdersError && sellerOrders.length === 0 && (
+          <Card><CardContent className="p-5 text-sm text-muted-foreground">
+            Todavía no hay pedidos para este comercio.
+          </CardContent></Card>
+        )}
+
+        <div className="space-y-4">
+          {sellerOrders.map((order) => {
+            const form = sellerOrderForms[order.id] || {};
+            const saving = Boolean(sellerOrderSaving[order.id]);
+            const message = sellerOrderMessage[order.id];
+            const photos = Array.isArray(order.deliveryPhotos) ? order.deliveryPhotos : [];
+            const history = Array.isArray(order.statusHistory) ? [...order.statusHistory].reverse() : [];
+            const paid = (order.paymentStatus || (order.status === 'paid' ? 'paid' : '')) === 'paid';
+            const currentStatus = ['processing', 'shipped', 'delivered'].includes(order.shippingStatus)
+              ? order.shippingStatus
+              : (['processing', 'shipped', 'delivered'].includes(order.status) ? order.status : 'processing');
+            const deliveryMethod = order.deliveryMethod || order.shipping?.deliveryMethod || 'pickup';
+            const availableStatuses = currentStatus === 'delivered'
+              ? ['delivered']
+              : deliveryMethod === 'pickup'
+                ? (currentStatus === 'processing' ? ['processing', 'delivered'] : [currentStatus, 'delivered'])
+                : (currentStatus === 'processing' ? ['processing', 'shipped'] : ['shipped', 'delivered']);
+
+            return (
+              <Card key={order.id}>
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-bold">Pedido #{String(order.id || 'Sin identificador')}</h3>
+                      <p className="text-xs text-muted-foreground">
+                        {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Fecha no disponible'}
+                      </p>
+                    </div>
+                    <Badge variant={paid ? 'default' : 'outline'}>
+                      {paid ? 'Pago confirmado' : 'Pago pendiente'}
+                    </Badge>
+                  </div>
+
+                  {order.buyerReceiptConfirmation?.confirmedAt ? (
+                    <p className="text-sm font-medium text-green-700">
+                      El comprador confirmó la recepción.
+                    </p>
+                  ) : currentStatus === 'delivered' ? (
+                    <p className="text-sm text-amber-700">
+                      Entrega marcada. Pendiente de confirmación del comprador.
+                    </p>
+                  ) : null}
+
+                  <div className="text-sm space-y-1">
+                    {(Array.isArray(order.items) ? order.items : []).map((item, index) => (
+                      <div key={item.id || item.productId || index} className="flex justify-between gap-3">
+                        <span>{item.productName || item.name || item.title || 'Producto'} × {item.quantity || item.qty || 1}</span>
+                      </div>
+                    ))}
+                    <div className="font-semibold pt-1">
+                      Total: {formatPrice(Number(order.total || order.totalCUP || 0), order.currency || 'CUP')}
+                    </div>
+                  </div>
+
+                  {order.trackingNumber && (
+                    <p className="text-sm">
+                      Seguimiento actual: <b>{order.trackingCarrier || 'Transportista no indicado'}</b>
+                      {' · '}{order.trackingNumber}
+                    </p>
+                  )}
+
+                  {!paid && (
+                    <p className="text-sm text-amber-700 dark:text-amber-400">
+                      No puedes actualizar el envío hasta que el pago esté confirmado.
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Estado del envío</Label>
+                      <select
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                        value={form.status || currentStatus}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], status: e.target.value }
+                        }))}
+                      >
+                        {availableStatuses.map((statusOption) => (
+                          <option key={statusOption} value={statusOption}>
+                            {{
+                              processing: 'En preparación',
+                              shipped: 'Enviado',
+                              delivered: 'Entregado',
+                            }[statusOption] || statusOption}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Transportista</Label>
+                      <Input
+                        maxLength={50}
+                        placeholder="Ej. transportista local"
+                        value={form.trackingCarrier ?? order.trackingCarrier ?? ''}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], trackingCarrier: e.target.value }
+                        }))}
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label>Número de seguimiento</Label>
+                      <Input
+                        maxLength={100}
+                        placeholder="Código o referencia del envío"
+                        value={form.trackingNumber ?? order.trackingNumber ?? ''}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], trackingNumber: e.target.value }
+                        }))}
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label>Notas para el comprador</Label>
+                      <textarea
+                        className="w-full min-h-20 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        maxLength={1000}
+                        placeholder="Información sobre la preparación o entrega"
+                        value={form.notes ?? ''}
+                        disabled={!paid || saving}
+                        onChange={(e) => setSellerOrderForms((old) => ({
+                          ...old,
+                          [order.id]: { ...old[order.id], notes: e.target.value }
+                        }))}
+                      />
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label>Fotos de entrega (máximo 4 por actualización)</Label>
+                      <Input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        multiple
+                        disabled={!paid || saving}
+                        onChange={async (e) => {
+                          const files = Array.from(e.target.files || []).slice(0, 4);
+                          if (e.target.files?.length > 4) {
+                            toast.error('Selecciona como máximo 4 fotos por actualización.');
+                          }
+                          try {
+                            const converted = await Promise.all(
+                              files.map((file) => compressImage(file, 1000, 0.72))
+                            );
+                            const size = converted.reduce((sum, photo) => sum + photo.length, 0);
+                            if (size > 3 * 1024 * 1024) {
+                              throw new Error('Las fotos comprimidas superan 3 MB en total. Selecciona menos fotos.');
+                            }
+                            setSellerOrderForms((old) => ({
+                              ...old,
+                              [order.id]: { ...old[order.id], deliveryPhotos: converted }
+                            }));
+                          } catch (error) {
+                            toast.error(error?.message || 'No se pudieron procesar las fotos.');
+                            e.target.value = '';
+                          }
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Las fotos seleccionadas se subirán al guardar. Fotos ya registradas: {photos.length}/12.
+                      </p>
+                      {(form.deliveryPhotos || []).length > 0 && (
+                        <p className="text-xs">{form.deliveryPhotos.length} foto(s) nuevas seleccionadas.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {message && (
+                    <p className={`text-sm ${message.type === 'error' ? 'text-destructive' : 'text-green-600'}`}>
+                      {message.text}
+                    </p>
+                  )}
+
+                  <Button
+                    className="bg-[#00A86B] hover:bg-[#008F5B] text-white"
+                    disabled={!paid || saving}
+                    onClick={async () => {
+                      setSellerOrderSaving((old) => ({ ...old, [order.id]: true }));
+                      setSellerOrderMessage((old) => ({ ...old, [order.id]: null }));
+                      try {
+                        const payload = {
+                          status: form.status || currentStatus,
+                          trackingNumber: form.trackingNumber ?? order.trackingNumber ?? '',
+                          trackingCarrier: form.trackingCarrier ?? order.trackingCarrier ?? '',
+                          notes: form.notes || '',
+                          deliveryPhotos: form.deliveryPhotos || [],
+                        };
+                        await api(`/seller/orders/${encodeURIComponent(order.id)}`, {
+                          method: 'PUT',
+                          token,
+                          body: payload,
+                        });
+                        const result = await api('/seller/orders', { token });
+                        setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
+                        setSellerOrderForms((old) => {
+                          const next = { ...old };
+                          delete next[order.id];
+                          return next;
+                        });
+                        setSellerOrderMessage((old) => ({
+                          ...old,
+                          [order.id]: { type: 'success', text: 'Seguimiento guardado correctamente.' }
+                        }));
+                      } catch (error) {
+                        setSellerOrderMessage((old) => ({
+                          ...old,
+                          [order.id]: { type: 'error', text: error?.message || 'No se pudo guardar el seguimiento.' }
+                        }));
+                      } finally {
+                        setSellerOrderSaving((old) => ({ ...old, [order.id]: false }));
+                      }
+                    }}
+                  >
+                    {saving ? 'Guardando...' : 'Guardar seguimiento'}
+                  </Button>
+
+                  {photos.length > 0 && (
+                    <div className="space-y-2">
+                      <h4 className="text-sm font-semibold">Fotos registradas</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {photos.map((photo, index) => (
+                          <a key={`${photo}-${index}`} href={photo} target="_blank" rel="noreferrer">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                              className="w-full h-24 object-cover rounded-md border" loading="lazy" />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {history.length > 0 && (
+                    <details>
+                      <summary className="cursor-pointer text-sm font-semibold">Historial de estados</summary>
+                      <div className="mt-2 space-y-2">
+                        {history.map((entry, index) => (
+                          <div key={`${entry.at || index}-${index}`} className="border-l-2 pl-3 py-1 text-sm">
+                            <div className="font-medium">
+                              {entry.status || 'Actualización'}
+                              {entry.at ? ` · ${new Date(entry.at).toLocaleString()}` : ''}
+                            </div>
+                            {entry.notes && <p className="text-muted-foreground">{entry.notes}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      </section>
+
     </section>
   );
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason }) => {
   const [editBiz, setEditBiz] = useState(null);
-  const { payments, users, products, stats, reports } = data;
-  const pending = payments.filter((p) => p.status === 'pending');
-  const pendingReports = reports.filter((r) => r.status === 'pending');
+  const payments = Array.isArray(data?.payments) ? data.payments : [];
+  const users = Array.isArray(data?.users) ? data.users : [];
+  const products = Array.isArray(data?.products) ? data.products : [];
+  const stats = data?.stats ?? null;
+  const reports = Array.isArray(data?.reports) ? data.reports : [];
+  const pending = payments.filter((p) => p?.status === 'pending');
+  const pendingReports = reports.filter((r) => r?.status === 'pending');
+  const cryptoInvoices = data.cryptoInvoices || [];
+  const cryptoPending = cryptoInvoices.filter((i) => i.status === 'submitted' || i.status === 'pending').length;
   return (
     <section className="container mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6">
@@ -2810,6 +4615,8 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="payments">Pagos {pending.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pending.length}</Badge>}</TabsTrigger>
+          <TabsTrigger value="crypto-invoices">Crypto Invoices {cryptoPending > 0 && <Badge className="ml-2 bg-blue-500 text-white border-0">{cryptoPending}</Badge>}</TabsTrigger>
+          <TabsTrigger value="orders">Pedidos ({(data.orders || []).length})</TabsTrigger>
           <TabsTrigger value="reports">Reportes {pendingReports.length > 0 && <Badge className="ml-2 bg-red-500 text-white border-0">{pendingReports.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="users">Usuarios</TabsTrigger>
           <TabsTrigger value="products">Productos</TabsTrigger>
@@ -2856,6 +4663,142 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
           ))}
         </TabsContent>
 
+        <TabsContent value="crypto-invoices" className="mt-4 space-y-3">
+          {cryptoInvoices.length === 0 ? <p className="text-muted-foreground text-center py-12">No hay facturas crypto.</p> : cryptoInvoices.map((inv) => (
+            <Card key={inv.id}>
+              <CardContent className="p-4 flex flex-col md:flex-row gap-3 md:items-center">
+                <div className="flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">{inv.business?.name || '—'}</span>
+                    <span className="text-xs text-muted-foreground">{inv.buyer?.email}</span>
+                    <Badge variant={
+                      inv.status === 'pending' ? 'default' :
+                      inv.status === 'submitted' ? 'outline' :
+                      inv.status === 'approved' ? 'secondary' :
+                      inv.status === 'rejected' ? 'destructive' : 'default'
+                    }>{inv.status}</Badge>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">
+                    {inv.currency} {inv.network} · {Number(inv.expectedAmount).toLocaleString('es-ES', {minimumFractionDigits: 2})} {inv.currency} · {inv.txHash ? inv.txHash.slice(0, 16) + '...' : 'sin hash'}
+                  </div>
+                  {inv.txHash && (
+                    <a
+                      href={({TRC20: `https://tronscan.org/#/transaction/${inv.txHash}`, ERC20: `https://etherscan.io/tx/${inv.txHash}`, POLYGON: `https://polygonscan.com/tx/${inv.txHash}`, BASE: `https://basescan.org/tx/${inv.txHash}`, ARBITRUM: `https://arbiscan.io/tx/${inv.txHash}`, BEP20: `https://bscscan.com/tx/${inv.txHash}`}[inv.network] || `https://etherscan.io/tx/${inv.txHash}`)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Ver en explorer"
+                      className="inline-block mt-2 text-xs text-blue-600 hover:underline"
+                    >
+                      Ver transacción en explorer
+                    </a>
+                  )}
+                </div>
+                {(inv.status === 'pending' || inv.status === 'submitted') && (
+                  <div className="flex gap-2 flex-wrap">
+                    {inv.status === 'submitted' && (
+                      <Button size="sm" onClick={() => onApproveCryptoInvoice(inv.id)} className="bg-green-500 hover:bg-green-600 text-white">
+                        <Check className="h-3 w-3 mr-1" /> Aprobar
+                      </Button>
+                    )}
+                    {inv.status === 'submitted' && (
+                      <Button size="sm" variant="outline" onClick={() => { setRejectCryptoInvoiceId(inv.id); setRejectCryptoReason(''); }} className="text-destructive border-destructive/40">
+                        Rechazar
+                      </Button>
+                    )}
+                    {inv.status === 'pending' && (
+                      <Button size="sm" variant="outline" onClick={() => { setRejectCryptoInvoiceId(inv.id); setRejectCryptoReason(''); }} className="text-destructive border-destructive/40">
+                        Rechazar (expirada)
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+
+          {rejectCryptoInvoiceId && (
+            <AlertDialog open onOpenChange={(open) => { if (!open) { setRejectCryptoInvoiceId(null); setRejectCryptoReason(''); } }}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Rechazar factura crypto</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Ingresa el motivo del rechazo. El stock del pedido será restaurado.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <Textarea
+                  value={rejectCryptoReason}
+                  onChange={(e) => setRejectCryptoReason(e.target.value)}
+                  placeholder="Motivo (ej: hash no encontrado, importe incorrecto, red errónea)"
+                  rows={3}
+                  className="mb-4"
+                />
+                <AlertDialogAction onClick={onRejectCryptoInvoice}>Rechazar</AlertDialogAction>
+                <AlertDialogCancel onClick={() => { setRejectCryptoInvoiceId(null); setRejectCryptoReason(''); }}>Cancelar</AlertDialogCancel>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+        </TabsContent>
+
+        <TabsContent value="orders" className="mt-4 space-y-3">
+          {(data.orders || []).length === 0 ? (
+            <p className="text-muted-foreground text-center py-12">Todavía no hay pedidos.</p>
+          ) : (data.orders || []).map((order) => (
+            <Card key={order.id}>
+              <CardContent className="p-4 space-y-3">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                  <div>
+                    <h3 className="font-bold">Pedido #{String(order.id || '').slice(-12)}</h3>
+                    <p className="text-sm text-muted-foreground">
+                      {order.createdAt ? new Date(order.createdAt).toLocaleString('es-ES') : 'Fecha no disponible'}
+                    </p>
+                    <p className="text-sm mt-1">Comprador: {order.shipping?.name || order.buyerName || '—'}</p>
+                    <p className="text-sm">Correo: {order.buyerEmail || order.shipping?.email || '—'}</p>
+                    <p className="text-sm">Teléfono: {order.shipping?.phone || '—'}</p>
+                  </div>
+                  <div className="space-y-2 md:text-right">
+                    <Badge>{order.status || 'pending_payment'}</Badge>
+                    <p className="font-bold text-lg">
+                      {order.currency || 'USD'} {Number(order.total ?? order.subtotal ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <Button size="sm" onClick={() => onUpdateOrder(order)}>Actualizar pedido</Button>
+                  </div>
+                </div>
+
+                <div className="rounded-md border p-3">
+                  <h4 className="font-semibold mb-1">Dirección de entrega</h4>
+                  <p className="text-sm">{order.shipping?.address || 'No especificada'}</p>
+                  {order.shipping?.notes && <p className="text-sm text-muted-foreground mt-1">Indicaciones: {order.shipping.notes}</p>}
+                </div>
+
+                <div>
+                  <h4 className="font-semibold mb-2">Productos comprados</h4>
+                  {(order.items || []).length === 0 ? (
+                    <p className="text-sm text-muted-foreground">El pedido no contiene artículos visibles.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {order.items.map((item, index) => (
+                        <div key={item.productId || index} className="flex justify-between gap-3 text-sm border-b pb-2">
+                          <span>{item.productName || 'Producto'} × {Number(item.quantity || 0)}</span>
+                          <span className="font-medium">
+                            {order.currency || item.currency || 'USD'} {Number(item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 0))).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {(order.trackingNumber || order.trackingCarrier) && (
+                  <p className="text-sm">
+                    Seguimiento: {order.trackingCarrier || 'Transportista no indicado'} · {order.trackingNumber || 'Número pendiente'}
+                  </p>
+                )}
+                {order.adminNotes && <p className="text-sm text-muted-foreground">Notas: {order.adminNotes}</p>}
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
+
         <TabsContent value="reports" className="mt-4 space-y-3">
           {reports.length === 0 ? <p className="text-muted-foreground text-center py-12">Sin reportes.</p> : reports.map((r) => (
             <Card key={r.id}>
@@ -2892,6 +4835,21 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {u.business ? `🏪 ${u.business.name}` : '🛍️ Sin negocio'} · Plan: <b>{u.plan}</b> · {u.name || '—'}
+                    {u.business && (
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        {u.business.verified ? (
+                          <Badge className="bg-green-600 text-white border-0">Verificado</Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-amber-500 text-amber-600">Pendiente de verificación</Badge>
+                        )}
+                        {u.business.verified && u.business.verifiedAt && (
+                          <span className="text-[10px] text-muted-foreground">
+                            Verificado el {new Date(u.business.verifiedAt).toLocaleString('es-ES')}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
                   </div>
                 </div>
                 <div className="flex gap-2 flex-wrap">
@@ -2957,6 +4915,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Red USDC</Label><Input value={settings.usdcNetwork || ''} onChange={(e) => setSettings({ ...settings, usdcNetwork: e.target.value })} /></div>
+                  <div><Label>Tasa de cambio (CUP por 1 USD)</Label><Input type="number" min="0.01" max="10000" step="0.01" value={settings.usdRate ?? 120} onChange={(e) => setSettings({ ...settings, usdRate: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Ej: 120" /><p className="text-xs text-muted-foreground">Se utiliza para convertir precios en CUP a USDT/USDC.</p></div>
                   <div><Label>Precio Premium (USD)</Label><Input type="number" step="0.01" value={settings.premiumPriceUSD ?? 0} onChange={(e) => setSettings({ ...settings, premiumPriceUSD: Number(e.target.value) })} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -3042,7 +5001,7 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
         </div>
       </div>
       <div className="mt-8 pt-6 border-t border-border text-xs text-muted-foreground flex flex-col md:flex-row justify-between gap-2">
-        <div>© 2025 UBIK2 YEMG · Todos los derechos reservados</div>
+        <div>© {new Date().getFullYear()} UBIK2YEMG · Todos los derechos reservados</div>
         <div className="flex gap-4">USDC · Transfermóvil · WhatsApp · Telegram · SMS</div>
       </div>
     </div>
@@ -3614,6 +5573,225 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
   );
 };
 
+const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit, onCancel, submitting, onBack }) => {
+  if (!order || !invoice) return null;
+
+  const timeLeft = new Date(invoice.expiresAt) - new Date();
+  const expired = timeLeft <= 0;
+  const minutes = Math.max(0, Math.ceil(timeLeft / 60000));
+  const seconds = Math.max(0, Math.floor((timeLeft % 60000) / 1000));
+
+  const formatAmount = (amountRaw, decimals = invoice.decimals) => {
+    const raw = String(amountRaw ?? '');
+    if (!/^\d+$/.test(raw) || !Number.isInteger(decimals) || decimals < 0) return '—';
+
+    const padded = raw.padStart(decimals + 1, '0');
+    const integerPart = decimals > 0 ? padded.slice(0, -decimals) : padded;
+    let fractionalPart = decimals > 0
+      ? padded.slice(-decimals).replace(/0+$/, '')
+      : '';
+
+    if (fractionalPart.length < 2) {
+      fractionalPart = fractionalPart.padEnd(2, '0');
+    }
+
+    const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return `${groupedInteger},${fractionalPart}`;
+  };
+
+  const copyToClipboard = (text, label) => {
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} copiado al portapapeles`);
+  };
+
+  return (
+    <section className="container mx-auto px-4 py-8 max-w-2xl">
+      <Button variant="ghost" onClick={onBack} className="mb-4">
+        <ArrowLeft className="h-4 w-4 mr-2" /> Volver
+      </Button>
+
+      <Card className="overflow-hidden shadow-xl">
+        <div className="brand-gradient p-6 text-white text-center">
+          <h1 className="text-2xl font-bold mb-2">Pago con Criptomonedas</h1>
+          <p className="opacity-90">Pedido #{order.id.slice(0, 8).toUpperCase()}</p>
+        </div>
+
+        <CardContent className="p-6 space-y-6">
+          {/* Status indicator */}
+          <div className={`p-4 rounded-xl text-center ${expired ? 'bg-red-50 dark:bg-red-950/30 border border-red-200' : invoice.status === 'submitted' ? 'bg-amber-50 dark:bg-amber-950/30 border border-amber-200' : 'bg-blue-50 dark:bg-blue-950/30 border border-blue-200'}`}>
+            {expired && (
+              <div className="flex items-center justify-center gap-2 text-red-700 dark:text-red-300">
+                <AlertCircle className="h-5 w-5" />
+                <span className="font-semibold">Factura expirada</span>
+              </div>
+            )}
+            {invoice.status === 'pending' && !expired && (
+              <div className="flex items-center justify-center gap-2 text-blue-700 dark:text-blue-300">
+                <Clock className="h-5 w-5 animate-pulse" />
+                <span className="font-semibold">Pendiente de pago</span>
+                <span className="font-mono bg-white/50 dark:bg-black/20 px-2 py-0.5 rounded">
+                  {minutes}:{seconds.toString().padStart(2, '0')}
+                </span>
+              </div>
+            )}
+            {invoice.status === 'submitted' && (
+              <div className="flex items-center justify-center gap-2 text-amber-700 dark:text-amber-300">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="font-semibold">TxHash enviado - En verificación</span>
+              </div>
+            )}
+            {invoice.status === 'approved' && (
+              <div className="flex items-center justify-center gap-2 text-green-700 dark:text-green-300">
+                <CheckCircle className="h-5 w-5" />
+                <span className="font-semibold">Pago confirmado y aprobado</span>
+              </div>
+            )}
+            {invoice.status === 'rejected' && (
+              <div className="flex items-center justify-center gap-2 text-red-700 dark:text-red-300">
+                <XCircle className="h-5 w-5" />
+                <span className="font-semibold">Pago rechazado</span>
+                {invoice.rejectReason && <span className="text-sm ml-2">{invoice.rejectReason}</span>}
+              </div>
+            )}
+          </div>
+
+          {/* Payment Details */}
+          <div className="space-y-4 border-t border-b border-border py-4">
+            <h3 className="font-semibold text-lg flex items-center gap-2">
+              <CreditCard className="h-5 w-5" /> Detalles del pago
+            </h3>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-muted-foreground">Moneda</p>
+                <p className="font-semibold">{invoice.currency} ({invoice.network})</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Red</p>
+                <p className="font-semibold">{config?.enabled?.find(n => n.key === invoice.network + '_' + invoice.currency)?.label || invoice.network}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Importe esperado</p>
+                <p className="font-semibold text-xl">{formatAmount(invoice.expectedAmountRaw, invoice.decimals)} {invoice.currency}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">En unidades mínimas</p>
+                <p className="font-mono text-xs break-all">{invoice.expectedAmountRaw}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Receiver Address */}
+          <div className="space-y-3 p-4 bg-muted/30 rounded-xl">
+            <h3 className="font-semibold flex items-center gap-2">
+              <Wallet className="h-5 w-5" /> Dirección receptora (solo depósito)
+            </h3>
+            <div className="flex gap-2 flex-wrap">
+              <code className="flex-1 min-w-0 bg-background p-3 rounded border border-border text-sm font-mono break-all">{invoice.receiverAddress}</code>
+              <Button variant="outline" size="sm" onClick={() => copyToClipboard(invoice.receiverAddress, 'Dirección')}>
+                <Copy className="h-4 w-4 mr-1" /> Copiar
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Envía exactamente <b>{formatAmount(invoice.expectedAmountRaw, invoice.decimals)} {invoice.currency}</b> a esta dirección en la red <b>{invoice.network}</b>.
+              <br />Contrato: <code className="text-xs font-mono break-all">{invoice.tokenContract}</code>
+            </p>
+          </div>
+
+          {/* Order Summary */}
+          <div className="space-y-2">
+            <h3 className="font-semibold flex items-center gap-2">
+              <ShoppingBag className="h-5 w-5" /> Resumen del pedido
+            </h3>
+            <div className="rounded-lg border border-border p-4">
+              {order.items.map((item, i) => (
+                <div key={i} className="flex justify-between text-sm py-1 border-b last:border-0">
+                  <span>{item.productName} x{item.quantity}</span>
+                  <span className="font-medium">{Number(item.lineTotal).toLocaleString('es-ES')} {item.currency}</span>
+                </div>
+              ))}
+              <div className="flex justify-between font-semibold text-lg pt-2 border-t">
+                <span>Total</span>
+                <span>{Number(order.total).toLocaleString('es-ES')} {order.currency}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Submit TxHash */}
+          {invoice.status === 'pending' && !expired && (
+            <div className="space-y-3 p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-green-700 dark:text-green-300">
+                <Send className="h-5 w-5" /> Enviar hash de transacción
+              </h3>
+              <p className="text-sm text-green-600 dark:text-green-400">
+                Después de enviar el pago desde tu wallet, copia el hash (TXID) del explorer y pégalo aquí.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={txHash}
+                  onChange={(e) => setTxHash(e.target.value)}
+                  placeholder="0x... o hash de Tron (64 hex)"
+                  className="flex-1 font-mono text-sm"
+                  disabled={submitting}
+                />
+                <Button onClick={onSubmit} disabled={submitting || !txHash.trim()} className="whitespace-nowrap">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4 mr-1" />} Enviar
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                El administrador verificará la transacción en el blockchain. No se marca pagado solo por enviar el hash.
+              </p>
+            </div>
+          )}
+
+          {invoice.status === 'submitted' && (
+            <div className="space-y-2 p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-amber-700 dark:text-amber-300">
+                <Clock className="h-5 w-5" /> En verificación
+              </h3>
+              <p className="text-sm">Tu hash <code className="font-mono break-all">{invoice.txHash}</code> ha sido enviado.</p>
+              <p className="text-sm text-amber-600 dark:text-amber-400">
+                Un administrador lo verificará manualmente en el explorer ({({TRC20: 'Tronscan', ERC20: 'Etherscan', POLYGON: 'Polygonscan', BASE: 'Basescan', ARBITRUM: 'Arbiscan', BEP20: 'BscScan'}[invoice.network] || 'explorer')}).
+                Recibirás notificación cuando se apruebe o rechace.
+              </p>
+            </div>
+          )}
+
+          {invoice.status === 'approved' && (
+            <div className="space-y-2 p-4 bg-green-50 dark:bg-green-950/30 border border-green-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-green-700 dark:text-green-300">
+                <CheckCircle className="h-5 w-5" /> ¡Pago confirmado!
+              </h3>
+              <p className="text-sm">Tu pedido ha sido marcado como <b>pagado</b>. El vendedor preparará tu pedido.</p>
+              <p className="text-xs text-muted-foreground">Hash confirmado: <code className="font-mono break-all">{invoice.txHash}</code></p>
+            </div>
+          )}
+
+          {invoice.status === 'rejected' && (
+            <div className="space-y-2 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-red-700 dark:text-red-300">
+                <XCircle className="h-5 w-5" /> Pago rechazado
+              </h3>
+              <p className="text-sm">Motivo: {invoice.rejectReason || 'No especificado'}</p>
+              <p className="text-sm">El stock ha sido restaurado. Puedes crear un nuevo pedido.</p>
+              <Button variant="outline" onClick={onCancel}>Volver al inicio</Button>
+            </div>
+          )}
+
+          {expired && invoice.status === 'pending' && (
+            <div className="space-y-2 p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 rounded-xl">
+              <h3 className="font-semibold flex items-center gap-2 text-red-700 dark:text-red-300">
+                <AlertCircle className="h-5 w-5" /> Factura expirada
+              </h3>
+              <p className="text-sm">El tiempo para pagar ha terminado. El stock ha sido restaurado.</p>
+              <Button variant="outline" onClick={onCancel}>Volver al inicio</Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </section>
+  );
+};
+
 const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
   const titles = {
     privacy: 'Política de Privacidad',
@@ -3675,6 +5853,7 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
       setForm({
         showContactsPublicly: true, // default visible
         province: '', municipality: '', address: '', openingHours: '', closingHours: '', messenger: '',
+        commissionRateBps: 300,
         ...biz,
       });
     }
@@ -3689,6 +5868,10 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
     !form.closingHours && 'horario cierre',
   ].filter(Boolean) : [];
   const handleSave = () => {
+    if (!Number.isInteger(Number(form.commissionRateBps)) || Number(form.commissionRateBps) < 0 || Number(form.commissionRateBps) > 3000) {
+      toast.error('La comisión debe estar entre 0 % y 30 %.');
+      return;
+    }
     if (hidingContacts && missing.length) {
       toast.error(`Si ocultas los contactos debes agregar dirección física y horarios. Faltan: ${missing.join(', ')}.`);
       return;
@@ -3773,6 +5956,35 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             <div><Label>Hora cierre {hidingContacts && '*'}</Label><Input type="time" value={form.closingHours || ''} onChange={(e) => setForm({ ...form, closingHours: e.target.value })} /></div>
           </div>
           <div><Label>Ubicación / Ciudad (visible)</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
+
+          <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+            <Label>Comisión por venta (%)</Label>
+            <Input
+              type="number"
+              min="0"
+              max="30"
+              step="0.01"
+              value={(Number(form.commissionRateBps ?? 300) / 100).toFixed(2)}
+              onChange={(e) => setForm({ ...form, commissionRateBps: e.target.value === '' ? '' : Math.round(Number(e.target.value) * 100) })}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Predeterminada: 3 %. Admite del 0 % al 30 %. El cambio solo afecta a nuevas facturas.
+            </p>
+          </div>
+          <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <span className="text-sm font-semibold">Permitir entregas</span>
+              <input
+                type="checkbox"
+                checked={form.deliveryEnabled === true}
+                onChange={(e) => setForm({ ...form, deliveryEnabled: e.target.checked })}
+                className="h-4 w-4"
+              />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              Activa las entregas para este negocio. El vendedor necesita un plan Premium.
+            </p>
+          </div>
 
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={!!form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />

@@ -2,7 +2,7 @@ import './globals.css';
 import { Toaster } from '@/components/ui/sonner';
 
 export const metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://mipyme-hub.emergent.host'),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://ubik2yemg.qzz.io'),
   title: {
     default: 'UBIK2 YEMG — Todo en un solo lugar',
     template: '%s | UBIK2 YEMG',
@@ -31,15 +31,15 @@ export const metadata = {
   },
   icons: {
     icon: [
-      { url: '/favicon.svg', type: 'image/svg+xml' },
-      { url: '/logo.png', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
     ],
-    apple: '/logo.png',
+    apple: '/icon-192.png',
   },
   openGraph: {
     title: 'UBIK2 YEMG — Todo en un solo lugar',
     description: 'Compra fácil. Vende rápido. Conectando compradores y vendedores.',
-    images: ['/logo.png'],
+    images: ['https://ubik2yemg.qzz.io/social-preview.png'],
     type: 'website',
     locale: 'es_CU',
   },
@@ -47,7 +47,7 @@ export const metadata = {
     card: 'summary_large_image',
     title: 'UBIK2 YEMG',
     description: 'Todo en un solo lugar.',
-    images: ['/logo.png'],
+    images: ['https://ubik2yemg.qzz.io/social-preview.png'],
   },
 };
 

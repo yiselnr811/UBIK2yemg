@@ -34,4 +34,4 @@ Marketplace moderno mobile-first para Cuba/LATAM: comprar y vender productos y s
 - Verificar dominio propio en Resend (salir de sandbox)
 
 ## Credenciales
-Ver /app/memory/test_credentials.md (admin: admin@ubik2.com / admin123; usuario: ubik2yemg@gmail.com / Yisel.112729)
+Ver /app/memory/test_credentials.md (credenciales de prueba solo en variables de entorno, nunca en el repositorio)

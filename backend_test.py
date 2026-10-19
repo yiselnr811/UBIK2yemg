@@ -4,6 +4,7 @@ Comprehensive backend regression test for UBIK2 YEMG marketplace.
 Tests all endpoints after defensive fixes for MONGO_URL undefined error.
 """
 
+import os
 import requests
 import json
 import time
@@ -14,7 +15,7 @@ BASE_URL = "https://mipyme-hub.preview.emergentagent.com/api"
 
 # Admin credentials from test_credentials.md
 ADMIN_EMAIL = "ubik2yemg@gmail.com"
-ADMIN_PASSWORD = "Yisel.112729"
+ADMIN_PASSWORD = os.environ.get("TEST_ADMIN_PASSWORD", "")
 
 # Test results tracking
 test_results = {
@@ -42,7 +43,7 @@ def check_no_undefined_error(response_text):
 def test_public_endpoints():
     """Test all public endpoints"""
     print("\n=== TESTING PUBLIC ENDPOINTS ===\n")
-    
+
     # 1. GET /api/stats
     try:
         r = requests.get(f"{BASE_URL}/stats", timeout=10)
@@ -56,7 +57,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/stats", False, str(e))
-    
+
     # 2. GET /api/categories
     try:
         r = requests.get(f"{BASE_URL}/categories", timeout=10)
@@ -70,7 +71,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/categories", False, str(e))
-    
+
     # 3. GET /api/settings
     try:
         r = requests.get(f"{BASE_URL}/settings", timeout=10)
@@ -85,7 +86,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/settings", False, str(e))
-    
+
     # 4. GET /api/products with pagination
     try:
         r = requests.get(f"{BASE_URL}/products?limit=12&page=1", timeout=10)
@@ -99,7 +100,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products?limit=12&page=1", False, str(e))
-    
+
     # 5. GET /api/products with category filter
     try:
         r = requests.get(f"{BASE_URL}/products?category=electronica", timeout=10)
@@ -113,7 +114,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products?category=electronica", False, str(e))
-    
+
     # 6. GET /api/products with country filter
     try:
         r = requests.get(f"{BASE_URL}/products?country=Cuba", timeout=10)
@@ -127,7 +128,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products?country=Cuba", False, str(e))
-    
+
     # 7. GET /api/products with businessType filter (use real businessType from categories)
     try:
         r = requests.get(f"{BASE_URL}/products?businessType=tienda", timeout=10)
@@ -141,7 +142,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products?businessType=tienda", False, str(e))
-    
+
     # 8. GET /api/products with search query
     try:
         r = requests.get(f"{BASE_URL}/products?q=test", timeout=10)
@@ -155,7 +156,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products?q=test", False, str(e))
-    
+
     # 9. GET /api/products with featured filter
     try:
         r = requests.get(f"{BASE_URL}/products?featured=true", timeout=10)
@@ -169,7 +170,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products?featured=true", False, str(e))
-    
+
     # 10. GET /api/products with non-existent search (CRITICAL: must return empty array, not error)
     try:
         r = requests.get(f"{BASE_URL}/products?q=zzzznoexiste999", timeout=10)
@@ -183,7 +184,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products?q=zzzznoexiste999 (empty result)", False, str(e))
-    
+
     # 11. GET /api/businesses with limit
     try:
         r = requests.get(f"{BASE_URL}/businesses?limit=12", timeout=10)
@@ -197,7 +198,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/businesses?limit=12", False, str(e))
-    
+
     # 12. GET /api/products/:id with real product (get first product from list)
     try:
         # First get a product list to get a real ID
@@ -218,7 +219,7 @@ def test_public_endpoints():
             log_test("GET /api/products/:id (real ID)", False, "No products available to test")
     except Exception as e:
         log_test("GET /api/products/:id (real ID)", False, str(e))
-    
+
     # 13. GET /api/products/:id with non-existent ID (should return 404, not crash)
     try:
         r = requests.get(f"{BASE_URL}/products/id-inexistente-999", timeout=10)
@@ -230,7 +231,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/products/id-inexistente-999 (404 clean)", False, str(e))
-    
+
     # 14. GET /api/businesses/:id with real business
     try:
         # Get a business from the list
@@ -250,7 +251,7 @@ def test_public_endpoints():
             log_test("GET /api/businesses/:id (real ID)", False, "No businesses available to test")
     except Exception as e:
         log_test("GET /api/businesses/:id (real ID)", False, str(e))
-    
+
     # 15. GET /api/businesses/:id with non-existent ID (should return 404, not crash)
     try:
         r = requests.get(f"{BASE_URL}/businesses/id-inexistente-999", timeout=10)
@@ -262,7 +263,7 @@ def test_public_endpoints():
         )
     except Exception as e:
         log_test("GET /api/businesses/id-inexistente-999 (404 clean)", False, str(e))
-    
+
     # 16. GET /api/reviews?productId=X (test shape even without reviews)
     try:
         # Get a product ID first
@@ -287,13 +288,13 @@ def test_public_endpoints():
 def test_auth_endpoints():
     """Test authentication endpoints"""
     print("\n=== TESTING AUTH ENDPOINTS ===\n")
-    
+
     # Generate unique email for this test run
     timestamp = int(time.time())
     buyer_email = f"buyer_test_{timestamp}@test.com"
     seller_email = f"seller_test_{timestamp}@test.com"
     test_password = "TestPass123!"
-    
+
     # 1. POST /api/auth/register - buyer
     try:
         payload = {
@@ -315,7 +316,7 @@ def test_auth_endpoints():
     except Exception as e:
         log_test("POST /api/auth/register (buyer)", False, str(e))
         buyer_token = ""
-    
+
     # 2. POST /api/auth/register - seller
     try:
         payload = {
@@ -339,7 +340,7 @@ def test_auth_endpoints():
     except Exception as e:
         log_test("POST /api/auth/register (seller)", False, str(e))
         seller_token = ""
-    
+
     # 3. POST /api/auth/register without email/password (should return 400, not crash with toLowerCase error)
     try:
         payload = {}
@@ -353,7 +354,7 @@ def test_auth_endpoints():
         )
     except Exception as e:
         log_test("POST /api/auth/register (empty body - 400 clean)", False, str(e))
-    
+
     # 4. POST /api/auth/login with valid credentials
     try:
         payload = {
@@ -373,7 +374,7 @@ def test_auth_endpoints():
     except Exception as e:
         log_test("POST /api/auth/login (admin credentials)", False, str(e))
         admin_token = ""
-    
+
     # 5. POST /api/auth/login with empty body (should return 400, not crash)
     try:
         payload = {}
@@ -387,7 +388,7 @@ def test_auth_endpoints():
         )
     except Exception as e:
         log_test("POST /api/auth/login (empty body - 400 clean)", False, str(e))
-    
+
     # 6. GET /api/auth/me with token
     if admin_token:
         try:
@@ -403,7 +404,7 @@ def test_auth_endpoints():
             )
         except Exception as e:
             log_test("GET /api/auth/me (with token)", False, str(e))
-    
+
     # 7. GET /api/auth/me without token (should return 401 clean)
     try:
         r = requests.get(f"{BASE_URL}/auth/me", timeout=10)
@@ -415,7 +416,7 @@ def test_auth_endpoints():
         )
     except Exception as e:
         log_test("GET /api/auth/me (no token - 401 clean)", False, str(e))
-    
+
     return {
         "buyer_token": buyer_token,
         "seller_token": seller_token,
@@ -427,14 +428,14 @@ def test_auth_endpoints():
 def test_seller_crud(seller_token):
     """Test seller CRUD operations"""
     print("\n=== TESTING SELLER CRUD OPERATIONS ===\n")
-    
+
     if not seller_token:
         log_test("Seller CRUD tests", False, "No seller token available")
         return None
-    
+
     headers = {"Authorization": f"Bearer {seller_token}"}
     product_id = None
-    
+
     # 1. POST /api/products - create product
     try:
         payload = {
@@ -459,7 +460,7 @@ def test_seller_crud(seller_token):
         )
     except Exception as e:
         log_test("POST /api/products (create)", False, str(e))
-    
+
     # 2. GET /api/my/products
     try:
         r = requests.get(f"{BASE_URL}/my/products", headers=headers, timeout=10)
@@ -473,7 +474,7 @@ def test_seller_crud(seller_token):
         )
     except Exception as e:
         log_test("GET /api/my/products", False, str(e))
-    
+
     # 3. PUT /api/products/:id - update product
     if product_id:
         try:
@@ -490,7 +491,7 @@ def test_seller_crud(seller_token):
             )
         except Exception as e:
             log_test("PUT /api/products/:id (update)", False, str(e))
-    
+
     # 4. DELETE /api/products/:id
     if product_id:
         try:
@@ -503,19 +504,19 @@ def test_seller_crud(seller_token):
             )
         except Exception as e:
             log_test("DELETE /api/products/:id", False, str(e))
-    
+
     return product_id
 
 def test_admin_endpoints(admin_token):
     """Test admin endpoints"""
     print("\n=== TESTING ADMIN ENDPOINTS ===\n")
-    
+
     if not admin_token:
         log_test("Admin tests", False, "No admin token available")
         return
-    
+
     headers = {"Authorization": f"Bearer {admin_token}"}
-    
+
     # 1. GET /api/admin/stats with token
     try:
         r = requests.get(f"{BASE_URL}/admin/stats", headers=headers, timeout=10)
@@ -529,7 +530,7 @@ def test_admin_endpoints(admin_token):
         )
     except Exception as e:
         log_test("GET /api/admin/stats (with admin token)", False, str(e))
-    
+
     # 2. GET /api/admin/stats without token (should return 401/403 clean)
     try:
         r = requests.get(f"{BASE_URL}/admin/stats", timeout=10)
@@ -550,14 +551,14 @@ def print_summary():
     print(f"✅ Passed: {test_results['passed']}")
     print(f"❌ Failed: {test_results['failed']}")
     print(f"📊 Total: {test_results['passed'] + test_results['failed']}")
-    
+
     if test_results['errors']:
         print("\n❌ FAILED TESTS:")
         for error in test_results['errors']:
             print(f"  - {error}")
-    
+
     print("\n" + "="*60)
-    
+
     # Check for critical issues
     critical_issues = []
     for error in test_results['errors']:
@@ -565,7 +566,7 @@ def print_summary():
             critical_issues.append(error)
         elif "toLowerCase" in error:
             critical_issues.append(error)
-    
+
     if critical_issues:
         print("\n🚨 CRITICAL ISSUES FOUND:")
         for issue in critical_issues:
@@ -579,16 +580,16 @@ def main():
     print("UBIK2 YEMG BACKEND REGRESSION TEST")
     print("Testing after defensive fixes for MONGO_URL undefined error")
     print("="*60)
-    
+
     # Run all tests
     test_public_endpoints()
     auth_tokens = test_auth_endpoints()
     test_seller_crud(auth_tokens.get("seller_token"))
     test_admin_endpoints(auth_tokens.get("admin_token"))
-    
+
     # Print summary
     print_summary()
-    
+
     # Exit with appropriate code
     if test_results['failed'] > 0:
         exit(1)

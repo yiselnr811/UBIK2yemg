@@ -3,7 +3,7 @@
 // Renders proper HTML (NOT a 307 redirect) so crawlers can read the OG tags.
 // Real browsers are auto-redirected to the SPA via a client-side script.
 
-const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
+const DB_NAME = process.env.DB_NAME || 'ubik2_yemg_test';
 const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
 
 async function fetchProduct(id) {

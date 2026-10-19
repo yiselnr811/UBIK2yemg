@@ -5073,7 +5073,7 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
         </div>
       </div>
       <div className="mt-8 pt-6 border-t border-border text-xs text-muted-foreground flex flex-col md:flex-row justify-between gap-2">
-        <div>© 2025 UBIK2 YEMG · Todos los derechos reservados</div>
+        <div>© {new Date().getFullYear()} UBIK2YEMG · Todos los derechos reservados</div>
         <div className="flex gap-4">USDC · Transfermóvil · WhatsApp · Telegram · SMS</div>
       </div>
     </div>

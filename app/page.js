@@ -60,7 +60,7 @@ import {
 import { toast } from 'sonner';
 
 const API = '/api';
-const LOGO = '/logo.png';
+const LOGO = '/logo.svg';
 
 // ========= i18n =========
 const TRANSLATIONS = {

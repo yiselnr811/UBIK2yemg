@@ -39,7 +39,7 @@ export const metadata = {
   openGraph: {
     title: 'UBIK2 YEMG — Todo en un solo lugar',
     description: 'Compra fácil. Vende rápido. Conectando compradores y vendedores.',
-    images: ['/logo.png'],
+    images: ['https://www.ubik2yemg.qzz.io/logo.png'],
     type: 'website',
     locale: 'es_CU',
   },
@@ -47,7 +47,7 @@ export const metadata = {
     card: 'summary_large_image',
     title: 'UBIK2 YEMG',
     description: 'Todo en un solo lugar.',
-    images: ['/logo.png'],
+    images: ['https://www.ubik2yemg.qzz.io/logo.png'],
   },
 };
 

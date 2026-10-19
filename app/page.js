@@ -2466,6 +2466,8 @@ function PublicInvoiceScanner() {
 }
 
 const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
+  const [showFeaturedProducts, setShowFeaturedProducts] = React.useState(true);
+  const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
 
   // Smooth scroll helper
@@ -2572,27 +2574,6 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         </div>
       </section>
 
-      {/* QUICK NAV — visible always for fast access */}
-      <section className="container mx-auto px-4 -mt-6 relative z-20">
-        <div className="bg-card border border-border rounded-2xl shadow-xl p-3 md:p-4">
-          <div
-            className="flex md:grid md:grid-cols-7 gap-2 overflow-x-auto scroll-smooth"
-            style={{ scrollbarWidth: 'thin' }}
-          >
-            {navActions.map((a) => (
-              <button
-                key={a.id}
-                onClick={a.onClick}
-                className="flex flex-col items-center justify-center gap-1 min-w-[80px] md:min-w-0 px-3 py-2.5 rounded-xl border border-border bg-card hover:bg-[#1565C0]/5 hover:border-[#1565C0]/40 transition shrink-0"
-              >
-                <span className="text-2xl leading-none">{a.icon}</span>
-                <span className="text-[11px] font-semibold text-foreground whitespace-nowrap">{a.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* CATEGORIES - compact horizontal strip (mobile-first) */}
       {!hasFiltersOrQuery && (
         <section id="categories-section" className="container mx-auto px-4 mt-6 relative z-10">
@@ -2627,16 +2608,25 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
       {!hasFiltersOrQuery && featured.length > 0 && (
         <section className="container mx-auto px-4 mt-8 mb-8">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
-              <Star className="h-5 w-5 text-amber-500 fill-amber-500" /> Destacados
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+                <Star className="h-5 w-5 text-amber-500 fill-amber-500" /> Destacados
+              </h2>
+              <button type="button" onClick={() => setShowFeaturedProducts(v => !v)}
+                aria-expanded={showFeaturedProducts}
+                className="text-xs font-semibold rounded-lg border border-border px-3 py-2 hover:bg-muted">
+                {showFeaturedProducts ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
             <span className="text-xs text-muted-foreground">{featured.length}</span>
           </div>
+{showFeaturedProducts && (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
             {featured.map((p) => (
               <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
             ))}
           </div>
+          )}
         </section>
       )}
 
@@ -2644,11 +2634,19 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
       {!hasFiltersOrQuery && topBusinesses.length > 0 && (
         <section className="container mx-auto px-4 mb-10">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
-              <Store className="h-5 w-5 text-[#00A86B]" /> Negocios destacados
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+                <Store className="h-5 w-5 text-[#00A86B]" /> Negocios destacados
+              </h2>
+              <button type="button" onClick={() => setShowFeaturedBusinesses(v => !v)}
+                aria-expanded={showFeaturedBusinesses}
+                className="text-xs font-semibold rounded-lg border border-border px-3 py-2 hover:bg-muted">
+                {showFeaturedBusinesses ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
             <span className="text-xs text-muted-foreground">{topBusinesses.length}</span>
           </div>
+{showFeaturedBusinesses && (
           <div className="flex gap-3 overflow-x-auto pb-3 -mx-4 px-4 snap-x snap-mandatory" style={{ scrollbarWidth: 'thin' }}>
             {topBusinesses.map((b) => (
               <button
@@ -2688,6 +2686,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               </button>
             ))}
           </div>
+          )}
         </section>
       )}
 

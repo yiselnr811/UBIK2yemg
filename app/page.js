@@ -66,6 +66,21 @@ const LOGO = '/logo.svg';
 const TRANSLATIONS = {
   es: {
     slogan: 'Todo en un solo lugar.',
+    cartTitle: "Mi carrito",
+    cartSubtitle: "Revisa tus productos antes de pagar.",
+    continueShopping: "Seguir comprando",
+    emptyCart: "Tu carrito está vacío",
+    emptyCartDesc: "Abre un producto y pulsa «Añadir al carrito».",
+    viewProducts: "Ver productos",
+    removeItem: "Quitar",
+    estimatedSubtotal: "Subtotal estimado",
+    serverCalculatesTotal: "El servidor calcula el importe definitivo al crear el pedido.",
+    payCartCrypto: "Pagar carrito con crypto",
+    productFallback: "Producto",
+    languageLabel: "Idioma",
+    legalLabel: "Legal",
+    rightsReserved: "Todos los derechos reservados",
+    loginRequired: "Necesitas iniciar sesión",
     subSlogan: 'Compra fácil. Vende rápido. Conectando compradores y vendedores.',
     searchPlaceholder: 'Buscar productos, servicios o categorías...',
     publish: 'Publicar anuncio',
@@ -137,9 +152,100 @@ const TRANSLATIONS = {
     rejectedDesc: 'Motivo: {reason}',
     stockRestored: 'El stock ha sido restaurado. Puedes crear un nuevo pedido.',
     invoiceExpiredDesc: 'El tiempo para pagar ha terminado. El stock ha sido restaurado.',
-  },
+      accountSubtitle: 'Tu cuenta personal de UBIK2 YEMG',
+    becomeSellerTitle: '¿Tienes algo para vender?',
+    becomeSellerDesc: 'Conviértete en vendedor gratis y publica hasta 10 productos.',
+    accountEmail: 'Email de tu cuenta',
+    myOrdersInvoices: 'Mis pedidos y facturas',
+    loadingOrders: 'Cargando tus pedidos…',
+    noOrders: 'Todavía no tienes pedidos asociados a esta cuenta.',
+    orderDate: 'Fecha',
+    orderStatus: 'Estado del pedido',
+    deliveryData: 'Datos de entrega',
+    noProductDetails: 'No hay detalles de productos disponibles.',
+    downloadInvoiceQR: 'Descargar factura PDF con QR',
+    verifyInvoice: 'Verificar factura',
+    invoiceNumber: 'Número de factura:',
+    loadingInvoice: 'Cargando factura…',
+    hideInvoice: 'Ocultar factura',
+    viewPaymentInvoice: 'Ver factura de pago',
+    sellerOrdersTitle: 'Pedidos y entregas',
+    sellerOrdersDesc: 'Actualiza el envío de los pedidos de tu comercio. Solo puedes gestionar pedidos con el pago confirmado.',
+    loadingSellerOrders: 'Cargando pedidos...',
+    noSellerOrders: 'Todavía no hay pedidos para este comercio.',
+    orderLabel: 'Pedido',
+    dateUnavailable: 'Fecha no disponible',
+    paymentConfirmedLabel: 'Pago confirmado',
+    paymentPendingLabel: 'Pago pendiente',
+    buyerConfirmedReceipt: 'El comprador confirmó la recepción.',
+    awaitingBuyerReceipt: 'Entrega marcada. Pendiente de confirmación del comprador.',
+    shippingStatus: 'Estado del envío',
+    trackingNumber: 'Número de seguimiento',
+    buyerNotes: 'Notas para el comprador',
+    deliveryPhotos: 'Fotos de entrega (máximo 4 por actualización)',
+    registeredPhotos: 'Fotos registradas',
+    shippingHistory: 'Historial de estados',
+    saveTracking: 'Guardar seguimiento',
+    saving: 'Guardando...',
+    ordersLoadError: 'No se pudieron cargar los pedidos.',
+    invoiceLoadError: 'No se pudo cargar la factura.',
+    receiptError: 'No se pudo confirmar la recepción.',
+    hashSent: 'Hash enviado. Pago pendiente de verificación.',
+    hashError: 'No se pudo enviar el hash.',
+    qrDownloadError: 'No se pudo descargar el QR.',
+    invoiceIdMissing: 'La factura todavía no tiene identificador.',
+    invalidInvoiceId: 'Esta factura todavía no tiene identificador válido.',
+    trackingSaveError: 'No se pudo guardar el seguimiento.',
+    addressLabel: 'Dirección',
+    carrierPlaceholder: 'Ej. transportista local',
+    deliveryNotesPlaceholder: 'Información sobre la preparación o entrega',
+    photosWillUpload: 'Las fotos seleccionadas se subirán al guardar. Fotos ya registradas:',
+    personalGreeting: 'Hola',
+    basicPlan: 'Plan Básico',
+    premiumPlan: 'Plan Premium',
+    premiumActive: 'Premium activo',
+    improvePlan: 'Mejorar plan',
+    newProduct: 'Nuevo producto',
+    totalProducts: 'Total productos',
+    groupByCategory: 'Agrupar por categoría',
+    noOutOfStock: '¡No tienes productos agotados! 🎉',
+    noFeaturedProducts: 'No tienes productos destacados.',
+    noActiveProducts: 'No tienes productos activos.',
+    noPublishedProducts: 'Aún no tienes productos publicados.',
+    publishFirst: 'Publica el primero',
+    createProduct: 'Crear producto',
+    noLogoTitle: 'Aún no tienes logo.',
+    noLogoDesc: 'Súbelo ahora para que los compradores te encuentren más fácilmente y tu negocio se vea profesional. Se comprime y optimiza automáticamente.',
+    saveWallets: 'Guardar billeteras',
+    walletsNoTransfers: 'Guardar estos datos no activa transferencias automáticas.',
+    productNotVisible: 'Este producto no será visible en el marketplace porque no tiene stock disponible. Edítalo y agrega stock para reactivarlo.',
+    edit: 'Editar',
+    product: 'Producto',
+    total: 'Total',
+    sellerLoadingError: 'No se pudieron cargar los pedidos.',
+    trackingNumberLabel: 'Número de seguimiento',
+
+      preparingOrder: 'Preparando pedido',
+      shipped: 'Enviado',
+      delivered: 'Entregado'
+    },
   en: {
     slogan: 'All in one place.',
+    cartTitle: "My cart",
+    cartSubtitle: "Review your products before paying.",
+    continueShopping: "Continue shopping",
+    emptyCart: "Your cart is empty",
+    emptyCartDesc: "Open a product and press “Add to cart”.",
+    viewProducts: "View products",
+    removeItem: "Remove",
+    estimatedSubtotal: "Estimated subtotal",
+    serverCalculatesTotal: "The server calculates the final amount when creating the order.",
+    payCartCrypto: "Pay cart with crypto",
+    productFallback: "Product",
+    languageLabel: "Language",
+    legalLabel: "Legal",
+    rightsReserved: "All rights reserved",
+    loginRequired: "You need to sign in",
     subSlogan: 'Buy easy. Sell fast. Connecting buyers and sellers.',
     searchPlaceholder: 'Search products, services or categories...',
     publish: 'Post ad',
@@ -211,9 +317,100 @@ const TRANSLATIONS = {
     outOfStock: 'Out of stock',
     featured: 'Featured',
     new: 'New',
-  },
+      accountSubtitle: 'Your personal UBIK2 YEMG account',
+    becomeSellerTitle: 'Have something to sell?',
+    becomeSellerDesc: 'Become a seller for free and publish up to 10 products.',
+    accountEmail: 'Account email',
+    myOrdersInvoices: 'My orders and invoices',
+    loadingOrders: 'Loading your orders…',
+    noOrders: "You don't have any orders associated with this account yet.",
+    orderDate: 'Date',
+    orderStatus: 'Order status',
+    deliveryData: 'Delivery details',
+    noProductDetails: 'No product details available.',
+    downloadInvoiceQR: 'Download PDF invoice with QR',
+    verifyInvoice: 'Verify invoice',
+    invoiceNumber: 'Invoice number:',
+    loadingInvoice: 'Loading invoice…',
+    hideInvoice: 'Hide invoice',
+    viewPaymentInvoice: 'View payment invoice',
+    sellerOrdersTitle: 'Orders and deliveries',
+    sellerOrdersDesc: "Update shipping for your store's orders. You can only manage orders with confirmed payment.",
+    loadingSellerOrders: 'Loading orders...',
+    noSellerOrders: 'There are no orders for this store yet.',
+    orderLabel: 'Order',
+    dateUnavailable: 'Date unavailable',
+    paymentConfirmedLabel: 'Payment confirmed',
+    paymentPendingLabel: 'Payment pending',
+    buyerConfirmedReceipt: 'The buyer confirmed receipt.',
+    awaitingBuyerReceipt: 'Delivery marked. Waiting for buyer confirmation.',
+    shippingStatus: 'Shipping status',
+    trackingNumber: 'Tracking number',
+    buyerNotes: 'Notes for the buyer',
+    deliveryPhotos: 'Delivery photos (up to 4 per update)',
+    registeredPhotos: 'Registered photos',
+    shippingHistory: 'Status history',
+    saveTracking: 'Save tracking',
+    saving: 'Saving...',
+    ordersLoadError: "Couldn't load orders.",
+    invoiceLoadError: "Couldn't load the invoice.",
+    receiptError: "Couldn't confirm receipt.",
+    hashSent: 'Hash submitted. Payment verification pending.',
+    hashError: "Couldn't submit the hash.",
+    qrDownloadError: "Couldn't download the QR.",
+    invoiceIdMissing: "The invoice doesn't have an identifier yet.",
+    invalidInvoiceId: "This invoice doesn't have a valid identifier yet.",
+    trackingSaveError: "Couldn't save tracking information.",
+    addressLabel: 'Address',
+    carrierPlaceholder: 'e.g. local carrier',
+    deliveryNotesPlaceholder: 'Information about preparation or delivery',
+    photosWillUpload: 'Selected photos will be uploaded when saved. Already registered photos:',
+    personalGreeting: 'Hello',
+    basicPlan: 'Basic plan',
+    premiumPlan: 'Premium plan',
+    premiumActive: 'Premium active',
+    improvePlan: 'Upgrade plan',
+    newProduct: 'New product',
+    totalProducts: 'Total products',
+    groupByCategory: 'Group by category',
+    noOutOfStock: 'No out-of-stock products! 🎉',
+    noFeaturedProducts: 'You have no featured products.',
+    noActiveProducts: 'You have no active products.',
+    noPublishedProducts: "You haven't published any products yet.",
+    publishFirst: 'Publish your first',
+    createProduct: 'Create product',
+    noLogoTitle: "You don't have a logo yet.",
+    noLogoDesc: 'Upload one so buyers can find you more easily and your business looks professional. It is automatically compressed and optimized.',
+    saveWallets: 'Save wallets',
+    walletsNoTransfers: 'Saving this information does not enable automatic transfers.',
+    productNotVisible: "This product won't be visible in the marketplace because it has no stock. Edit it and add stock to reactivate it.",
+    edit: 'Edit',
+    product: 'Product',
+    total: 'Total',
+    sellerLoadingError: "Couldn't load orders.",
+    trackingNumberLabel: 'Tracking number',
+
+      preparingOrder: 'Preparing order',
+      shipped: 'Shipped',
+      delivered: 'Delivered'
+    },
   it: {
     slogan: 'Tutto in un solo posto.',
+    cartTitle: "Il mio carrello",
+    cartSubtitle: "Controlla i prodotti prima di pagare.",
+    continueShopping: "Continua gli acquisti",
+    emptyCart: "Il carrello è vuoto",
+    emptyCartDesc: "Apri un prodotto e premi «Aggiungi al carrello».",
+    viewProducts: "Vedi prodotti",
+    removeItem: "Rimuovi",
+    estimatedSubtotal: "Subtotale stimato",
+    serverCalculatesTotal: "Il server calcola l'importo definitivo quando crea l'ordine.",
+    payCartCrypto: "Paga il carrello con crypto",
+    productFallback: "Prodotto",
+    languageLabel: "Lingua",
+    legalLabel: "Informazioni legali",
+    rightsReserved: "Tutti i diritti riservati",
+    loginRequired: "Devi accedere",
     subSlogan: 'Compra facile. Vendi veloce. Collegando acquirenti e venditori.',
     searchPlaceholder: 'Cerca prodotti, servizi o categorie...',
     publish: 'Pubblica annuncio',
@@ -285,9 +482,100 @@ const TRANSLATIONS = {
     rejectedDesc: 'Motivo: {reason}',
     stockRestored: 'Stock ripristinato. Puoi creare un nuovo ordine.',
     invoiceExpiredDesc: 'Tempo di pagamento scaduto. Stock ripristinato.',
-  },
+      accountSubtitle: 'Il tuo account personale UBIK2 YEMG',
+    becomeSellerTitle: 'Hai qualcosa da vendere?',
+    becomeSellerDesc: 'Diventa venditore gratuitamente e pubblica fino a 10 prodotti.',
+    accountEmail: 'Email del tuo account',
+    myOrdersInvoices: 'I miei ordini e fatture',
+    loadingOrders: 'Caricamento degli ordini…',
+    noOrders: 'Non hai ancora ordini associati a questo account.',
+    orderDate: 'Data',
+    orderStatus: "Stato dell'ordine",
+    deliveryData: 'Dati di consegna',
+    noProductDetails: 'Nessun dettaglio dei prodotti disponibile.',
+    downloadInvoiceQR: 'Scarica la fattura PDF con QR',
+    verifyInvoice: 'Verifica fattura',
+    invoiceNumber: 'Numero fattura:',
+    loadingInvoice: 'Caricamento fattura…',
+    hideInvoice: 'Nascondi fattura',
+    viewPaymentInvoice: 'Visualizza fattura di pagamento',
+    sellerOrdersTitle: 'Ordini e consegne',
+    sellerOrdersDesc: 'Aggiorna la spedizione degli ordini del tuo negozio. Puoi gestire solo gli ordini con pagamento confermato.',
+    loadingSellerOrders: 'Caricamento ordini...',
+    noSellerOrders: 'Non ci sono ancora ordini per questo negozio.',
+    orderLabel: 'Ordine',
+    dateUnavailable: 'Data non disponibile',
+    paymentConfirmedLabel: 'Pagamento confermato',
+    paymentPendingLabel: 'Pagamento in attesa',
+    buyerConfirmedReceipt: "L'acquirente ha confermato la ricezione.",
+    awaitingBuyerReceipt: "Consegna segnata. In attesa della conferma dell'acquirente.",
+    shippingStatus: 'Stato della spedizione',
+    trackingNumber: 'Numero di tracciamento',
+    buyerNotes: "Note per l'acquirente",
+    deliveryPhotos: 'Foto della consegna (massimo 4 per aggiornamento)',
+    registeredPhotos: 'Foto registrate',
+    shippingHistory: 'Cronologia degli stati',
+    saveTracking: 'Salva tracciamento',
+    saving: 'Salvataggio...',
+    ordersLoadError: 'Impossibile caricare gli ordini.',
+    invoiceLoadError: 'Impossibile caricare la fattura.',
+    receiptError: 'Impossibile confermare la ricezione.',
+    hashSent: 'Hash inviato. Verifica del pagamento in attesa.',
+    hashError: "Impossibile inviare l'hash.",
+    qrDownloadError: 'Impossibile scaricare il QR.',
+    invoiceIdMissing: 'La fattura non ha ancora un identificativo.',
+    invalidInvoiceId: 'Questa fattura non ha ancora un identificativo valido.',
+    trackingSaveError: 'Impossibile salvare il tracciamento.',
+    addressLabel: 'Indirizzo',
+    carrierPlaceholder: 'es. corriere locale',
+    deliveryNotesPlaceholder: 'Informazioni sulla preparazione o consegna',
+    photosWillUpload: 'Le foto selezionate saranno caricate al salvataggio. Foto già registrate:',
+    personalGreeting: 'Ciao',
+    basicPlan: 'Piano Base',
+    premiumPlan: 'Piano Premium',
+    premiumActive: 'Premium attivo',
+    improvePlan: 'Migliora piano',
+    newProduct: 'Nuovo prodotto',
+    totalProducts: 'Prodotti totali',
+    groupByCategory: 'Raggruppa per categoria',
+    noOutOfStock: 'Non hai prodotti esauriti! 🎉',
+    noFeaturedProducts: 'Non hai prodotti in evidenza.',
+    noActiveProducts: 'Non hai prodotti attivi.',
+    noPublishedProducts: 'Non hai ancora pubblicato prodotti.',
+    publishFirst: 'Pubblica il primo',
+    createProduct: 'Crea prodotto',
+    noLogoTitle: 'Non hai ancora un logo.',
+    noLogoDesc: 'Caricalo affinché gli acquirenti possano trovarti più facilmente e la tua attività abbia un aspetto professionale. Viene compresso e ottimizzato automaticamente.',
+    saveWallets: 'Salva portafogli',
+    walletsNoTransfers: 'Salvare questi dati non attiva trasferimenti automatici.',
+    productNotVisible: 'Questo prodotto non sarà visibile nel marketplace perché non ha scorte. Modificalo e aggiungi scorte per riattivarlo.',
+    edit: 'Modifica',
+    product: 'Prodotto',
+    total: 'Totale',
+    sellerLoadingError: 'Impossibile caricare gli ordini.',
+    trackingNumberLabel: 'Numero di tracciamento',
+
+      preparingOrder: "Preparazione dell'ordine",
+      shipped: 'Spedito',
+      delivered: 'Consegnato'
+    },
   ru: {
     slogan: 'Всё в одном месте.',
+    cartTitle: "Моя корзина",
+    cartSubtitle: "Проверьте товары перед оплатой.",
+    continueShopping: "Продолжить покупки",
+    emptyCart: "Корзина пуста",
+    emptyCartDesc: "Откройте товар и нажмите «Добавить в корзину».",
+    viewProducts: "Посмотреть товары",
+    removeItem: "Удалить",
+    estimatedSubtotal: "Предварительная сумма",
+    serverCalculatesTotal: "Сервер рассчитает окончательную сумму при создании заказа.",
+    payCartCrypto: "Оплатить корзину криптовалютой",
+    productFallback: "Товар",
+    languageLabel: "Язык",
+    legalLabel: "Правовая информация",
+    rightsReserved: "Все права защищены",
+    loginRequired: "Войдите в аккаунт",
     subSlogan: 'Покупайте легко. Продавайте быстро. Соединяя покупателей и продавцов.',
     searchPlaceholder: 'Поиск товаров, услуг или категорий...',
     publish: 'Разместить',
@@ -359,7 +647,83 @@ const TRANSLATIONS = {
     rejectedDesc: 'Причина: {reason}',
     stockRestored: 'Склад восстановлен. Можно создать новый заказ.',
     invoiceExpiredDesc: 'Время оплаты истекло. Склад восстановлен.',
-  },
+      accountSubtitle: 'Ваша личная учётная запись UBIK2 YEMG',
+    becomeSellerTitle: 'Есть что продать?',
+    becomeSellerDesc: 'Станьте продавцом бесплатно и публикуйте до 10 товаров.',
+    accountEmail: 'Электронная почта аккаунта',
+    myOrdersInvoices: 'Мои заказы и счета',
+    loadingOrders: 'Загрузка заказов…',
+    noOrders: 'У вас пока нет заказов, связанных с этой учётной записью.',
+    orderDate: 'Дата',
+    orderStatus: 'Статус заказа',
+    deliveryData: 'Данные доставки',
+    noProductDetails: 'Нет доступных сведений о товарах.',
+    downloadInvoiceQR: 'Скачать счёт PDF с QR',
+    verifyInvoice: 'Проверить счёт',
+    invoiceNumber: 'Номер счёта:',
+    loadingInvoice: 'Загрузка счёта…',
+    hideInvoice: 'Скрыть счёт',
+    viewPaymentInvoice: 'Посмотреть счёт на оплату',
+    sellerOrdersTitle: 'Заказы и доставка',
+    sellerOrdersDesc: 'Обновляйте доставку заказов магазина. Управлять можно только заказами с подтверждённой оплатой.',
+    loadingSellerOrders: 'Загрузка заказов...',
+    noSellerOrders: 'У этого магазина пока нет заказов.',
+    orderLabel: 'Заказ',
+    dateUnavailable: 'Дата недоступна',
+    paymentConfirmedLabel: 'Оплата подтверждена',
+    paymentPendingLabel: 'Ожидается оплата',
+    buyerConfirmedReceipt: 'Покупатель подтвердил получение.',
+    awaitingBuyerReceipt: 'Доставка отмечена. Ожидается подтверждение покупателя.',
+    shippingStatus: 'Статус доставки',
+    trackingNumber: 'Номер отслеживания',
+    buyerNotes: 'Примечания для покупателя',
+    deliveryPhotos: 'Фото доставки (не более 4 за обновление)',
+    registeredPhotos: 'Зарегистрированные фотографии',
+    shippingHistory: 'История статусов',
+    saveTracking: 'Сохранить отслеживание',
+    saving: 'Сохранение...',
+    ordersLoadError: 'Не удалось загрузить заказы.',
+    invoiceLoadError: 'Не удалось загрузить счёт.',
+    receiptError: 'Не удалось подтвердить получение.',
+    hashSent: 'Хеш отправлен. Ожидается проверка платежа.',
+    hashError: 'Не удалось отправить хеш.',
+    qrDownloadError: 'Не удалось скачать QR.',
+    invoiceIdMissing: 'У счёта пока нет идентификатора.',
+    invalidInvoiceId: 'У этого счёта пока нет действительного идентификатора.',
+    trackingSaveError: 'Не удалось сохранить отслеживание.',
+    addressLabel: 'Адрес',
+    carrierPlaceholder: 'например, местный перевозчик',
+    deliveryNotesPlaceholder: 'Информация о подготовке или доставке',
+    photosWillUpload: 'Выбранные фотографии будут загружены при сохранении. Уже зарегистрировано:',
+    personalGreeting: 'Здравствуйте',
+    basicPlan: 'Базовый план',
+    premiumPlan: 'Премиум-план',
+    premiumActive: 'Премиум активен',
+    improvePlan: 'Улучшить план',
+    newProduct: 'Новый товар',
+    totalProducts: 'Всего товаров',
+    groupByCategory: 'Группировать по категории',
+    noOutOfStock: 'Нет товаров, которых нет в наличии! 🎉',
+    noFeaturedProducts: 'У вас нет рекомендуемых товаров.',
+    noActiveProducts: 'У вас нет активных товаров.',
+    noPublishedProducts: 'Вы ещё не публиковали товары.',
+    publishFirst: 'Опубликуйте первый',
+    createProduct: 'Создать товар',
+    noLogoTitle: 'У вас пока нет логотипа.',
+    noLogoDesc: 'Загрузите его, чтобы покупатели легче находили вас, а ваш бизнес выглядел профессионально. Логотип автоматически сжимается и оптимизируется.',
+    saveWallets: 'Сохранить кошельки',
+    walletsNoTransfers: 'Сохранение этих данных не включает автоматические переводы.',
+    productNotVisible: 'Этот товар не будет виден на маркетплейсе, потому что его нет в наличии. Отредактируйте товар и добавьте остаток, чтобы снова активировать его.',
+    edit: 'Изменить',
+    product: 'Товар',
+    total: 'Итого',
+    sellerLoadingError: 'Не удалось загрузить заказы.',
+    trackingNumberLabel: 'Номер отслеживания',
+
+      preparingOrder: 'Заказ готовится',
+      shipped: 'Отправлен',
+      delivered: 'Доставлен'
+    },
 };
 const FLAGS = { es: '🇪🇸', en: '🇬🇧', it: '🇮🇹', ru: '🇷🇺' };
 const LANG_NAMES = { es: 'Español', en: 'English', it: 'Italiano', ru: 'Русский' };
@@ -1596,7 +1960,7 @@ const App = () => {
           />
         )}
 
-        {view === 'cart' && <CartView items={cart} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
+        {view === 'cart' && <CartView t={t} lang={lang} items={cart} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
 
         {view === 'favorites' && (
           <FavoritesView
@@ -1626,18 +1990,18 @@ const App = () => {
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
             onShareBusiness={() => shareBusiness(business)}
-            compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo}
+            compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo} t={t} lang={lang}
           />
         )}
         {view === 'dashboard' && user && !business && (
-          <BuyerDashboard user={user} token={token} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard t={t} lang={lang} user={user} token={token} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'buyer-orders' && user && (
-          <BuyerDashboard user={user} token={token} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard t={t} lang={lang} user={user} token={token} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'dashboard' && !user && (
           <div className="container mx-auto py-32 text-center">
-            <p className="text-muted-foreground mb-4">Necesitas iniciar sesión</p>
+            <p className="text-muted-foreground mb-4">{t.loginRequired}</p>
             <Button onClick={() => { setAuthMode('login'); setAuthOpen(true); }}>Entrar</Button>
           </div>
         )}
@@ -2154,7 +2518,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
             <Button variant="ghost" size="icon"><Globe className="h-5 w-5" /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Idioma</DropdownMenuLabel>
+            <DropdownMenuLabel>{t.languageLabel}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {Object.entries(LANG_NAMES).map(([k, n]) => (
               <DropdownMenuItem key={k} onClick={() => setLang(k)} className={lang === k ? 'bg-muted' : ''}>
@@ -3305,25 +3669,25 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
 };
 
 // ============ SHOPPING CART ============
-const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting }) => {
+const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting, t, lang }) => {
   const total = items.reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
   return (
     <section className="container mx-auto px-4 py-8 max-w-4xl">
-      <div className="flex items-center justify-between gap-3 mb-6"><div><h1 className="text-3xl font-extrabold">Mi carrito</h1><p className="text-muted-foreground">Revisa tus productos antes de pagar.</p></div><Button variant="outline" onClick={onBack}>Seguir comprando</Button></div>
-      {!items.length ? <Card><CardContent className="p-10 text-center"><ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/><h2 className="text-xl font-bold mb-2">Tu carrito está vacío</h2><p className="text-muted-foreground mb-4">Abre un producto y pulsa «Añadir al carrito».</p><Button onClick={onBack}>Ver productos</Button></CardContent></Card> : <>
+      <div className="flex items-center justify-between gap-3 mb-6"><div><h1 className="text-3xl font-extrabold">{t.cartTitle}</h1><p className="text-muted-foreground">{t.cartSubtitle}</p></div><Button variant="outline" onClick={onBack}>{t.continueShopping}</Button></div>
+      {!items.length ? <Card><CardContent className="p-10 text-center"><ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/><h2 className="text-xl font-bold mb-2">{t.emptyCart}</h2><p className="text-muted-foreground mb-4">{t.emptyCartDesc}</p><Button onClick={onBack}>{t.viewProducts}</Button></CardContent></Card> : <>
         <div className="space-y-3">{items.map(({ product, quantity }) => <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
-          {product.image ? <img src={product.image} alt={product.name || 'Producto'} className="w-20 h-20 rounded-lg object-cover bg-muted"/> : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
-          <div className="flex-1 min-w-0"><div className="font-bold truncate">{product.name || 'Producto'}</div><div className="text-sm text-muted-foreground">{product.price} {product.currency || 'CUP'} c/u</div><div className="flex items-center gap-2 mt-2"><Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button><span>{quantity}</span><Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>Quitar</Button></div></div>
-          <div className="font-bold whitespace-nowrap">{((Number(product.price) || 0) * quantity).toLocaleString('es-ES')} {product.currency || 'CUP'}</div>
+          {product.image ? <img src={product.image} alt={product.name || t.productFallback} className="w-20 h-20 rounded-lg object-cover bg-muted"/> : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
+          <div className="flex-1 min-w-0"><div className="font-bold truncate">{product.name || t.productFallback}</div><div className="text-sm text-muted-foreground">{product.price} {product.currency || 'CUP'} c/u</div><div className="flex items-center gap-2 mt-2"><Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button><span>{quantity}</span><Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button></div></div>
+          <div className="font-bold whitespace-nowrap">{((Number(product.price) || 0) * quantity).toLocaleString(lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES')} {product.currency || 'CUP'}</div>
         </CardContent></Card>)}</div>
-        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">Subtotal estimado</div><div className="text-2xl font-extrabold">{total.toLocaleString('es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">El servidor calcula el importe definitivo al crear el pedido.</p></div><Button size="lg" disabled={submitting} onClick={() => onCheckout(items)} className="brand-gradient text-white font-bold">{submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}Pagar carrito con crypto</Button></CardContent></Card>
+        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">{t.estimatedSubtotal}</div><div className="text-2xl font-extrabold">{total.toLocaleString(lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">{t.serverCalculatesTotal}</p></div><Button size="lg" disabled={submitting} onClick={() => onCheckout(items)} className="brand-gradient text-white font-bold">{submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}{t.payCartCrypto}</Button></CardContent></Card>
       </>}
     </section>
   );
 };
 
 // ============ BUYER DASHBOARD ============
-const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount }) => {
+const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount, t, lang = 'es' }) => {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState('');
@@ -3359,7 +3723,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       })
       .catch((error) => {
         if (!cancelled) {
-          setOrdersError(error?.message || 'No se pudieron cargar tus pedidos.');
+          setOrdersError(error?.message || t.ordersLoadError);
         }
       })
       .finally(() => {
@@ -3387,7 +3751,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     } catch (error) {
       setInvoiceErrors((prev) => ({
         ...prev,
-        [order.id]: error?.message || 'No se pudo cargar la factura.',
+        [order.id]: error?.message || t.invoiceLoadError,
       }));
     } finally {
       setInvoiceLoading((prev) => ({ ...prev, [order.id]: false }));
@@ -3403,7 +3767,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       );
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'No se pudo descargar la factura.');
+        throw new Error(data.error || t.invoiceLoadError);
       }
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -3415,13 +3779,13 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       link.remove();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
     } catch (error) {
-      toast.error(error?.message || 'No se pudo descargar la factura.');
+      toast.error(error?.message || t.invoiceLoadError);
     }
   };
 
   const downloadInvoiceQR = async (order) => {
     if (!order?.publicInvoiceId) {
-      toast.error('La factura todavía no tiene identificador.');
+      toast.error(t.invoiceIdMissing);
       return;
     }
     try {
@@ -3429,7 +3793,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
         `${API}/public/invoices/${encodeURIComponent(order.publicInvoiceId)}/qr.png`,
         { cache: 'no-store' }
       );
-      if (!response.ok) throw new Error('No se pudo descargar el QR.');
+      if (!response.ok) throw new Error(t.qrDownloadError);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -3448,7 +3812,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     if (!order?.publicInvoiceId) {
       setReceiptConfirmMessages((prev) => ({
         ...prev,
-        [order.id]: 'Esta factura todavía no tiene identificador válido.'
+        [order.id]: t.invalidInvoiceId
       }));
       return;
     }
@@ -3479,7 +3843,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     } catch (error) {
       setReceiptConfirmMessages((prev) => ({
         ...prev,
-        [order.id]: error?.message || 'No se pudo confirmar la recepción.'
+        [order.id]: error?.message || t.receiptError
       }));
     } finally {
       setReceiptConfirmLoading((prev) => ({ ...prev, [order.id]: false }));
@@ -3522,12 +3886,12 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 
       setInvoiceSubmitMessages((prev) => ({
         ...prev,
-        [order.id]: result.message || 'Hash enviado. Pago pendiente de verificación.',
+        [order.id]: result.message || t.hashSent,
       }));
     } catch (error) {
       setInvoiceSubmitMessages((prev) => ({
         ...prev,
-        [order.id]: error?.message || 'No se pudo enviar el hash.',
+        [order.id]: error?.message || t.hashError,
       }));
     } finally {
       setInvoiceSubmitLoading((prev) => ({
@@ -3564,13 +3928,13 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
         <h1 className="text-3xl font-extrabold">
           Hola, {user.name || user.email?.split('@')[0] || 'comprador'} 👋
         </h1>
-        <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
+        <p className="text-muted-foreground">{t.accountSubtitle}</p>
       </div>
 
       {showBecomeSeller && (
         <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
           <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
-            <div><Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge><h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2><p className="text-white/90 mt-1 max-w-lg">Conviértete en vendedor gratis y publica hasta 10 productos.</p></div>
+            <div><Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge><h2 className="text-2xl md:text-3xl font-extrabold">{t.becomeSellerTitle}</h2><p className="text-white/90 mt-1 max-w-lg">{t.becomeSellerDesc}</p></div>
             <Button size="lg" onClick={onBecomeSeller} className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6"><Store className="h-5 w-5 mr-2" /> Hazte vendedor</Button>
           </CardContent>
         </Card>
@@ -3588,7 +3952,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
           <CardContent className="p-6">
             <Mail className="h-8 w-8 text-[#1565C0] mb-2" />
             <div className="text-sm font-semibold break-all">{user.email}</div>
-            <div className="text-xs text-muted-foreground">Email de tu cuenta</div>
+            <div className="text-xs text-muted-foreground">{t.accountEmail}</div>
           </CardContent>
         </Card>
         <Card>
@@ -3601,10 +3965,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       </div>
 
       <div className="mt-8">
-        <h2 className="text-2xl font-bold mb-4">Mis pedidos y facturas</h2>
+        <h2 className="text-2xl font-bold mb-4">{t.myOrdersInvoices}</h2>
 
         {ordersLoading && (
-          <Card><CardContent className="p-6">Cargando tus pedidos…</CardContent></Card>
+          <Card><CardContent className="p-6">{t.loadingOrders}</CardContent></Card>
         )}
 
         {!ordersLoading && ordersError && (
@@ -3618,7 +3982,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
         {!ordersLoading && !ordersError && orders.length === 0 && (
           <Card>
             <CardContent className="p-6 text-muted-foreground">
-              Todavía no tienes pedidos asociados a esta cuenta.
+              {t.noOrders}
             </CardContent>
           </Card>
         )}
@@ -3633,10 +3997,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                       Pedido {order.id || order._id}
                     </h3>
                     <p className="text-sm text-muted-foreground">
-                      Fecha: {formatDate(order.createdAt)}
+                      {t.orderDate}: {formatDate(order.createdAt)}
                     </p>
                     <p className="text-sm">
-                      Estado del pedido: <strong>{order.status || order.shippingStatus || 'Pendiente'}</strong>
+                      {t.orderStatus}: <strong>{order.status || order.shippingStatus || 'Pendiente'}</strong>
                     </p>
                     <p className="text-sm">
                       Estado del pago: <strong>{order.paymentStatus || 'Pendiente'}</strong>
@@ -3668,13 +4032,13 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-sm text-muted-foreground">No hay detalles de productos disponibles.</p>
+                    <p className="text-sm text-muted-foreground">{t.noProductDetails}</p>
                   )}
                 </div>
 
                 {order.shipping && (
                   <div className="rounded-lg border p-3">
-                    <h4 className="font-semibold mb-1">Datos de entrega</h4>
+                    <h4 className="font-semibold mb-1">{t.deliveryData}</h4>
                     {order.shipping.recipientId && <p className="text-sm">ID del destinatario: {order.shipping.recipientId}</p>}
                     {order.shipping.name && <p className="text-sm">Nombre: {order.shipping.name}</p>}
                     {order.shipping.email && <p className="text-sm">Correo electrónico: {order.shipping.email}</p>}
@@ -3702,9 +4066,9 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                         Estado:
                         <strong className="ml-1">
                           {{
-                            processing: 'Preparando pedido',
-                            shipped: 'Enviado',
-                            delivered: 'Entregado'
+                            processing: t.preparingOrder,
+                            shipped: t.shipped,
+                            delivered: t.delivered
                           }[order.shippingStatus] || order.shippingStatus}
                         </strong>
                       </p>
@@ -3723,9 +4087,9 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                                className="border-l-2 pl-3 py-1 space-y-1">
                             <p className="text-sm font-medium">
                               {{
-                                processing: 'Preparando pedido',
-                                shipped: 'Enviado',
-                                delivered: 'Entregado'
+                                processing: t.preparingOrder,
+                                shipped: t.shipped,
+                                delivered: t.delivered
                               }[entry.status] || entry.status || 'Actualización'}
                             </p>
                             {(entry.at || entry.createdAt) && (
@@ -3769,7 +4133,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     variant="outline"
                     onClick={() => downloadOrderInvoice(order)}
                   >
-                    Descargar factura PDF con QR
+                    {t.downloadInvoiceQR}
                   </Button>
                   {order.publicInvoiceId && (
                     <Button variant="outline" onClick={() => downloadInvoiceQR(order)}>
@@ -3780,14 +4144,14 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     <Button variant="outline" onClick={() =>
                       window.open(`/invoice/${encodeURIComponent(order.publicInvoiceId)}`, '_blank', 'noopener,noreferrer')
                     }>
-                      Verificar factura
+                      {t.verifyInvoice}
                     </Button>
                   )}
                 </div>
 
                 {order.publicInvoiceId && (
                   <p className="text-xs text-muted-foreground pt-2 break-all">
-                    Número de factura: <strong>{order.publicInvoiceId}</strong>
+                    {t.invoiceNumber} <strong>{order.publicInvoiceId}</strong>
                   </p>
                 )}
 
@@ -3839,10 +4203,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                       disabled={!!invoiceLoading[order.id]}
                     >
                       {invoiceLoading[order.id]
-                        ? 'Cargando factura…'
+                        ? '{t.loadingInvoice}'
                         : openInvoiceId === order.id
-                          ? 'Ocultar factura'
-                          : 'Ver factura de pago'}
+                          ? '{t.hideInvoice}'
+                          : '{t.viewPaymentInvoice}'}
                     </Button>
 
                     {openInvoiceId === order.id && invoiceErrors[order.id] && (
@@ -3949,7 +4313,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token }) => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es' }) => {
   const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
@@ -4002,7 +4366,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         }
       } catch (error) {
         if (!cancelled) {
-          setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+          setSellerOrdersError(error?.message || t.sellerLoadingError);
         }
       } finally {
         if (!cancelled) setSellerOrdersLoading(false);
@@ -4067,7 +4431,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         </div>
         {(!p.stock || p.stock <= 0) && (
           <p className="text-[11px] text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-900 rounded-md p-2 mt-2">
-            Este producto <b>no será visible</b> en el marketplace porque no tiene stock disponible. Edítalo y agrega stock para reactivarlo.
+            {t.productNotVisible}
           </p>
         )}
         <div className="flex gap-2 mt-3">
@@ -4112,7 +4476,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             variant="outline"
             onClick={() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
           >
-            Pedidos y entregas ({sellerOrders.length})
+            {t.sellerOrdersTitle} ({sellerOrders.length})
           </Button>
           <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio">
             <Share2 className="h-4 w-4 mr-2" /> Compartir negocio
@@ -4134,7 +4498,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
               <div className="mb-3 flex items-start gap-2 text-sm">
                 <Sparkles className="h-4 w-4 text-[#00A86B] shrink-0 mt-0.5" />
                 <p>
-                  <b>Aún no tienes logo.</b> Súbelo ahora para que los compradores te encuentren más fácilmente y tu negocio se vea profesional. Se comprime y optimiza automáticamente.
+                  <b>{t.noLogoTitle}</b> {t.noLogoDesc}
                 </p>
               </div>
             )}
@@ -4153,7 +4517,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   <h2 className="mb-2 text-lg font-semibold">Billeteras para recibir pagos</h2>
   <p className="mb-4 text-sm text-gray-600">
     Configura las direcciones de destino de tu negocio. Deja vacío un campo para borrar esa dirección.
-    Guardar estos datos no activa transferencias automáticas.
+    {t.walletsNoTransfers}
   </p>
   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
     {[
@@ -4188,7 +4552,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       disabled={walletSaving}
       className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white disabled:opacity-50"
     >
-      {walletSaving ? 'Guardando…' : 'Guardar billeteras'}
+      {walletSaving ? 'Guardando…' : t.saveWallets}
     </button>
     <span role="status" aria-live="polite" className="text-sm">{walletMessage}</span>
   </div>
@@ -4197,7 +4561,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 {/* Stats — 4 cards instead of 3 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <Card><CardContent className="p-4">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Total productos</div>
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{t.totalProducts}</div>
           <div className="text-2xl font-bold mt-1">{stats.total}</div>
           <div className="text-[10px] text-muted-foreground mt-1">{isPremium ? 'Plan Premium ∞' : `Plan Básico — ${stats.total}/10`}</div>
         </CardContent></Card>
@@ -4231,7 +4595,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           </TabsList>
           <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input type="checkbox" checked={groupByCategory} onChange={(e) => setGroupByCategory(e.target.checked)} />
-            Agrupar por categoría
+            {t.groupByCategory}
           </label>
         </div>
       </Tabs>
@@ -4241,13 +4605,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           <CardContent>
             <ShoppingBag className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
             <p className="text-muted-foreground mb-4">
-              {tab === 'out' ? '¡No tienes productos agotados! 🎉' :
-               tab === 'featured' ? 'No tienes productos destacados.' :
-               tab === 'active' ? 'No tienes productos activos.' :
-               'Aún no tienes productos publicados.'}
+              {tab === 'out' ? '{t.noOutOfStock}' :
+               tab === 'featured' ? '{t.noFeaturedProducts}' :
+               tab === 'active' ? '{t.noActiveProducts}' :
+               '{t.noPublishedProducts}'}
             </p>
             <Button onClick={onNew} className="bg-[#00A86B] hover:bg-[#008F5B] text-white">
-              <Plus className="h-4 w-4 mr-2" /> {tab === 'all' ? 'Publica el primero' : 'Crear producto'}
+              <Plus className="h-4 w-4 mr-2" /> {tab === 'all' ? '{t.publishFirst}' : '{t.createProduct}'}
             </Button>
           </CardContent>
         </Card>
@@ -4273,14 +4637,14 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       {/* Seguimiento de pedidos del vendedor - Fase 5 */}
       <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-4">
         <div>
-          <h2 className="text-xl font-bold">Pedidos y entregas</h2>
+          <h2 className="text-xl font-bold">{t.sellerOrdersTitle}</h2>
           <p className="text-sm text-muted-foreground">
-            Actualiza el envío de los pedidos de tu comercio. Solo puedes gestionar pedidos con el pago confirmado.
+            {t.sellerOrdersDesc}
           </p>
         </div>
 
         {sellerOrdersLoading && (
-          <Card><CardContent className="p-4 text-sm">Cargando pedidos...</CardContent></Card>
+          <Card><CardContent className="p-4 text-sm">{t.loadingSellerOrders}</CardContent></Card>
         )}
 
         {sellerOrdersError && (
@@ -4295,7 +4659,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     const result = await api('/seller/orders', { token });
                     setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
                   } catch (error) {
-                    setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+                    setSellerOrdersError(error?.message || t.sellerLoadingError);
                   } finally {
                     setSellerOrdersLoading(false);
                   }
@@ -4308,7 +4672,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
         {!sellerOrdersLoading && !sellerOrdersError && sellerOrders.length === 0 && (
           <Card><CardContent className="p-5 text-sm text-muted-foreground">
-            Todavía no hay pedidos para este comercio.
+            {t.noSellerOrders}
           </CardContent></Card>
         )}
 
@@ -4335,23 +4699,23 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                 <CardContent className="p-4 space-y-4">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <h3 className="font-bold">Pedido #{String(order.id || 'Sin identificador')}</h3>
+                      <h3 className="font-bold">{t.orderLabel} #{String(order.id || 'Sin identificador')}</h3>
                       <p className="text-xs text-muted-foreground">
-                        {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Fecha no disponible'}
+                        {order.createdAt ? new Date(order.createdAt).toLocaleString(({ es: 'es-ES', en: 'en-US', it: 'it-IT', ru: 'ru-RU' })[lang] || 'es-ES') : t.dateUnavailable}
                       </p>
                     </div>
                     <Badge variant={paid ? 'default' : 'outline'}>
-                      {paid ? 'Pago confirmado' : 'Pago pendiente'}
+                      {paid ? t.paymentConfirmedLabel : t.paymentPendingLabel}
                     </Badge>
                   </div>
 
                   {order.buyerReceiptConfirmation?.confirmedAt ? (
                     <p className="text-sm font-medium text-green-700">
-                      El comprador confirmó la recepción.
+                      {t.buyerConfirmedReceipt}
                     </p>
                   ) : currentStatus === 'delivered' ? (
                     <p className="text-sm text-amber-700">
-                      Entrega marcada. Pendiente de confirmación del comprador.
+                      {t.awaitingBuyerReceipt}
                     </p>
                   ) : null}
 
@@ -4381,7 +4745,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
-                      <Label>Estado del envío</Label>
+                      <Label>{t.shippingStatus}</Label>
                       <select
                         className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
                         value={form.status || currentStatus}
@@ -4394,9 +4758,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                         {availableStatuses.map((statusOption) => (
                           <option key={statusOption} value={statusOption}>
                             {{
-                              processing: 'En preparación',
-                              shipped: 'Enviado',
-                              delivered: 'Entregado',
+                              processing: t.preparingOrder,
+                              shipped: t.shipped,
+                              delivered: t.delivered,
                             }[statusOption] || statusOption}
                           </option>
                         ))}
@@ -4416,7 +4780,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       />
                     </div>
                     <div className="space-y-1 sm:col-span-2">
-                      <Label>Número de seguimiento</Label>
+                      <Label>{t.trackingNumber}</Label>
                       <Input
                         maxLength={100}
                         placeholder="Código o referencia del envío"
@@ -4429,7 +4793,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       />
                     </div>
                     <div className="space-y-1 sm:col-span-2">
-                      <Label>Notas para el comprador</Label>
+                      <Label>{t.buyerNotes}</Label>
                       <textarea
                         className="w-full min-h-20 rounded-md border border-input bg-background px-3 py-2 text-sm"
                         maxLength={1000}
@@ -4443,7 +4807,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       />
                     </div>
                     <div className="space-y-1 sm:col-span-2">
-                      <Label>Fotos de entrega (máximo 4 por actualización)</Label>
+                      <Label>{t.deliveryPhotos}</Label>
                       <Input
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
@@ -4520,19 +4884,19 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       } catch (error) {
                         setSellerOrderMessage((old) => ({
                           ...old,
-                          [order.id]: { type: 'error', text: error?.message || 'No se pudo guardar el seguimiento.' }
+                          [order.id]: { type: 'error', text: error?.message || t.trackingSaveError }
                         }));
                       } finally {
                         setSellerOrderSaving((old) => ({ ...old, [order.id]: false }));
                       }
                     }}
                   >
-                    {saving ? 'Guardando...' : 'Guardar seguimiento'}
+                    {saving ? t.saving : t.saveTracking}
                   </Button>
 
                   {photos.length > 0 && (
                     <div className="space-y-2">
-                      <h4 className="text-sm font-semibold">Fotos registradas</h4>
+                      <h4 className="text-sm font-semibold">{t.registeredPhotos}</h4>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         {photos.map((photo, index) => (
                           <a key={`${photo}-${index}`} href={photo} target="_blank" rel="noreferrer">
@@ -4547,7 +4911,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
                   {history.length > 0 && (
                     <details>
-                      <summary className="cursor-pointer text-sm font-semibold">Historial de estados</summary>
+                      <summary className="cursor-pointer text-sm font-semibold">{t.shippingHistory}</summary>
                       <div className="mt-2 space-y-2">
                         {history.map((entry, index) => (
                           <div key={`${entry.at || index}-${index}`} className="border-l-2 pl-3 py-1 text-sm">
@@ -4984,14 +5348,14 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
           )}
         </div>
         <div>
-          <h4 className="font-semibold text-sm mb-3">Legal</h4>
+          <h4 className="font-semibold text-sm mb-3">{t.legalLabel}</h4>
           <div className="space-y-2 text-sm text-muted-foreground">
             <button onClick={() => onLegal('privacy')} className="block hover:text-foreground">{t.privacyPolicy}</button>
             <button onClick={() => onLegal('terms')} className="block hover:text-foreground">{t.terms}</button>
             <button onClick={() => onLegal('contact')} className="block hover:text-foreground">{t.officialContact}</button>
           </div>
           <div className="mt-4">
-            <div className="text-xs text-muted-foreground mb-1">Idioma</div>
+            <div className="text-xs text-muted-foreground mb-1">{t.languageLabel}</div>
             <div className="flex gap-1">
               {Object.entries(FLAGS).map(([k, f]) => (
                 <button key={k} onClick={() => setLang(k)} className={`text-xl p-1 rounded ${lang === k ? 'ring-2 ring-[#1565C0]' : 'opacity-60 hover:opacity-100'}`}>{f}</button>
@@ -5001,7 +5365,7 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
         </div>
       </div>
       <div className="mt-8 pt-6 border-t border-border text-xs text-muted-foreground flex flex-col md:flex-row justify-between gap-2">
-        <div>© {new Date().getFullYear()} UBIK2YEMG · Todos los derechos reservados</div>
+        <div>© {new Date().getFullYear()} UBIK2YEMG · {t.rightsReserved}</div>
         <div className="flex gap-4">USDC · Transfermóvil · WhatsApp · Telegram · SMS</div>
       </div>
     </div>

@@ -58,6 +58,7 @@ import {
   AlertCircle, CheckCircle, XCircle, CreditCard, Wallet, Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import AadsFloatingAd from '@/components/AadsFloatingAd';
 
 const API = '/api';
 const LOGO = '/logo.svg';
@@ -2028,6 +2029,11 @@ const App = () => {
           />
         )}
       </main>
+
+      {/* Publicidad A-ADS solo en vistas públicas; nunca durante el pago ni en administración */}
+      {['home', 'product', 'business', 'favorites'].includes(view) && (
+        <AadsFloatingAd />
+      )}
 
       {/* ====== FOOTER ====== */}
       <Footer t={t} settings={settings} onLegal={setLegalOpen} setLang={setLang} lang={lang} />

@@ -1952,58 +1952,16 @@ const LogoUploader = ({ value, onChange, compressLogo, label = 'Logo del negocio
 
 
 const LogoSVG = ({ size = 40, showText = false, textWhite = false }) => (
-  <svg
-    width={size}
+  <img
+    src="/ubik-logo-nuevo.jpg"
+    width={Math.round(size * 2.7)}
     height={size}
-    viewBox="0 0 100 100"
-    xmlns="http://www.w3.org/2000/svg"
-    className="flex-shrink-0"
-    aria-label="UBIK2 YEMG"
-  >
-    <defs>
-      <linearGradient id="ubikGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#1565C0" />
-        <stop offset="100%" stopColor="#00A86B" />
-      </linearGradient>
-    </defs>
-    {/* Pin/location marker outline */}
-    <path
-      d="M50 8 C32 8 18 22 18 40 C18 58 50 92 50 92 C50 92 82 58 82 40 C82 22 68 8 50 8 Z"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="4.5"
-      strokeLinejoin="round"
-    />
-    {/* Shopping cart body */}
-    <path
-      d="M30 38 L66 38 L62 58 L36 58 Z"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="3.5"
-      strokeLinejoin="round"
-    />
-    {/* Cart handle */}
-    <path
-      d="M26 32 L31 32 L36 58"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="3.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    {/* Cart wheels */}
-    <circle cx="40" cy="66" r="3" fill="url(#ubikGrad)" />
-    <circle cx="58" cy="66" r="3" fill="url(#ubikGrad)" />
-    {/* Check mark inside cart */}
-    <path
-      d="M40 47 L46 53 L57 42"
-      fill="none"
-      stroke="url(#ubikGrad)"
-      strokeWidth="4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </svg>
+    alt="UBIK2 YEMG"
+    loading="eager"
+    decoding="async"
+    className="flex-shrink-0 object-contain"
+    style={{ width: `${Math.round(size * 2.7)}px`, height: `${size}px` }}
+  />
 );
 
 const Logo = ({ size = 'md', withText = true, onDark = false }) => {

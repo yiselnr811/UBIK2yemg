@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { MongoClient } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -1159,6 +1160,463 @@ async function route(request, method, path) {
 
   const db = await getDb();
   const url = new URL(request.url);
+
+  // ===== DIDIT IDENTITY VERIFICATION: signed webhook =====
+  if (path[0] === 'identity' && path[1] === 'didit' &&
+      path[2] === 'webhook' && method === 'POST' && path.length === 3) {
+    const secret = process.env.DIDIT_WEBHOOK_SECRET;
+    if (!secret) {
+      console.error('[Didit] DIDIT_WEBHOOK_SECRET no está configurada.');
+      return json({ error: 'Webhook no configurado.' }, 503);
+    }
+
+    let rawBody;
+    let payload;
+    let exactPayload;
+
+    try {
+      rawBody = await request.text();
+
+      payload = JSON.parse(rawBody);
+
+      class DiditNumber {
+        constructor(source) {
+          this.source = source;
+        }
+      }
+
+      exactPayload = JSON.parse(rawBody, (key, value, context) => {
+        if (typeof value === 'number' && context) {
+          return new DiditNumber(context.source);
+        }
+        return value;
+      });
+
+      const canonicalNumber = (source) => {
+        // Preserve exact integer tokens; Number() can lose precision.
+        if (/^-?\d+$/.test(source)) {
+          return BigInt(source).toString();
+        }
+
+        const number = Number(source);
+
+        if (!Number.isFinite(number)) {
+          throw new Error('Número JSON no válido.');
+        }
+
+        // Didit canonicalization converts whole-valued floats to integers.
+        if (Number.isInteger(number)) {
+          return BigInt(number).toString();
+        }
+
+        // Use the shortest round-trip digits, then apply Python-style
+        // exponent thresholds and formatting used by Didit's V2 examples.
+        const [rawMantissa, exponentText] = number.toExponential().split('e');
+        const exponent = Number(exponentText);
+        const negative = rawMantissa.startsWith('-');
+        const mantissa = negative ? rawMantissa.slice(1) : rawMantissa;
+
+        if (exponent < -4 || exponent >= 16) {
+          const expSign = exponent < 0 ? '-' : '+';
+          return `${negative ? '-' : ''}${mantissa}e${expSign}${String(Math.abs(exponent)).padStart(2, '0')}`;
+        }
+
+        const digits = mantissa.replace('.', '');
+        const decimalPosition = exponent + 1;
+        let decimal;
+
+        if (decimalPosition <= 0) {
+          decimal = '0.' + '0'.repeat(-decimalPosition) + digits;
+        } else if (decimalPosition >= digits.length) {
+          decimal = digits + '0'.repeat(decimalPosition - digits.length);
+        } else {
+          decimal = digits.slice(0, decimalPosition) + '.' + digits.slice(decimalPosition);
+        }
+
+        return (negative ? '-' : '') + decimal;
+      };
+
+      const compareUnicodeCodePoints = (a, b) => {
+        const left = Array.from(a, (char) => char.codePointAt(0));
+        const right = Array.from(b, (char) => char.codePointAt(0));
+        const length = Math.min(left.length, right.length);
+
+        for (let i = 0; i < length; i++) {
+          if (left[i] !== right[i]) return left[i] - right[i];
+        }
+
+        return left.length - right.length;
+      };
+
+      const canonicalize = (value) => {
+        if (value instanceof DiditNumber) {
+          return canonicalNumber(value.source);
+        }
+
+        if (Array.isArray(value)) {
+          return '[' + value.map(canonicalize).join(',') + ']';
+        }
+
+        if (value !== null && typeof value === 'object') {
+          return '{' + Object.keys(value)
+            .sort(compareUnicodeCodePoints)
+            .map((key) => JSON.stringify(key) + ':' + canonicalize(value[key]))
+            .join(',') + '}';
+        }
+
+        return JSON.stringify(value);
+      };
+
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return json({ error: 'Payload inválido.' }, 400);
+      }
+
+      const timestamp = Number(payload.timestamp);
+      const timestampHeader = request.headers.get('x-timestamp') || '';
+      const signature = request.headers.get('x-signature-v2') || '';
+
+      if (
+        !Number.isFinite(timestamp) ||
+        timestamp <= 0 ||
+        String(timestamp) !== timestampHeader ||
+        Math.abs(Date.now() / 1000 - timestamp) > 300
+      ) {
+        return json({ error: 'Marca de tiempo inválida o caducada.' }, 401);
+      }
+
+      if (!/^[a-f0-9]{64}$/i.test(signature)) {
+        return json({ error: 'Firma inválida.' }, 401);
+      }
+
+      const expectedSignature = createHmac('sha256', secret)
+        .update(canonicalize(exactPayload), 'utf8')
+        .digest();
+
+      const receivedSignature = Buffer.from(signature, 'hex');
+
+      if (
+        receivedSignature.length !== expectedSignature.length ||
+        !timingSafeEqual(receivedSignature, expectedSignature)
+      ) {
+        return json({ error: 'Firma no válida.' }, 401);
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        return json({ error: 'JSON inválido.' }, 400);
+      }
+
+      console.error('[Didit] Error validando el webhook:', e?.message);
+      return json({ error: 'No se pudo validar la firma.' }, 400);
+    }
+
+    // Rechazar eventos incompletos o distintos del evento configurado.
+    if (payload.webhook_type !== 'status.updated') {
+      return json({ error: 'Tipo de evento no admitido.' }, 400);
+    }
+
+    // Didit event_id permite reconocer los reintentos del mismo webhook.
+    const eventId = typeof payload.event_id === 'string'
+      ? payload.event_id.trim()
+      : '';
+
+    if (!eventId || eventId.length > 200) {
+      return json({ error: 'Falta un identificador de evento válido.' }, 400);
+    }
+
+    const sessionId = typeof payload.session_id === 'string'
+      ? payload.session_id
+      : '';
+    const diditStatus = typeof payload.status === 'string'
+      ? payload.status
+      : '';
+
+    if (!sessionId || !diditStatus) {
+      return json({ error: 'Faltan session_id o status.' }, 400);
+    }
+
+    const expectedWorkflowId = process.env.DIDIT_WORKFLOW_ID;
+    if (
+      !expectedWorkflowId ||
+      typeof payload.workflow_id !== 'string' ||
+      payload.workflow_id !== expectedWorkflowId
+    ) {
+      return json({ error: 'Flujo de verificación inesperado.' }, 401);
+    }
+
+    const user = await db.collection('users').findOne({
+      'identityVerification.provider': 'didit',
+      'identityVerification.sessionId': sessionId,
+    });
+
+    if (!user) {
+      // No aceptar una sesión que no esté vinculada a un usuario local.
+      return json({ error: 'Sesión no reconocida.' }, 404);
+    }
+
+    if (
+      typeof payload.vendor_data !== 'string' ||
+      payload.vendor_data !== user.id
+    ) {
+      return json({ error: 'La sesión no corresponde al usuario.' }, 401);
+    }
+
+    const statusMap = {
+      'Not Started': 'not_started',
+      'In Progress': 'in_progress',
+      'Awaiting User': 'awaiting_user',
+      'In Review': 'in_review',
+      'Approved': 'approved',
+      'Declined': 'declined',
+      'Resubmitted': 'resubmitted',
+      'Abandoned': 'abandoned',
+      'Expired': 'expired',
+      'Kyc Expired': 'kyc_expired',
+    };
+
+    const mappedStatus = statusMap[diditStatus];
+    if (!mappedStatus) {
+      // Nunca interpretar un estado desconocido como aprobado.
+      console.warn('[Didit] Estado no reconocido:', diditStatus);
+      return json({ ok: true, ignored: true });
+    }
+
+    const now = new Date().toISOString();
+    const isVerified = diditStatus === 'Approved';
+
+    const verificationUpdate = {
+      'identityVerification.status': mappedStatus,
+      'identityVerification.diditStatus': diditStatus,
+      'identityVerification.verified': isVerified,
+      'identityVerification.updatedAt': now,
+      'identityVerification.lastWebhookType': payload.webhook_type || 'status.updated',
+    };
+
+    if (isVerified) {
+      verificationUpdate['identityVerification.verifiedAt'] = now;
+    } else {
+      verificationUpdate['identityVerification.verifiedAt'] = null;
+    }
+
+    // Actualizar usuario y negocio de forma atómica.
+    const mongoSession = _client.startSession();
+    try {
+      await mongoSession.withTransaction(async () => {
+        // El _id de MongoDB impone unicidad sin requerir un índice adicional.
+        // Este registro se confirma o revierte junto con la actualización KYC.
+        await db.collection('didit_webhook_events').insertOne({
+          _id: eventId,
+          sessionId,
+          userId: user.id,
+          webhookType: payload.webhook_type,
+          status: diditStatus,
+          receivedAt: now,
+        }, { session: mongoSession });
+
+        const updateUser = await db.collection('users').updateOne(
+          {
+            id: user.id,
+            'identityVerification.sessionId': sessionId,
+          },
+          { $set: verificationUpdate },
+          { session: mongoSession }
+        );
+
+        if (!updateUser.matchedCount) {
+          throw new Error('DIDIT_SESSION_CHANGED');
+        }
+
+        if (user.businessId) {
+          const updateBusiness = await db.collection('businesses').updateOne(
+            {
+              id: user.businessId,
+              userId: user.id,
+              'identityVerification.sessionId': sessionId,
+            },
+            { $set: verificationUpdate },
+            { session: mongoSession }
+          );
+
+          if (!updateBusiness.matchedCount) {
+            throw new Error('DIDIT_BUSINESS_SYNC_FAILED');
+          }
+        }
+      });
+    } catch (e) {
+      if (e?.code === 11000) {
+        const existingEvent = await db.collection('didit_webhook_events')
+          .findOne({ _id: eventId })
+          .catch(() => null);
+
+        if (existingEvent) {
+          return json({ ok: true, duplicate: true });
+        }
+      }
+
+      if (e?.message === 'DIDIT_SESSION_CHANGED') {
+        return json(
+          { error: 'La sesión cambió; no se aplicó el resultado.' },
+          409
+        );
+      }
+
+      if (e?.message === 'DIDIT_BUSINESS_SYNC_FAILED') {
+        console.error('[Didit] No se encontró el negocio para sincronizar.');
+        return json(
+          { error: 'No se pudo sincronizar la verificación del negocio.' },
+          409
+        );
+      }
+
+      console.error('[Didit] Falló la transacción del webhook:', e?.message);
+      return json(
+        { error: 'No se pudo guardar el resultado de verificación.' },
+        500
+      );
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    return json({ ok: true, status: mappedStatus });
+  }
+
+  // ===== DIDIT IDENTITY VERIFICATION: create hosted session =====
+  if (path[0] === 'identity' && path[1] === 'didit' && path[2] === 'session' && method === 'POST') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    if (user.role === 'admin') {
+      return json({ error: 'La verificación de identidad de vendedor no se inicia desde una cuenta administradora.' }, 400);
+    }
+
+    if (user.accountType !== 'seller' || !user.businessId) {
+      return json({ error: 'Necesitas una cuenta de vendedor y un negocio asociado para verificar tu identidad.' }, 400);
+    }
+
+    const diditApiKey = process.env.DIDIT_API_KEY;
+    const diditWorkflowId = process.env.DIDIT_WORKFLOW_ID;
+
+    if (!diditApiKey || !diditWorkflowId) {
+      console.error('[Didit] Faltan DIDIT_API_KEY o DIDIT_WORKFLOW_ID.');
+      return json({ error: 'La verificación de identidad no está configurada todavía.' }, 503);
+    }
+
+    const business = await db.collection('businesses').findOne({
+      id: user.businessId,
+      userId: user.id
+    });
+
+    if (!business) {
+      return json({ error: 'No se encontró el negocio asociado a tu cuenta.' }, 403);
+    }
+
+    const now = new Date().toISOString();
+
+    const diditResponse = await fetch('https://verification.didit.me/v3/session/', {
+      method: 'POST',
+      headers: {
+        'x-api-key': diditApiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        workflow_id: diditWorkflowId,
+        vendor_data: user.id,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    let diditData = null;
+    try {
+      diditData = await diditResponse.json();
+    } catch {}
+
+    if (!diditResponse.ok) {
+      console.error('[Didit] Error creando sesión. HTTP:', diditResponse.status);
+      return json({ error: 'Didit no pudo iniciar la verificación. Inténtalo de nuevo más tarde.' }, 502);
+    }
+
+    const sessionId = typeof diditData?.session_id === 'string'
+      ? diditData.session_id
+      : '';
+
+    const sessionUrl = typeof diditData?.url === 'string'
+      ? diditData.url
+      : (typeof diditData?.session_url === 'string' ? diditData.session_url : '');
+
+    let parsedSessionUrl;
+    try {
+      let candidateUrl = sessionUrl;
+
+      // Algunas respuestas/documentaciones muestran el dominio sin esquema.
+      if (candidateUrl.startsWith('verify.didit.me/')) {
+        candidateUrl = 'https://' + candidateUrl;
+      }
+
+      parsedSessionUrl = new URL(candidateUrl);
+    } catch {}
+
+    if (
+      !sessionId ||
+      !parsedSessionUrl ||
+      parsedSessionUrl.protocol !== 'https:' ||
+      parsedSessionUrl.hostname !== 'verify.didit.me' ||
+      parsedSessionUrl.username !== '' ||
+      parsedSessionUrl.password !== '' ||
+      parsedSessionUrl.port !== ''
+    ) {
+      console.error('[Didit] Respuesta de sesión incompleta o URL no permitida.');
+      return json({ error: 'Didit devolvió una respuesta de sesión no válida.' }, 502);
+    }
+
+    const identityVerification = {
+      provider: 'didit',
+      sessionId,
+      sessionUrl: parsedSessionUrl.toString(),
+      status: 'pending',
+      verified: false,
+      startedAt: now,
+      updatedAt: now,
+    };
+
+    // Guardar la sesión en usuario y negocio de forma atómica.
+    const mongoSession = _client.startSession();
+    try {
+      await mongoSession.withTransaction(async () => {
+        const userUpdate = await db.collection('users').updateOne(
+          { id: user.id, businessId: business.id },
+          { $set: { identityVerification } },
+          { session: mongoSession }
+        );
+
+        if (!userUpdate.matchedCount) {
+          throw new Error('DIDIT_USER_SESSION_SAVE_FAILED');
+        }
+
+        const businessUpdate = await db.collection('businesses').updateOne(
+          { id: business.id, userId: user.id },
+          { $set: { identityVerification } },
+          { session: mongoSession }
+        );
+
+        if (!businessUpdate.matchedCount) {
+          throw new Error('DIDIT_BUSINESS_SESSION_SAVE_FAILED');
+        }
+      });
+    } catch (e) {
+      console.error('[Didit] No se pudo guardar la sesión:', e?.message);
+      return json(
+        { error: 'No se pudo guardar la verificación. Inténtalo de nuevo.' },
+        500
+      );
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    return json({
+      sessionId,
+      sessionUrl: parsedSessionUrl.toString(),
+      status: 'pending'
+    }, 201);
+  }
 
   // Health
   if (path.length === 0) {

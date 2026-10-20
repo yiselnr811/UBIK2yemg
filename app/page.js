@@ -4333,6 +4333,11 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [businessLocation, setBusinessLocation] = React.useState(business?.location || '');
   const [businessSaving, setBusinessSaving] = React.useState(false);
   const [businessMessage, setBusinessMessage] = React.useState('');
+  const [identityVerification, setIdentityVerification] = React.useState(
+    business?.identityVerification || user?.identityVerification || null
+  );
+  const [identityBusy, setIdentityBusy] = React.useState(false);
+  const [identityMessage, setIdentityMessage] = React.useState('');
   const [showWallets, setShowWallets] = React.useState(true);
   const [showInventory, setShowInventory] = React.useState(true);
 
@@ -4372,6 +4377,58 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         JSON.stringify(current)
       );
     } catch {}
+  };
+
+  const refreshIdentityVerification = async () => {
+    if (!token || identityBusy) return;
+    setIdentityBusy(true);
+    setIdentityMessage('');
+    try {
+      const result = await api('/auth/me', { token, retries: 0 });
+      const latest = result?.user?.identityVerification
+        || result?.business?.identityVerification
+        || null;
+      setIdentityVerification(latest);
+      setIdentityMessage(
+        latest?.status === 'approved'
+          ? 'Tu identidad está verificada.'
+          : 'Estado de verificación actualizado.'
+      );
+    } catch (error) {
+      setIdentityMessage(error?.message || 'No se pudo consultar el estado.');
+    } finally {
+      setIdentityBusy(false);
+    }
+  };
+
+  const startIdentityVerification = async () => {
+    if (!token || identityBusy) return;
+    setIdentityBusy(true);
+    setIdentityMessage('');
+    try {
+      const result = await api('/identity/didit/session', {
+        method: 'POST',
+        token,
+        body: {},
+        retries: 0,
+        timeout: 20000
+      });
+      if (!result?.sessionUrl) {
+        throw new Error('Didit no devolvió el enlace de verificación.');
+      }
+      setIdentityVerification({
+        provider: 'didit',
+        sessionId: result.sessionId,
+        sessionUrl: result.sessionUrl,
+        status: result.status || 'pending',
+        startedAt: new Date().toISOString()
+      });
+      setIdentityMessage('Sesión creada. Pulsa el enlace para abrir Didit.');
+    } catch (error) {
+      setIdentityMessage(error?.message || 'No se pudo iniciar la verificación.');
+    } finally {
+      setIdentityBusy(false);
+    }
   };
 
   const saveBusinessProfile = async () => {
@@ -4575,6 +4632,70 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         </Card>
       )}
 
+
+<div className="mb-6 rounded-xl border border-gray-200 p-4">
+  <h2 className="mb-2 text-lg font-semibold">Verificación de identidad</h2>
+  <p className="mb-3 text-sm text-muted-foreground">
+    Verifica tu identidad mediante Didit. Esta comprobación es independiente
+    de la verificación comercial de tu negocio.
+  </p>
+  <div className="mb-3">
+    <span className="font-medium">Estado: </span>
+    <span role="status" aria-live="polite">
+      {{
+        approved: 'Identidad verificada',
+        pending: 'Pendiente',
+        not_started: 'No iniciada',
+        in_progress: 'En curso',
+        awaiting_user: 'Esperando tu acción',
+        in_review: 'En revisión',
+        declined: 'Rechazada',
+        resubmitted: 'Enviada nuevamente',
+        abandoned: 'Abandonada',
+        expired: 'Sesión vencida',
+        kyc_expired: 'Verificación vencida'
+      }[identityVerification?.status] || 'No verificada'}
+    </span>
+  </div>
+  {identityVerification?.verified !== true && (
+    <div className="flex flex-wrap gap-3">
+      {identityVerification?.sessionUrl &&
+       !['expired', 'abandoned', 'declined', 'kyc_expired'].includes(identityVerification?.status) ? (
+        <a
+          href={identityVerification.sessionUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center rounded-lg bg-green-700 px-4 py-2 font-medium text-white"
+        >
+          Abrir verificación segura
+        </a>
+      ) : (
+        <button
+          type="button"
+          onClick={startIdentityVerification}
+          disabled={identityBusy}
+          className="rounded-lg bg-green-700 px-4 py-2 font-medium text-white disabled:opacity-50"
+        >
+          {identityBusy ? 'Conectando con Didit…' : 'Verificar mi identidad'}
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={refreshIdentityVerification}
+        disabled={identityBusy}
+        className="rounded-lg border border-gray-300 px-4 py-2 font-medium disabled:opacity-50"
+      >
+        {identityBusy ? 'Consultando…' : 'Actualizar estado'}
+      </button>
+    </div>
+  )}
+  {identityVerification?.verified === true && (
+    <p className="font-medium text-green-700">Tu identidad ha sido aprobada por Didit.</p>
+  )}
+  <p role="status" aria-live="polite" className="mt-3 text-sm">
+    {identityMessage}
+  </p>
+</div>
 
 <div className="mb-6 rounded-xl border border-gray-200 p-4">
   <h2 className="mb-3 text-lg font-semibold">Mi negocio: descripción y ubicación</h2>

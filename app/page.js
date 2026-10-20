@@ -2004,7 +2004,7 @@ const LogoUploader = ({ value, onChange, compressLogo, label = 'Logo del negocio
 
 const LogoSVG = ({ size = 40, showText = false, textWhite = false }) => (
   <img
-    src="/ubik2-logo.jpg"
+    src="/ubik-logo-nuevo.jpg"
     width={Math.round(size * 2.7)}
     height={size}
     alt="UBIK2 YEMG"

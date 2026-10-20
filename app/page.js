@@ -4329,10 +4329,73 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [cryptoPayoutWallets, setCryptoPayoutWallets] = React.useState({ ...(business?.cryptoPayoutWallets || {}) });
   const [walletSaving, setWalletSaving] = React.useState(false);
   const [walletMessage, setWalletMessage] = React.useState('');
+  const [businessDescription, setBusinessDescription] = React.useState(business?.description || '');
+  const [businessLocation, setBusinessLocation] = React.useState(business?.location || '');
+  const [businessSaving, setBusinessSaving] = React.useState(false);
+  const [businessMessage, setBusinessMessage] = React.useState('');
+  const [showWallets, setShowWallets] = React.useState(true);
+  const [showInventory, setShowInventory] = React.useState(true);
 
   React.useEffect(() => {
     setCryptoPayoutWallets({ ...(business?.cryptoPayoutWallets || {}) });
+    setBusinessDescription(business?.description || '');
+    setBusinessLocation(business?.location || '');
+
+    if (typeof window !== 'undefined' && business?.id) {
+      try {
+        const saved = window.localStorage.getItem(`ubik-seller-sections-${business.id}`);
+        if (saved) {
+          const preferences = JSON.parse(saved);
+          setShowWallets(preferences.showWallets !== false);
+          setShowInventory(preferences.showInventory !== false);
+        } else {
+          setShowWallets(true);
+          setShowInventory(true);
+        }
+      } catch {
+        setShowWallets(true);
+        setShowInventory(true);
+      }
+    }
   }, [business?.id]);
+
+  const saveSectionPreferences = (next) => {
+    if (!business?.id || typeof window === 'undefined') return;
+    try {
+      const current = {
+        showWallets,
+        showInventory,
+        ...next
+      };
+      window.localStorage.setItem(
+        `ubik-seller-sections-${business.id}`,
+        JSON.stringify(current)
+      );
+    } catch {}
+  };
+
+  const saveBusinessProfile = async () => {
+    if (!business?.id || businessSaving) return;
+    setBusinessSaving(true);
+    setBusinessMessage('');
+    try {
+      const result = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: {
+          description: businessDescription,
+          location: businessLocation
+        }
+      });
+      if (result?.error) throw new Error(result.error);
+      setBusinessMessage('Descripción y ubicación guardadas correctamente.');
+      toast.success('Información del negocio actualizada');
+    } catch (error) {
+      setBusinessMessage(error?.message || 'No se pudo guardar la información.');
+    } finally {
+      setBusinessSaving(false);
+    }
+  };
 
   const saveCryptoPayoutWallets = async () => {
     if (!business?.id || walletSaving) return;
@@ -4514,6 +4577,78 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
 
 <div className="mb-6 rounded-xl border border-gray-200 p-4">
+  <h2 className="mb-3 text-lg font-semibold">Mi negocio: descripción y ubicación</h2>
+  <div className="grid grid-cols-1 gap-3">
+    <label className="block text-sm font-medium">
+      Descripción del negocio
+      <textarea
+        value={businessDescription}
+        onChange={(event) => setBusinessDescription(event.target.value)}
+        maxLength={1000}
+        rows={3}
+        className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+        placeholder="Describe tu negocio y lo que ofreces"
+      />
+    </label>
+    <label className="block text-sm font-medium">
+      Ubicación del negocio
+      <input
+        value={businessLocation}
+        onChange={(event) => setBusinessLocation(event.target.value)}
+        maxLength={200}
+        className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+        placeholder="La Habana, Cuba"
+      />
+    </label>
+  </div>
+  <div className="mt-3 flex flex-wrap items-center gap-3">
+    <button
+      type="button"
+      onClick={saveBusinessProfile}
+      disabled={businessSaving}
+      className="rounded-lg bg-green-700 px-4 py-2 font-medium text-white disabled:opacity-50"
+    >
+      {businessSaving ? 'Guardando…' : 'Guardar información'}
+    </button>
+    <span role="status" aria-live="polite" className="text-sm">{businessMessage}</span>
+  </div>
+</div>
+
+<div className="mb-4 rounded-xl border border-gray-200 p-4">
+  <h2 className="mb-3 text-lg font-semibold">Personalizar panel del vendedor</h2>
+  <div className="flex flex-wrap gap-3">
+    <button
+      type="button"
+      aria-pressed={showWallets}
+      onClick={() => {
+        const next = !showWallets;
+        setShowWallets(next);
+        saveSectionPreferences({ showWallets: next });
+      }}
+      className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium"
+    >
+      {showWallets ? 'Ocultar billeteras de cobro' : 'Mostrar billeteras de cobro'}
+    </button>
+    <button
+      type="button"
+      aria-pressed={showInventory}
+      onClick={() => {
+        const next = !showInventory;
+        setShowInventory(next);
+        saveSectionPreferences({ showInventory: next });
+      }}
+      className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium"
+    >
+      {showInventory ? 'Ocultar inventario' : 'Mostrar inventario'}
+    </button>
+  </div>
+  <p className="mt-2 text-xs text-muted-foreground">
+    Estas opciones solo ocultan o muestran secciones del panel. No eliminan productos ni cambian pagos o existencias.
+  </p>
+</div>
+
+{showWallets && (
+<div className="mb-6 rounded-xl border border-gray-200 p-4">
   <h2 className="mb-2 text-lg font-semibold">Billeteras para recibir pagos</h2>
   <p className="mb-4 text-sm text-gray-600">
     Configura las direcciones de destino de tu negocio. Deja vacío un campo para borrar esa dirección.
@@ -4557,7 +4692,10 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
     <span role="status" aria-live="polite" className="text-sm">{walletMessage}</span>
   </div>
 </div>
+)}
 
+{showInventory && (
+<>
 {/* Stats — 4 cards instead of 3 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         <Card><CardContent className="p-4">
@@ -4633,6 +4771,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           {visibleProducts.map(renderProductCard)}
         </div>
       )}
+
+</>
+)}
 
       {/* Seguimiento de pedidos del vendedor - Fase 5 */}
       <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-4">

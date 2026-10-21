@@ -839,7 +839,18 @@ function api(path, { method = 'GET', body, token, timeout = 10000, retries = 1, 
       .then(async (r) => {
         clearTimeout(timer);
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || `Error ${r.status}`);
+        if (!r.ok) {
+          const details = data.details && typeof data.details === 'object'
+            ? Object.entries(data.details)
+                .map(([field, messages]) =>
+                  `${field}: ${Array.isArray(messages) ? messages.join(', ') : String(messages)}`
+                )
+                .join('; ')
+            : '';
+          throw new Error(details
+            ? `${data.error || `Error ${r.status}`} — ${details}`
+            : (data.error || `Error ${r.status}`));
+        }
         return data;
       })
       .catch((err) => {
@@ -4812,13 +4823,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           <CardContent>
             <ShoppingBag className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
             <p className="text-muted-foreground mb-4">
-              {tab === 'out' ? '{t.noOutOfStock}' :
-               tab === 'featured' ? '{t.noFeaturedProducts}' :
-               tab === 'active' ? '{t.noActiveProducts}' :
-               '{t.noPublishedProducts}'}
+              {tab === 'out' ? t.noOutOfStock :
+               tab === 'featured' ? t.noFeaturedProducts :
+               tab === 'active' ? t.noActiveProducts :
+               t.noPublishedProducts}
             </p>
             <Button onClick={onNew} className="bg-[#00A86B] hover:bg-[#008F5B] text-white">
-              <Plus className="h-4 w-4 mr-2" /> {tab === 'all' ? '{t.publishFirst}' : '{t.createProduct}'}
+              <Plus className="h-4 w-4 mr-2" /> {tab === 'all' ? t.publishFirst : t.createProduct}
             </Button>
           </CardContent>
         </Card>

@@ -207,7 +207,7 @@ const productSchema = z.object({
   category: z.string().min(1).max(50),
   subcategory: z.string().max(50).optional(),
   stock: z.number().int().min(0).optional(),
-  image: z.string().url().or(z.string().startsWith('data:')).optional(),
+  image: z.string().url().or(z.string().startsWith('data:')).or(z.literal('')).optional(),
   available: z.boolean().optional(),
   featured: z.boolean().optional(),
   location: z.string().max(200).optional(),

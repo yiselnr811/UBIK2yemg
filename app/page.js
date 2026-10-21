@@ -1873,7 +1873,9 @@ const App = () => {
 
   const onSearch = (e) => {
     e?.preventDefault();
+    setCategory('');
     setQuery(searchInput.trim());
+    setSuggestOpen(false);
     if (view !== 'home') setView('home');
   };
 
@@ -1921,7 +1923,7 @@ const App = () => {
             onCTA={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); } }}
             onOpenFilters={() => setFiltersOpen(true)}
             resetFilters={resetFilters}
-            query={query} setQuery={setQuery} searchInput={searchInput} setSearchInput={setSearchInput}
+            query={query} setQuery={setQuery} searchInput={searchInput} setSearchInput={setSearchInput} onSearch={onSearch}
             onPublish={() => {
               if (!user) { setAuthMode('register'); setAuthForm({ ...authForm, accountType: 'seller' }); setAuthOpen(true); }
               else if (!business) { setUpgradeOpen(true); }
@@ -2835,7 +2837,7 @@ function PublicInvoiceScanner() {
   );
 }
 
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onSearch, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
   const [showFeaturedProducts, setShowFeaturedProducts] = React.useState(true);
   const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
@@ -2900,7 +2902,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
                 <SearchBar
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  onSubmit={(e) => { setQuery(searchInput.trim()); }}
+                  onSubmit={onSearch}
                   placeholder={t.searchPlaceholder}
                   suggestions={suggestions}
                   open={suggestOpen}
@@ -2944,9 +2946,8 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         </div>
       </section>
 
-      {/* CATEGORIES - compact horizontal strip (mobile-first) */}
-      {!hasFiltersOrQuery && (
-        <section id="categories-section" className="container mx-auto px-4 mt-6 relative z-10">
+      {/* CATEGORIES - keep available while searching or filtering */}
+      <section id="categories-section" className="container mx-auto px-4 mt-6 relative z-10">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{t.categories}</h2>
             {category && (
@@ -2959,7 +2960,13 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
             {categories.map((c) => (
               <button
                 key={c.id}
-                onClick={() => setCategory(category === c.id ? '' : c.id)}
+                onClick={() => {
+                  setCategory(category === c.id ? '' : c.id);
+                  setQuery('');
+                  setSearchInput('');
+                  setSuggestOpen(false);
+                  setFilters({ ...filters, subcategory: '' });
+                }}
                 className={`shrink-0 flex flex-col items-center justify-center gap-1 min-w-[78px] py-2.5 px-3 rounded-2xl border-2 transition-all ${
                   category === c.id
                     ? 'border-[#1565C0] bg-[#1565C0]/10 shadow-md'
@@ -2971,8 +2978,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               </button>
             ))}
           </div>
-        </section>
-      )}
+      </section>
 
       {/* FEATURED PRODUCTS - PRIMARY HERO CONTENT (above everything else on home) */}
       {!hasFiltersOrQuery && featured.length > 0 && (

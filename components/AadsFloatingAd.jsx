@@ -36,8 +36,8 @@ export default function AadsFloatingAd() {
 
       <iframe
         title="Publicidad de A-ADS"
-        data-aa="2459205"
-        src="https://acceptable.a-ads.com/2459205/?size=Adaptive"
+        data-aa="2459297"
+        src="https://acceptable.a-ads.com/2459297/?size=Adaptive"
         loading="lazy"
         referrerPolicy="strict-origin-when-cross-origin"
       />

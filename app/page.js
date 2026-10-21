@@ -4646,70 +4646,6 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
 
 <div className="mb-6 rounded-xl border border-gray-200 p-4">
-  <h2 className="mb-2 text-lg font-semibold">Verificación de identidad</h2>
-  <p className="mb-3 text-sm text-muted-foreground">
-    Verifica tu identidad mediante Didit. Esta comprobación es independiente
-    de la verificación comercial de tu negocio.
-  </p>
-  <div className="mb-3">
-    <span className="font-medium">Estado: </span>
-    <span role="status" aria-live="polite">
-      {{
-        approved: 'Identidad verificada',
-        pending: 'Pendiente',
-        not_started: 'No iniciada',
-        in_progress: 'En curso',
-        awaiting_user: 'Esperando tu acción',
-        in_review: 'En revisión',
-        declined: 'Rechazada',
-        resubmitted: 'Enviada nuevamente',
-        abandoned: 'Abandonada',
-        expired: 'Sesión vencida',
-        kyc_expired: 'Verificación vencida'
-      }[identityVerification?.status] || 'No verificada'}
-    </span>
-  </div>
-  {identityVerification?.verified !== true && (
-    <div className="flex flex-wrap gap-3">
-      {identityVerification?.sessionUrl &&
-       !['expired', 'abandoned', 'declined', 'kyc_expired'].includes(identityVerification?.status) ? (
-        <a
-          href={identityVerification.sessionUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center rounded-lg bg-green-700 px-4 py-2 font-medium text-white"
-        >
-          Abrir verificación segura
-        </a>
-      ) : (
-        <button
-          type="button"
-          onClick={startIdentityVerification}
-          disabled={identityBusy}
-          className="rounded-lg bg-green-700 px-4 py-2 font-medium text-white disabled:opacity-50"
-        >
-          {identityBusy ? 'Conectando con Didit…' : 'Verificar mi identidad'}
-        </button>
-      )}
-      <button
-        type="button"
-        onClick={refreshIdentityVerification}
-        disabled={identityBusy}
-        className="rounded-lg border border-gray-300 px-4 py-2 font-medium disabled:opacity-50"
-      >
-        {identityBusy ? 'Consultando…' : 'Actualizar estado'}
-      </button>
-    </div>
-  )}
-  {identityVerification?.verified === true && (
-    <p className="font-medium text-green-700">Tu identidad ha sido aprobada por Didit.</p>
-  )}
-  <p role="status" aria-live="polite" className="mt-3 text-sm">
-    {identityMessage}
-  </p>
-</div>
-
-<div className="mb-6 rounded-xl border border-gray-200 p-4">
   <h2 className="mb-3 text-lg font-semibold">Mi negocio: descripción y ubicación</h2>
   <div className="grid grid-cols-1 gap-3">
     <label className="block text-sm font-medium">
@@ -5213,6 +5149,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 // ============ ADMIN ============
 const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason }) => {
   const [editBiz, setEditBiz] = useState(null);
+  const [showBusinessEditControls, setShowBusinessEditControls] = useState(false);
   const payments = Array.isArray(data?.payments) ? data.payments : [];
   const users = Array.isArray(data?.users) ? data.users : [];
   const products = Array.isArray(data?.products) ? data.products : [];
@@ -5461,6 +5398,28 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
         </TabsContent>
 
         <TabsContent value="users" className="mt-4 space-y-2">
+          <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+            <div>
+              <h3 className="font-semibold">Editar negocios</h3>
+              <p className="text-sm text-muted-foreground">
+                Los controles de edición permanecen ocultos hasta que los necesites.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={showBusinessEditControls ? "default" : "outline"}
+              aria-label={showBusinessEditControls ? "Ocultar edición de negocios" : "Mostrar edición de negocios"}
+              aria-expanded={showBusinessEditControls}
+              onClick={() => {
+                if (showBusinessEditControls) setEditBiz(null);
+                setShowBusinessEditControls((visible) => !visible);
+              }}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              {showBusinessEditControls ? "Ocultar" : "Editar negocios"}
+            </Button>
+          </div>
           {users.map((u) => (
             <Card key={u.id}>
               <CardContent className="p-4 flex flex-col md:flex-row gap-3 md:items-center">
@@ -5499,7 +5458,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                       <SelectItem value="premium">Premium</SelectItem>
                     </SelectContent>
                   </Select>
-                  {u.business && (
+                  {showBusinessEditControls && u.business && (
                     <Button size="sm" variant="outline" onClick={() => setEditBiz(u.business)}>
                       <Pencil className="h-3 w-3 mr-1" /> Editar negocio
                     </Button>

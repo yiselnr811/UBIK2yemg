@@ -1510,7 +1510,7 @@ const App = () => {
   const updateCartQuantity = (productId, quantity) => saveCart(cart.map((item) => item.product.id === productId ? { ...item, quantity: Math.max(1, Math.min(Number(item.product.stock) || 99, Number(quantity) || 1)) } : item));
   const removeFromCart = (productId) => saveCart(cart.filter((item) => item.product.id !== productId));
 
-  const startCryptoCheckout = async (productOrItems) => {
+  const startCryptoCheckout = async (productOrItems, requestedMethod = 'crypto') => {
     if (!token) {
       toast.error('Inicia sesión para pagar; tu carrito se conservará.');
       setAuthMode('login'); setAuthOpen(true); return;
@@ -1560,8 +1560,16 @@ const App = () => {
         return;
       }
 
-      const initialMethod = hasCrypto ? 'crypto' : hasTransfermovil ? 'transfermovil' : 'enzona';
-      setCheckoutPaymentMethod(initialMethod);
+      if (requestedMethod === 'crypto' && !hasCrypto) {
+        toast.error('Este negocio no tiene criptomonedas habilitadas.');
+        return;
+      }
+      if (requestedMethod === 'transfermovil' && !hasTransfermovil) {
+        toast.error('Este negocio no tiene Transfermóvil configurado correctamente.');
+        return;
+      }
+
+      setCheckoutPaymentMethod(requestedMethod);
       setCryptoPendingCheckout({
         items: checkoutItems,
         clearCart: Array.isArray(productOrItems),
@@ -2158,7 +2166,11 @@ const App = () => {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Elige tu criptomoneda y red</DialogTitle>
+            <DialogTitle>
+              {checkoutPaymentMethod === 'transfermovil'
+                ? 'Pago por Transfermóvil'
+                : 'Elige tu criptomoneda y red'}
+            </DialogTitle>
             <DialogDescription>
               Selecciona cómo deseas pagar. El pedido se creará después de confirmar.
             </DialogDescription>
@@ -2258,7 +2270,7 @@ const App = () => {
             </div>
             <div className="space-y-3 border-t pt-4">
               <h3 className="font-semibold">Método de pago</h3>
-              {Array.isArray(cryptoConfig?.enabled) && cryptoConfig.enabled.length > 0 && (
+              {checkoutPaymentMethod !== 'transfermovil' && Array.isArray(cryptoConfig?.enabled) && cryptoConfig.enabled.length > 0 && (
                 <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
                   <input
                     type="radio"
@@ -2274,26 +2286,7 @@ const App = () => {
                   </span>
                 </label>
               )}
-              {checkoutBusiness?.transfermovilEnabled === true
-                && checkoutBusiness?.transfermovilNumber
-                && checkoutBusiness?.transfermovilName
-                && checkoutBusiness?.transfermovilContactPhone && (
-                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
-                  <input
-                    type="radio"
-                    name="checkout-payment-method"
-                    checked={checkoutPaymentMethod === 'transfermovil'}
-                    onChange={() => setCheckoutPaymentMethod('transfermovil')}
-                    disabled={checkoutSubmitting}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="font-medium">Transfermóvil</span>
-                    <span className="block text-sm text-muted-foreground">Transferencia al destinatario del negocio.</span>
-                  </span>
-                </label>
-              )}
-              {checkoutBusiness?.enzonaEnabled === true && checkoutBusiness?.enzonaRecipient && (
+              {checkoutPaymentMethod !== 'transfermovil' && checkoutBusiness?.enzonaEnabled === true && checkoutBusiness?.enzonaRecipient && (
                 <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
                   <input
                     type="radio"
@@ -3543,6 +3536,18 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                 <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
               </Button>
             )}
+            {product.stock > 0 && (
+              <Button
+                onClick={() => startCryptoCheckout(product, 'transfermovil')}
+                disabled={checkoutSubmitting}
+                variant="outline"
+                className="w-full h-14 rounded-xl mt-3 border-2 border-[#00A86B] text-[#008653] hover:bg-[#00A86B]/10 font-bold flex items-center justify-center gap-2"
+                aria-label="Pagar con Transfermóvil"
+              >
+                <CreditCard className="h-5 w-5" />
+                Pagar con Transfermóvil
+              </Button>
+            )}
           </div>
 
           {/* Seller card */}
@@ -3827,7 +3832,16 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
           <div className="flex-1 min-w-0"><div className="font-bold truncate">{product.name || t.productFallback}</div><div className="text-sm text-muted-foreground">{product.price} {product.currency || 'CUP'} c/u</div><div className="flex items-center gap-2 mt-2"><Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button><span>{quantity}</span><Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button></div></div>
           <div className="font-bold whitespace-nowrap">{((Number(product.price) || 0) * quantity).toLocaleString(lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES')} {product.currency || 'CUP'}</div>
         </CardContent></Card>)}</div>
-        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">{t.estimatedSubtotal}</div><div className="text-2xl font-extrabold">{total.toLocaleString(lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">{t.serverCalculatesTotal}</p></div><Button size="lg" disabled={submitting} onClick={() => onCheckout(items)} className="brand-gradient text-white font-bold">{submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}{t.payCartCrypto}</Button></CardContent></Card>
+        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">{t.estimatedSubtotal}</div><div className="text-2xl font-extrabold">{total.toLocaleString(lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">{t.serverCalculatesTotal}</p></div><div className="flex w-full flex-col gap-3 sm:w-auto">
+          <Button size="lg" disabled={submitting} onClick={() => onCheckout(items, 'crypto')} className="brand-gradient text-white font-bold">
+            {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}
+            {t.payCartCrypto}
+          </Button>
+          <Button size="lg" variant="outline" disabled={submitting} onClick={() => onCheckout(items, 'transfermovil')} className="border-2 border-[#00A86B] text-[#008653] font-bold">
+            <CreditCard className="h-4 w-4 mr-2"/>
+            Pagar con Transfermóvil
+          </Button>
+        </div></CardContent></Card>
       </>}
     </section>
   );

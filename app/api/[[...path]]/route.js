@@ -267,6 +267,7 @@ const orderItemSchema = z.object({
 });
 
 const createOrderSchema = z.object({
+  paymentMethod: z.enum(['crypto', 'transfermovil', 'enzona']).optional(),
   items: z.array(orderItemSchema).min(1, 'Al menos un producto requerido'),
   shippingName: z.string().min(1).max(100),
   shippingPhone: z.string().min(8).max(20),
@@ -863,6 +864,19 @@ async function ensureIndexes(db) {
       db.collection('orders').createIndex({ businessId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ status: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }).catch((err) => { console.error('[MongoDB] Error creando índice idempotencyKey:', err); throw err; }),
+      // SMS de pagos: una referencia solo puede registrarse una vez por proveedor.
+      db.collection('transfer_payment_events').createIndex(
+        { provider: 1, transactionReference: 1 },
+        {
+          unique: true,
+          name: 'transfer_payment_provider_reference_unique',
+          partialFilterExpression: { transactionReference: { $type: 'string' } },
+        }
+      ).catch((err) => {
+        console.error('[MongoDB] No se pudo crear el índice único de referencias SMS:', err?.message || err);
+        err.criticalTransferPaymentReferenceIndex = true;
+        throw err;
+      }),
       // Crypto Invoices (own wallet payments)
       db.collection('crypto_invoices').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
       db.collection('crypto_invoices').createIndex({ orderId: 1 }, { unique: true }).catch(() => {}),
@@ -891,7 +905,12 @@ async function ensureIndexes(db) {
       console.warn('[MongoDB] Backfill negocios falló (no crítico):', e?.message);
     }
   } catch (e) {
-    if (e?.criticalTxHashIndex || e?.criticalInvoiceIdIndex || e?.criticalSettlementLedgerIndex) throw e;
+    if (
+      e?.criticalTxHashIndex ||
+      e?.criticalInvoiceIdIndex ||
+      e?.criticalSettlementLedgerIndex ||
+      e?.criticalTransferPaymentReferenceIndex
+    ) throw e;
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
 }
@@ -1160,6 +1179,339 @@ async function route(request, method, path) {
 
   const db = await getDb();
   const url = new URL(request.url);
+
+  // ===== TRANSFERMOVIL SMS FORWARDER: recepción segura, nunca confirma pagos =====
+  if (path[0] === 'payments' && path[1] === 'transfermovil' &&
+      path[2] === 'sms' && method === 'POST' && path.length === 3) {
+    const secret = process.env.SMS_FORWARDER_WEBHOOK_SECRET;
+    if (!secret || secret.length < 32) {
+      console.error('[Transfermóvil] Falta SMS_FORWARDER_WEBHOOK_SECRET o es demasiado corta.');
+      return json({ error: 'Webhook no configurado.' }, 503);
+    }
+
+    const supplied = request.headers.get('x-webhook-secret') ||
+      (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+
+    const expectedBuffer = Buffer.from(secret, 'utf8');
+    const suppliedBuffer = Buffer.from(supplied, 'utf8');
+    if (
+      expectedBuffer.length !== suppliedBuffer.length ||
+      !timingSafeEqual(expectedBuffer, suppliedBuffer)
+    ) {
+      return json({ error: 'No autorizado.' }, 401);
+    }
+
+    let payload;
+    let rawBody;
+    try {
+      rawBody = await request.text();
+      if (rawBody.length > 20000) {
+        return json({ error: 'Mensaje demasiado grande.' }, 413);
+      }
+      payload = JSON.parse(rawBody);
+    } catch {
+      return json({ error: 'JSON inválido.' }, 400);
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return json({ error: 'Formato de evento inválido.' }, 400);
+    }
+
+    const smsText = [payload.message, payload.text, payload.body, payload.sms]
+      .find(value => typeof value === 'string' && value.trim());
+
+    if (!smsText || smsText.length > 10000) {
+      return json({ error: 'Falta el texto del SMS o excede el límite.' }, 400);
+    }
+
+    // Reconocer los formatos SMS conocidos sin confirmar pedidos todavía.
+    const text = smsText.trim();
+    let parsed = null;
+    let match = text.match(
+      /transferencia\s+a\s+la\s+cuenta\s+(\d+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})/i
+    );
+
+    if (match) {
+      const senderMatch = text.match(/titular\s+del\s+tel[eé]fono\s+(\d+)/i);
+      const dateMatch = text.match(/Fecha\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+      parsed = {
+        provider: 'transfermovil',
+        receiverAccount: match[1],
+        amountText: match[2],
+        transactionReference: match[3],
+        senderPhone: senderMatch?.[1] || null,
+        transactionDate: dateMatch?.[1] || null,
+      };
+    } else {
+      match = text.match(
+        /ENZONA[\s\S]*?Importe\s*:\s*([\d.,]+)\s+CUP\s+No\.?\s*:\s*([A-Z0-9_-]{4,100})/i
+      );
+      if (match) {
+        parsed = {
+          provider: 'enzona',
+          receiverAccount: null,
+          amountText: match[1],
+          transactionReference: match[2],
+          senderPhone: null,
+          transactionDate: null,
+        };
+      }
+    }
+
+    let amount = null;
+    if (parsed) {
+      let value = parsed.amountText.replace(/\s/g, '');
+      if (value.includes(',') && value.includes('.')) {
+        value = value.replace(/,/g, '');
+      } else if (value.includes(',')) {
+        value = value.replace(',', '.');
+      }
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0 && n < 1e12) {
+        amount = Math.round(n * 100) / 100;
+      } else {
+        parsed = null;
+      }
+    }
+
+    // Un hash del cuerpo permite reconocer reintentos idénticos.
+    const eventId = createHmac('sha256', secret).update(rawBody).digest('hex');
+    const receivedAt = new Date().toISOString();
+
+    try {
+      await db.collection('transfer_payment_events').insertOne({
+        _id: eventId,
+        provider: parsed?.provider || 'transfermovil',
+        transactionReference: parsed?.transactionReference || null,
+        amount,
+        currency: parsed ? 'CUP' : null,
+        receiverAccount: parsed?.receiverAccount || null,
+        senderPhone: parsed?.senderPhone || null,
+        transactionDate: parsed?.transactionDate || null,
+        smsText: text,
+        sender: typeof payload.sender === 'string' ? payload.sender.slice(0, 100) : '',
+        deviceReceivedAt: typeof payload.receivedAt === 'string'
+          ? payload.receivedAt.slice(0, 100) : null,
+        receivedAt,
+        status: 'pending_review',
+        matchedOrderId: null,
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNotes: parsed
+          ? 'SMS reconocido; pendiente de revisión del pedido.'
+          : 'Formato SMS no reconocido; requiere revisión manual.',
+      });
+    } catch (e) {
+      if (e?.code === 11000) {
+        return json({ ok: true, duplicate: true, status: 'pending_review' });
+      }
+      console.error('[Transfermóvil] No se pudo guardar el evento:', e?.message || e);
+      return json({ error: 'No se pudo registrar el SMS.' }, 500);
+    }
+
+    // Confirmación automática estricta: únicamente una coincidencia inequívoca.
+    // El SMS por sí solo no es una verificación criptográfica bancaria.
+    let finalStatus = 'pending_review';
+    let matchedOrderId = null;
+    let reviewNotes = !parsed
+      ? 'Formato SMS no reconocido; requiere revisión manual.'
+      : 'No existe una coincidencia inequívoca; requiere revisión manual.';
+
+    if (parsed && amount !== null) {
+      try {
+        const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+        const businesses = await db.collection('businesses').find(
+          parsed.provider === 'transfermovil'
+            ? { transfermovilEnabled: true }
+            : { enzonaEnabled: true }
+        ).toArray();
+
+        // La conciliación automática exige referencia e importe exactos.
+        // No exige coincidencia adicional de la cuenta receptora.
+        const eligibleBusinesses = businesses;
+
+        const businessIds = [
+          ...new Set(
+            eligibleBusinesses
+              .map((business) => business.id)
+              .filter((id) => typeof id === 'string' && id.length > 0)
+          ),
+        ];
+
+        if (businessIds.length > 0) {
+          // La referencia debe coincidir exactamente; el importe por sí solo no basta.
+          const candidates = await db.collection('orders').find({
+            businessId: { $in: businessIds },
+            paymentMethod: parsed.provider,
+            paymentStatus: 'pending_payment',
+            currency: 'CUP',
+            total: amount,
+            buyerTransactionReference: parsed.transactionReference,
+            createdAt: { $gte: cutoff },
+          }).limit(2).toArray();
+
+          if (candidates.length === 1) {
+            const candidate = candidates[0];
+            const confirmedAt = new Date().toISOString();
+
+            // Reservar el evento antes de modificar el pedido.
+            const claimResult = await db.collection('transfer_payment_events').updateOne(
+              { _id: eventId, status: 'pending_review' },
+              {
+                $set: {
+                  status: 'matching_reference',
+                  matchingOrderId: candidate.id,
+                },
+              }
+            );
+
+            if (claimResult.modifiedCount !== 1) {
+              reviewNotes = 'El evento SMS ya está siendo procesado o revisado; no se confirmó otro pedido.';
+            } else {
+              const updateResult = await db.collection('orders').updateOne(
+                {
+                  id: candidate.id,
+                  businessId: candidate.businessId,
+                  paymentMethod: parsed.provider,
+                  paymentStatus: 'pending_payment',
+                  currency: 'CUP',
+                  total: amount,
+                  buyerTransactionReference: parsed.transactionReference,
+                  createdAt: { $gte: cutoff },
+                },
+                {
+                  $set: {
+                    paymentStatus: 'paid',
+                    status: 'paid',
+                    paymentRef: {
+                      provider: parsed.provider,
+                      transactionReference: parsed.transactionReference,
+                      amount,
+                      currency: 'CUP',
+                      receiverAccount: parsed.receiverAccount,
+                      senderPhone: parsed.senderPhone,
+                      transactionDate: parsed.transactionDate,
+                      receivedAt,
+                      confirmedAt,
+                      verificationMethod: 'auto-sms-verification',
+                    },
+                    updatedAt: confirmedAt,
+                  },
+                  $push: {
+                    statusHistory: {
+                      status: 'paid',
+                      at: confirmedAt,
+                      by: 'auto-sms-verification',
+                      notes: `Referencia ${parsed.transactionReference} recibida por SMS (${parsed.provider}).`,
+                    },
+                  },
+                }
+              );
+
+              if (updateResult.modifiedCount === 1) {
+                finalStatus = 'auto_approved';
+                matchedOrderId = candidate.id;
+                reviewNotes = 'Pedido confirmado automáticamente por coincidencia exacta. La recepción del SMS no constituye verificación bancaria criptográfica.';
+
+                const finalizeResult = await db.collection('transfer_payment_events').updateOne(
+                  {
+                    _id: eventId,
+                    status: 'matching_reference',
+                    matchingOrderId: candidate.id,
+                  },
+                  {
+                    $set: {
+                      status: 'auto_approved',
+                      matchedOrderId: candidate.id,
+                      reviewedAt: confirmedAt,
+                      reviewNotes,
+                    },
+                    $unset: { matchingOrderId: '' },
+                  }
+                );
+
+                if (finalizeResult.modifiedCount !== 1) {
+                  console.error(
+                    '[Transfermóvil] CRÍTICO: pedido pagado, pero no se pudo finalizar el evento SMS.',
+                    { eventId, orderId: candidate.id }
+                  );
+                  finalStatus = 'paid_reconciliation_error';
+                  reviewNotes = 'El pedido quedó pagado, pero el evento SMS no se finalizó. Requiere revisión administrativa.';
+                }
+
+                if (finalizeResult.modifiedCount === 1 && typeof candidate.buyerEmail === 'string' && candidate.buyerEmail.trim()) {
+                  sendPaymentConfirmedEmail(
+                    candidate.buyerEmail,
+                    candidate.shipping?.name || '',
+                    {
+                      ...candidate,
+                      paymentStatus: 'paid',
+                      status: 'paid',
+                    },
+                    null
+                  ).catch((e) => {
+                    console.error('[Email] Error enviando confirmación de pago por SMS:', e?.message || e);
+                  });
+                }
+              } else {
+                reviewNotes = 'El pedido dejó de estar pendiente antes de actualizarse; requiere revisión manual.';
+
+                await db.collection('transfer_payment_events').updateOne(
+                  {
+                    _id: eventId,
+                    status: 'matching_reference',
+                    matchingOrderId: candidate.id,
+                  },
+                  {
+                    $set: {
+                      status: 'pending_review',
+                      matchedOrderId: null,
+                      reviewNotes,
+                    },
+                    $unset: { matchingOrderId: '' },
+                  }
+                );
+              }
+            }
+          } else if (candidates.length > 1) {
+            reviewNotes = 'Hay varios pedidos pendientes con el mismo importe; no se confirmó ninguno.';
+          } else {
+            reviewNotes = 'No se encontró un pedido pendiente compatible dentro de las últimas 48 horas.';
+          }
+        } else {
+          reviewNotes = parsed.provider === 'transfermovil'
+            ? 'Ningún negocio habilitado tiene configurada la cuenta receptora exacta del SMS.'
+            : 'No hay negocios con EnZona habilitado para asociar este pago.';
+        }
+      } catch (e) {
+        console.error('[Transfermóvil] Error durante la coincidencia automática:', e?.message || e);
+        reviewNotes = 'Error al comprobar coincidencias; requiere revisión manual.';
+      }
+    }
+
+    if (finalStatus !== 'auto_approved') {
+      await db.collection('transfer_payment_events').updateOne(
+        { _id: eventId, status: 'pending_review' },
+        {
+          $set: {
+            status: 'pending_review',
+            matchedOrderId: null,
+            reviewNotes,
+          },
+        }
+      );
+    }
+
+    return json({
+      ok: true,
+      status: finalStatus,
+      recognized: Boolean(parsed),
+      provider: parsed?.provider || null,
+      amount,
+      transactionReference: parsed?.transactionReference || null,
+      matchedOrderId,
+    }, finalStatus === 'paid_reconciliation_error' ? 500 : (finalStatus === 'auto_approved' ? 200 : 202));
+  }
 
   // ===== DIDIT IDENTITY VERIFICATION: signed webhook =====
   if (path[0] === 'identity' && path[1] === 'didit' &&
@@ -2607,6 +2959,36 @@ return json({ payments: out });
     }
     const businessId = businessIds[0];
     const business = await db.collection('businesses').findOne({ id: businessId });
+    const paymentMethod = parsed.data.paymentMethod || 'crypto';
+    let paymentDetails = null;
+
+    if (paymentMethod === 'transfermovil') {
+      const number = typeof business?.transfermovilNumber === 'string'
+        ? business.transfermovilNumber.trim() : '';
+      const name = typeof business?.transfermovilName === 'string'
+        ? business.transfermovilName.trim() : '';
+
+      if (business?.transfermovilEnabled !== true || !number || !name) {
+        return json({ error: 'Transfermóvil no está habilitado o faltan los datos del destinatario.' }, 400);
+      }
+
+      paymentDetails = {
+        provider: 'transfermovil',
+        recipientNumber: number,
+        recipientName: name,
+      };
+    } else if (paymentMethod === 'enzona') {
+      const recipient = typeof business?.enzonaRecipient === 'string'
+        ? business.enzonaRecipient.trim() : '';
+
+      if (business?.enzonaEnabled !== true || !recipient) {
+        return json({ error: 'EnZona no está habilitado o falta el destinatario.' }, 400);
+      }
+
+      paymentDetails = { provider: 'enzona', recipient };
+    } else if (paymentMethod !== 'crypto') {
+      return json({ error: 'Método de pago no válido.' }, 400);
+    }
 
     // Enforce delivery eligibility on the server, never trust the client.
     if (deliveryMethod === 'delivery' && (user.plan !== 'premium' || business?.deliveryEnabled !== true)) {
@@ -2628,6 +3010,8 @@ return json({ payments: out });
       subtotal,
       total: subtotal, // no tax/shipping for now
       currency,
+      paymentMethod,
+      paymentDetails,
       deliveryMethod,
       shipping: {
         deliveryMethod,
@@ -2650,7 +3034,6 @@ return json({ payments: out });
 
     // If paymentMethod is crypto, create crypto_invoice
     let invoice = null;
-    const paymentMethod = body.paymentMethod || 'crypto'; // default to crypto for now
     if (paymentMethod === 'crypto') {
       const cryptoCurrency = body.cryptoCurrency;
       const cryptoNetwork = body.cryptoNetwork;
@@ -3505,6 +3888,293 @@ return json({ payments: out });
     return json({ orders });
   }
 
+
+  // POST /api/orders/:id/submit-payment-reference
+  // Guarda la referencia declarada por el comprador y reconcilia SMS anteriores.
+  if (
+    path[0] === 'orders' &&
+    path[1] &&
+    path[2] === 'submit-payment-reference' &&
+    path.length === 3 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'JSON inválido.' }, 400);
+    }
+
+    const reference =
+      typeof body?.transactionReference === 'string'
+        ? body.transactionReference.trim()
+        : '';
+
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(reference)) {
+      return json({
+        error: 'La referencia debe tener entre 4 y 100 letras, números, guiones o guiones bajos.',
+      }, 400);
+    }
+
+    const orders = db.collection('orders');
+    const order = await orders.findOne({ id: path[1], buyerId: user.id });
+
+    if (!order) return json({ error: 'Pedido no encontrado.' }, 404);
+
+    if (!['transfermovil', 'enzona'].includes(order.paymentMethod)) {
+      return json({ error: 'Este pedido no utiliza Transfermóvil ni EnZona.' }, 400);
+    }
+
+    if (order.paymentStatus !== 'pending_payment') {
+      return json({ error: 'El pedido ya no está pendiente de pago.' }, 409);
+    }
+
+    if (String(order.currency || '').toUpperCase() !== 'CUP') {
+      return json({ error: 'La verificación por SMS solo admite pedidos en CUP.' }, 409);
+    }
+
+    if (
+      order.buyerTransactionReference &&
+      order.buyerTransactionReference !== reference
+    ) {
+      return json({
+        error: 'El pedido ya tiene otra referencia registrada. Contacta con soporte para corregirla.',
+      }, 409);
+    }
+
+    const reused = await orders.findOne({
+      id: { $ne: order.id },
+      paymentMethod: order.paymentMethod,
+      buyerTransactionReference: reference,
+    });
+
+    if (reused) {
+      return json({ error: 'Esta referencia ya está asociada a otro pedido.' }, 409);
+    }
+
+    const now = new Date().toISOString();
+    const saved = await orders.updateOne(
+      {
+        id: order.id,
+        buyerId: user.id,
+        paymentStatus: 'pending_payment',
+        paymentMethod: order.paymentMethod,
+        $or: [
+          { buyerTransactionReference: { $exists: false } },
+          { buyerTransactionReference: null },
+          { buyerTransactionReference: reference },
+        ],
+      },
+      {
+        $set: {
+          buyerTransactionReference: reference,
+          updatedAt: now,
+        },
+      }
+    );
+
+    if (saved.matchedCount !== 1) {
+      const latest = await orders.findOne({ id: order.id, buyerId: user.id });
+
+      if (
+        latest?.paymentStatus === 'paid' &&
+        latest?.paymentRef?.transactionReference === reference
+      ) {
+        return json({
+          ok: true,
+          status: 'paid',
+          message: 'El pago ya figura como confirmado.',
+        });
+      }
+
+      return json({
+        error: 'El pedido cambió mientras guardábamos la referencia. Actualiza e inténtalo de nuevo.',
+      }, 409);
+    }
+
+    const events = db.collection('transfer_payment_events');
+    const event = await events.findOne({
+      provider: order.paymentMethod,
+      transactionReference: reference,
+    });
+
+    if (!event) {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'Referencia guardada. El pedido seguirá pendiente hasta recibir y comprobar un SMS coincidente.',
+      });
+    }
+
+    if (event.status === 'auto_approved' && event.matchedOrderId === order.id) {
+      return json({
+        ok: true,
+        status: 'paid',
+        message: 'El SMS ya está asociado a este pedido.',
+      });
+    }
+
+    if (event.status !== 'pending_review') {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'El evento ya está procesado o en comprobación. No se ha confirmado este pedido.',
+      });
+    }
+
+    const sameAmount =
+      Number.isFinite(Number(order.total)) &&
+      Number.isFinite(Number(event.amount)) &&
+      Math.round(Number(order.total) * 100) ===
+        Math.round(Number(event.amount) * 100);
+
+    const createdMs = Date.parse(order.createdAt);
+    const receivedMs = Date.parse(event.receivedAt);
+    const validWindow =
+      Number.isFinite(createdMs) &&
+      Number.isFinite(receivedMs) &&
+      receivedMs >= createdMs &&
+      receivedMs - createdMs <= 48 * 60 * 60 * 1000;
+
+    if (
+      !sameAmount ||
+      event.currency !== 'CUP' ||
+      !event.smsText ||
+      !validWindow
+    ) {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'Referencia guardada, pero el importe, el SMS o el período no coinciden. Requiere revisión manual.',
+      });
+    }
+
+    // Reclamar el evento antes de actualizar el pedido para evitar
+    // que dos peticiones procesen simultáneamente el mismo SMS.
+    const claim = await events.updateOne(
+      { _id: event._id, status: 'pending_review' },
+      {
+        $set: {
+          status: 'matching_reference',
+          matchingOrderId: order.id,
+        },
+      }
+    );
+
+    if (claim.modifiedCount !== 1) {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'El SMS está siendo procesado por otra operación. No se ha confirmado aquí.',
+      });
+    }
+
+    const confirmedAt = new Date().toISOString();
+    const updateResult = await orders.updateOne(
+      {
+        id: order.id,
+        buyerId: user.id,
+        paymentStatus: 'pending_payment',
+        paymentMethod: order.paymentMethod,
+        currency: 'CUP',
+        total: order.total,
+        buyerTransactionReference: reference,
+      },
+      {
+        $set: {
+          paymentStatus: 'paid',
+          status: 'paid',
+          paymentRef: {
+            provider: order.paymentMethod,
+            transactionReference: reference,
+            amount: event.amount,
+            currency: 'CUP',
+            receiverAccount: event.receiverAccount || null,
+            senderPhone: event.senderPhone || null,
+            transactionDate: event.transactionDate || null,
+            receivedAt: event.receivedAt,
+            confirmedAt,
+            verificationMethod: 'matched-sms-reference-and-amount',
+          },
+          updatedAt: confirmedAt,
+        },
+        $push: {
+          statusHistory: {
+            status: 'paid',
+            at: confirmedAt,
+            by: 'matched-sms-reference-and-amount',
+            notes: 'Referencia exacta e importe coincidentes con SMS. El SMS no constituye prueba bancaria criptográfica.',
+          },
+        },
+      }
+    );
+
+    if (updateResult.modifiedCount !== 1) {
+      await events.updateOne(
+        { _id: event._id, status: 'matching_reference', matchingOrderId: order.id },
+        {
+          $set: {
+            status: 'pending_review',
+            reviewNotes: 'No se pudo actualizar el pedido durante la conciliación.',
+          },
+          $unset: { matchingOrderId: '' },
+        }
+      );
+
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'No se pudo confirmar el pedido. Requiere revisión manual.',
+      });
+    }
+
+    const finalizeResult = await events.updateOne(
+      { _id: event._id, status: 'matching_reference', matchingOrderId: order.id },
+      {
+        $set: {
+          status: 'auto_approved',
+          matchedOrderId: order.id,
+          reviewedAt: confirmedAt,
+          reviewNotes: 'Referencia exacta e importe coincidentes. El SMS no constituye prueba bancaria criptográfica.',
+        },
+        $unset: { matchingOrderId: '' },
+      }
+    );
+
+    if (finalizeResult.modifiedCount !== 1) {
+      console.error(
+        '[Transfermóvil] CRÍTICO: pedido pagado, pero el evento SMS no se finalizó.',
+        { eventId: event._id, orderId: order.id }
+      );
+
+      return json({
+        ok: false,
+        status: 'paid_reconciliation_error',
+        message: 'El pedido quedó pagado, pero la conciliación del SMS requiere revisión administrativa. No vuelvas a pagar.',
+      }, 500);
+    }
+
+    if (typeof order.buyerEmail === 'string' && order.buyerEmail.trim()) {
+      sendPaymentConfirmedEmail(
+        order.buyerEmail,
+        order.shipping?.name || '',
+        { ...order, paymentStatus: 'paid', status: 'paid' },
+        null
+      ).catch(e => {
+        console.error('[Transfermóvil] Error enviando correo de confirmación:', e?.message || e);
+      });
+    }
+
+    return json({
+      ok: true,
+      status: 'auto_approved',
+      message: 'Referencia e importe coinciden con el SMS. Conserva el comprobante: el SMS no es una prueba bancaria criptográfica.',
+    });
+  }
+
   // GET /api/orders/:id - Get order detail (buyer or admin)
   if (path[0] === 'orders' && path.length === 2 && path[1] && method === 'GET') {
     const { user, error } = await requireUser(request);
@@ -3581,6 +4251,31 @@ return json({ payments: out });
     }
 
     return json({ order: updated });
+  }
+
+  // GET /api/admin/transfermovil-events - Admin-only SMS review queue
+  if (path[0] === 'admin' && path[1] === 'transfermovil-events' && method === 'GET' && path.length === 2) {
+    const { error } = await requireAdmin(request);
+    if (error) return error;
+
+    const params = new URL(request.url).searchParams;
+    const requestedLimit = Number.parseInt(params.get('limit') || '50', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 50;
+    const status = params.get('status');
+    const filter = {};
+    if (status && ['pending_review', 'reviewed', 'ignored'].includes(status)) {
+      filter.status = status;
+    }
+
+    const events = await db.collection('transfer_payment_events')
+      .find(filter)
+      .sort({ receivedAt: -1 })
+      .limit(limit)
+      .toArray();
+
+    return json({ events, limit });
   }
 
   // GET /api/admin/orders - Admin list all orders
@@ -4531,9 +5226,65 @@ return json({ payments: out });
       const existing = await db.collection('businesses').findOne({ id: path[2] });
       if (!existing) return json({ error: 'Negocio no encontrado' }, 404);
 
-      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook'];
+      const allowed = [
+        'name', 'logo', 'description', 'whatsapp', 'telegram', 'sms',
+        'location', 'instagram', 'facebook',
+        'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName',
+        'transfermovilAccount',
+        'enzonaEnabled', 'enzonaRecipient'
+      ];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      // Validar la configuración de pagos antes de guardar.
+      for (const key of ['transfermovilEnabled', 'enzonaEnabled']) {
+        if (key in body && typeof body[key] !== 'boolean') {
+          return json({ error: `El campo ${key} debe ser verdadero o falso.` }, 400);
+        }
+      }
+
+      const paymentTextLimits = {
+        transfermovilNumber: 40,
+        transfermovilName: 100,
+        transfermovilAccount: 60,
+        enzonaRecipient: 150,
+      };
+
+      for (const [key, maxLength] of Object.entries(paymentTextLimits)) {
+        if (!(key in body)) continue;
+
+        if (typeof body[key] !== 'string') {
+          return json({ error: `El campo ${key} debe ser texto.` }, 400);
+        }
+
+        const value = body[key].trim();
+
+        if (value.length > maxLength) {
+          return json({ error: `El campo ${key} supera la longitud permitida.` }, 400);
+        }
+
+        if (value && value.length < 3) {
+          return json({ error: `El campo ${key} es demasiado corto.` }, 400);
+        }
+
+        update[key] = value;
+      }
+
+      if (update.transfermovilEnabled === true &&
+          !String(update.transfermovilNumber ?? '').trim() &&
+          !String(existing.transfermovilNumber ?? '').trim()) {
+        return json({ error: 'Introduce el número receptor antes de habilitar Transfermóvil.' }, 400);
+      }
+
+      if (update.transfermovilEnabled === true &&
+          !String(update.transfermovilName ?? existing.transfermovilName ?? '').trim()) {
+        return json({ error: 'Introduce el nombre del titular antes de habilitar Transfermóvil.' }, 400);
+      }
+
+      if (update.enzonaEnabled === true &&
+          !String(update.enzonaRecipient ?? existing.enzonaRecipient ?? '').trim()) {
+        return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+      }
 
       if ('commissionRateBps' in body) {
         if (!Number.isInteger(body.commissionRateBps) || body.commissionRateBps < 0 || body.commissionRateBps > 3000) {

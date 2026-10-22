@@ -966,6 +966,7 @@ const App = () => {
   const [cryptoConfig, setCryptoConfig] = useState(null);
   const [cryptoSelectorOpen, setCryptoSelectorOpen] = useState(false);
   const [cryptoSelectedKey, setCryptoSelectedKey] = useState('');
+  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState('crypto');
   const [cryptoPendingCheckout, setCryptoPendingCheckout] = useState(null);
   const [checkoutBusiness, setCheckoutBusiness] = useState(null);
   const [deliveryMethod, setDeliveryMethod] = useState('pickup');
@@ -975,7 +976,7 @@ const App = () => {
   });
 
   // Admin
-  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [] });
+  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [], transfermovilEvents: [] });
   const [adminTab, setAdminTab] = useState('payments');
   const [adminSettings, setAdminSettings] = useState(null);
 
@@ -1536,14 +1537,39 @@ const App = () => {
       setCheckoutBusiness(businessInfo);
       setDeliveryMethod('pickup');
 
-      const config = cryptoConfig || await fetchCryptoConfig();
-      if (!config?.enabled?.length) return toast.error('No hay redes crypto configuradas');
-      setCryptoConfig(config);
+      let config = cryptoConfig;
+      if (!config) {
+        try {
+          config = await api('/payments/crypto/config');
+          setCryptoConfig(config);
+        } catch {
+          config = null;
+        }
+      }
+
+      const hasCrypto = Array.isArray(config?.enabled) && config.enabled.length > 0;
+      const hasTransfermovil = businessInfo?.transfermovilEnabled === true
+        && Boolean(String(businessInfo?.transfermovilNumber || '').trim())
+        && Boolean(String(businessInfo?.transfermovilName || '').trim());
+      const hasEnzona = businessInfo?.enzonaEnabled === true
+        && Boolean(String(businessInfo?.enzonaRecipient || '').trim());
+
+      if (!hasCrypto && !hasTransfermovil && !hasEnzona) {
+        toast.error('Este negocio no tiene métodos de pago configurados.');
+        return;
+      }
+
+      const initialMethod = hasCrypto ? 'crypto' : hasTransfermovil ? 'transfermovil' : 'enzona';
+      setCheckoutPaymentMethod(initialMethod);
       setCryptoPendingCheckout({
         items: checkoutItems,
         clearCart: Array.isArray(productOrItems),
       });
-      setCryptoSelectedKey(`${config.enabled[0].currency}:${config.enabled[0].network}`);
+      if (hasCrypto) {
+        setCryptoSelectedKey(`${config.enabled[0].currency}:${config.enabled[0].network}`);
+      } else {
+        setCryptoSelectedKey('');
+      }
       setCryptoSelectorOpen(true);
     } finally {
       setCheckoutSubmitting(false);
@@ -1579,11 +1605,18 @@ const App = () => {
       return;
     }
 
-    const selectedNetwork = cryptoConfig?.enabled?.find(
-      (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
-    );
-    if (!selectedNetwork) {
+    const selectedNetwork = checkoutPaymentMethod === 'crypto'
+      ? cryptoConfig?.enabled?.find(
+          (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
+        )
+      : null;
+
+    if (checkoutPaymentMethod === 'crypto' && !selectedNetwork) {
       toast.error('Selecciona una red crypto habilitada');
+      return;
+    }
+    if (!['crypto', 'transfermovil', 'enzona'].includes(checkoutPaymentMethod)) {
+      toast.error('Selecciona un método de pago válido');
       return;
     }
 
@@ -1604,10 +1637,14 @@ const App = () => {
             : `Recogida en el negocio: ${checkoutBusiness?.name || 'negocio'}`,
           deliveryMethod,
           shippingEmail: recipient.email,
-          shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
-          paymentMethod: 'crypto',
-          cryptoCurrency: selectedNetwork.currency,
-          cryptoNetwork: selectedNetwork.network,
+          shippingNotes: checkoutPaymentMethod === 'crypto'
+            ? 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network
+            : 'Pago pendiente de revisión manual: ' + checkoutPaymentMethod,
+          paymentMethod: checkoutPaymentMethod,
+          ...(checkoutPaymentMethod === 'crypto' ? {
+            cryptoCurrency: selectedNetwork.currency,
+            cryptoNetwork: selectedNetwork.network,
+          } : {}),
         },
       });
       setCheckoutOrder(orderRes.order);
@@ -1725,7 +1762,7 @@ const App = () => {
     adminLoadingRef.current = true;
     setAdminLoading(true);
     try {
-      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes] = await Promise.all([
+      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes, transfermovilEventsRes] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
         api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
@@ -1734,12 +1771,14 @@ const App = () => {
         api('/admin/reports', { token }).catch(() => ({ reports: [] })),
         api('/admin/crypto-invoices', { token }).catch(() => ({ invoices: [] })),
         api('/admin/orders', { token }).catch(() => ({ orders: [] })),
+        api('/admin/transfermovil-events', { token }).catch(() => ({ events: [] })),
       ]);
       setAdminData({
         payments: pays.payments || [], users: usrs.users || [],
         products: prods.products || [], stats: st, reports: reps.reports || [],
         cryptoInvoices: cryptoInvoices.invoices || [],
         orders: ordersRes.orders || [],
+        transfermovilEvents: transfermovilEventsRes.events || [],
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
@@ -1998,6 +2037,16 @@ const App = () => {
           />
         )}
 
+        {view === 'checkout' && checkoutOrder && !checkoutInvoice && (
+          <ManualPaymentCheckout
+            order={checkoutOrder}
+            token={token}
+            onOrderUpdate={setCheckoutOrder}
+            onCancel={cancelCheckout}
+            onBack={() => setView('home')}
+          />
+        )}
+
         {view === 'dashboard' && user && business && (
           <Dashboard
             user={user} business={business} products={myProducts} token={token}
@@ -2207,6 +2256,77 @@ const App = () => {
               </div>
             </div>
             <div className="space-y-3 border-t pt-4">
+              <h3 className="font-semibold">Método de pago</h3>
+              {Array.isArray(cryptoConfig?.enabled) && cryptoConfig.enabled.length > 0 && (
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
+                  <input
+                    type="radio"
+                    name="checkout-payment-method"
+                    checked={checkoutPaymentMethod === 'crypto'}
+                    onChange={() => setCheckoutPaymentMethod('crypto')}
+                    disabled={checkoutSubmitting}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Criptomonedas</span>
+                    <span className="block text-sm text-muted-foreground">Pago mediante una red crypto habilitada.</span>
+                  </span>
+                </label>
+              )}
+              {checkoutBusiness?.transfermovilEnabled === true
+                && checkoutBusiness?.transfermovilNumber
+                && checkoutBusiness?.transfermovilName && (
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
+                  <input
+                    type="radio"
+                    name="checkout-payment-method"
+                    checked={checkoutPaymentMethod === 'transfermovil'}
+                    onChange={() => setCheckoutPaymentMethod('transfermovil')}
+                    disabled={checkoutSubmitting}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Transfermóvil</span>
+                    <span className="block text-sm text-muted-foreground">Transferencia al destinatario del negocio.</span>
+                  </span>
+                </label>
+              )}
+              {checkoutBusiness?.enzonaEnabled === true && checkoutBusiness?.enzonaRecipient && (
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
+                  <input
+                    type="radio"
+                    name="checkout-payment-method"
+                    checked={checkoutPaymentMethod === 'enzona'}
+                    onChange={() => setCheckoutPaymentMethod('enzona')}
+                    disabled={checkoutSubmitting}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">EnZona</span>
+                    <span className="block text-sm text-muted-foreground">Pago al destinatario configurado por el negocio.</span>
+                  </span>
+                </label>
+              )}
+            </div>
+
+            {checkoutPaymentMethod === 'transfermovil' && (
+              <div className="rounded-md bg-muted p-3 text-sm space-y-1">
+                <p className="font-semibold">Destinatario de Transfermóvil</p>
+                <p>Número: {checkoutBusiness?.transfermovilNumber}</p>
+                <p>Titular: {checkoutBusiness?.transfermovilName}</p>
+                <p className="text-muted-foreground">El pedido quedará pendiente hasta que se revise el pago.</p>
+              </div>
+            )}
+            {checkoutPaymentMethod === 'enzona' && (
+              <div className="rounded-md bg-muted p-3 text-sm space-y-1">
+                <p className="font-semibold">Destinatario de EnZona</p>
+                <p>{checkoutBusiness?.enzonaRecipient}</p>
+                <p className="text-muted-foreground">El pedido quedará pendiente hasta que se revise el pago.</p>
+              </div>
+            )}
+
+            {checkoutPaymentMethod === 'crypto' && (
+              <div className="space-y-3 border-t pt-4">
               <Label htmlFor="crypto-network-select">Red de pago</Label>
             <Select
               value={cryptoSelectedKey}
@@ -2274,7 +2394,8 @@ const App = () => {
                 </div>
               );
             })()}
-          </div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
@@ -2287,7 +2408,7 @@ const App = () => {
             </Button>
             <Button
               type="button"
-              disabled={checkoutSubmitting || !cryptoSelectedKey}
+              disabled={checkoutSubmitting || (checkoutPaymentMethod === 'crypto' && !cryptoSelectedKey)}
               onClick={confirmCryptoCheckout}
             >
               {checkoutSubmitting ? 'Procesando...' : 'Confirmar y crear pedido'}
@@ -5169,6 +5290,8 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
   const pending = payments.filter((p) => p?.status === 'pending');
   const pendingReports = reports.filter((r) => r?.status === 'pending');
   const cryptoInvoices = data.cryptoInvoices || [];
+  const transfermovilEvents = Array.isArray(data?.transfermovilEvents) ? data.transfermovilEvents : [];
+  const transfermovilPending = transfermovilEvents.filter((event) => event?.status === 'pending_review').length;
   const cryptoPending = cryptoInvoices.filter((i) => i.status === 'submitted' || i.status === 'pending').length;
   return (
     <section className="container mx-auto px-4 py-8">
@@ -5202,6 +5325,9 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
         <TabsList>
           <TabsTrigger value="payments">Pagos {pending.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pending.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="crypto-invoices">Crypto Invoices {cryptoPending > 0 && <Badge className="ml-2 bg-blue-500 text-white border-0">{cryptoPending}</Badge>}</TabsTrigger>
+          <TabsTrigger value="transfermovil">
+            Transfermóvil {transfermovilPending > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{transfermovilPending}</Badge>}
+          </TabsTrigger>
           <TabsTrigger value="orders">Pedidos ({(data.orders || []).length})</TabsTrigger>
           <TabsTrigger value="reports">Reportes {pendingReports.length > 0 && <Badge className="ml-2 bg-red-500 text-white border-0">{pendingReports.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="users">Usuarios</TabsTrigger>
@@ -5323,6 +5449,50 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
               </AlertDialogContent>
             </AlertDialog>
           )}
+        </TabsContent>
+
+        <TabsContent value="transfermovil" className="mt-4 space-y-3">
+          <div className="rounded-md border p-3 text-sm">
+            <p className="font-semibold">Revisión manual de SMS</p>
+            <p className="text-muted-foreground">
+              Recibir un mensaje no confirma el pago. Comprueba el importe,
+              el destinatario y la referencia antes de gestionar cualquier pedido.
+            </p>
+          </div>
+          {transfermovilEvents.length === 0 ? (
+            <p className="text-muted-foreground text-center py-12">
+              No hay SMS registrados para revisar.
+            </p>
+          ) : transfermovilEvents.map((event) => (
+            <Card key={event._id}>
+              <CardContent className="p-4 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={event.status === 'pending_review' ? 'default' : 'secondary'}>
+                    {event.status || 'sin estado'}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    Recibido: {event.receivedAt ? new Date(event.receivedAt).toLocaleString('es-ES') : 'fecha no disponible'}
+                  </span>
+                </div>
+                <p className="text-sm">
+                  <span className="font-semibold">Remitente:</span> {event.sender || 'No indicado'}
+                </p>
+                <div className="rounded-md bg-muted p-3 text-sm whitespace-pre-wrap break-words">
+                  {event.smsText || 'Mensaje vacío'}
+                </div>
+                {event.matchedOrderId && (
+                  <p className="text-sm">
+                    <span className="font-semibold">Pedido relacionado:</span> {event.matchedOrderId}
+                  </p>
+                )}
+                {event.reviewNotes && (
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-semibold">Notas:</span> {event.reviewNotes}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ))}
         </TabsContent>
 
         <TabsContent value="orders" className="mt-4 space-y-3">
@@ -6181,6 +6351,151 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
   );
 };
 
+const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }) => {
+  const method = order?.paymentMethod;
+  const details = order?.paymentDetails || {};
+  const [transactionReference, setTransactionReference] = useState(
+    order?.buyerTransactionReference || ''
+  );
+  const [submittingReference, setSubmittingReference] = useState(false);
+
+  const submitTransactionReference = async (event) => {
+    event.preventDefault();
+
+    const reference = transactionReference.trim();
+
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(reference)) {
+      return toast.error('Introduce la referencia real de la operación: entre 4 y 100 letras, números, guiones o guiones bajos.');
+    }
+
+    if (!token) {
+      return toast.error('Inicia sesión para registrar la referencia del pago.');
+    }
+
+    if (order?.paymentStatus !== 'pending_payment') {
+      return toast.error('Este pedido ya no está pendiente de pago.');
+    }
+
+    setSubmittingReference(true);
+
+    try {
+      const result = await api(
+        `/orders/${encodeURIComponent(order.id)}/submit-payment-reference`,
+        {
+          method: 'POST',
+          body: { transactionReference: reference },
+          token,
+        }
+      );
+
+      const isPaid = ['paid', 'auto_approved'].includes(result.status);
+
+      onOrderUpdate?.({
+        ...order,
+        buyerTransactionReference: reference,
+        ...(isPaid ? { paymentStatus: 'paid', status: 'paid' } : {}),
+      });
+
+      if (isPaid) {
+        toast.success(result.message || 'El pago figura como confirmado.');
+      } else {
+        toast.success(result.message || 'Referencia guardada. El pedido sigue pendiente de verificación.');
+      }
+    } catch (error) {
+      toast.error(error?.message || 'No se pudo registrar la referencia.');
+    } finally {
+      setSubmittingReference(false);
+    }
+  };
+
+  const formatTotal = (value, currency) => {
+    const amount = Number(value);
+    return Number.isFinite(amount)
+      ? `${amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || ''}`
+      : '—';
+  };
+
+  return (
+    <section className="container mx-auto max-w-2xl px-4 py-8">
+      <Button variant="ghost" onClick={onBack} className="mb-4">
+        <ArrowLeft className="mr-2 h-4 w-4" /> Volver
+      </Button>
+      <Card className="overflow-hidden shadow-xl">
+        <div className="brand-gradient p-6 text-center text-white">
+          <h1 className="mb-2 text-2xl font-bold">
+            {method === 'transfermovil' ? 'Pago por Transfermóvil' : 'Pago por EnZona'}
+          </h1>
+          <p>Pedido #{String(order.id || '').slice(0, 8).toUpperCase()}</p>
+        </div>
+        <CardContent className="space-y-5 p-6">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <p className="font-semibold">Estado: pendiente de pago y revisión</p>
+            <p className="mt-1 text-sm">
+              Realiza la transferencia con los datos que aparecen abajo. El pedido no se confirmará automáticamente.
+            </p>
+          </div>
+          <div className="space-y-2 rounded-lg border p-4">
+            <p className="text-sm text-muted-foreground">Importe del pedido</p>
+            <p className="text-2xl font-bold">{formatTotal(order.total, order.currency)}</p>
+            {method === 'transfermovil' ? (
+              <>
+                <p><strong>Número del destinatario:</strong> {details.recipientNumber || 'No disponible'}</p>
+                <p><strong>Titular:</strong> {details.recipientName || 'No disponible'}</p>
+              </>
+            ) : (
+              <p><strong>Destinatario de EnZona:</strong> {details.recipient || 'No disponible'}</p>
+            )}
+            <p><strong>Referencia del pedido:</strong> {order.publicInvoiceId || order.id}</p>
+          </div>
+          <form onSubmit={submitTransactionReference} className="space-y-3 rounded-lg border p-4">
+            <label htmlFor="transfer-transaction-reference" className="block text-sm font-semibold">
+              Referencia real de la transferencia
+            </label>
+            <input
+              id="transfer-transaction-reference"
+              type="text"
+              value={transactionReference}
+              onChange={(event) => setTransactionReference(event.target.value)}
+              maxLength={100}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Ej.: número de transacción del comprobante"
+              disabled={submittingReference || order.paymentStatus !== 'pending_payment'}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              Introduce el número de transacción que aparece en el comprobante, no el número de pedido.
+            </p>
+            <Button
+              type="submit"
+              disabled={
+                submittingReference ||
+                order.paymentStatus !== 'pending_payment' ||
+                !transactionReference.trim()
+              }
+              className="w-full"
+            >
+              {submittingReference ? 'Comprobando referencia…' : 'Enviar referencia de pago'}
+            </Button>
+            {order.paymentStatus === 'paid' && (
+              <p className="text-sm font-semibold text-green-700">
+                El sistema registra este pedido como pagado.
+              </p>
+            )}
+          </form>
+          <p className="text-sm text-muted-foreground">
+            Conserva el comprobante. La referencia se comparará con el SMS recibido por el sistema. Si falta información o hay discrepancias, el pedido seguirá pendiente de revisión. Un SMS por sí solo no constituye una prueba bancaria criptográfica.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={onCancel}>Volver al inicio</Button>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+};
+
 const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit, onCancel, submitting, onBack }) => {
   if (!order || !invoice) return null;
 
@@ -6564,6 +6879,69 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             <div><Label>Hora cierre {hidingContacts && '*'}</Label><Input type="time" value={form.closingHours || ''} onChange={(e) => setForm({ ...form, closingHours: e.target.value })} /></div>
           </div>
           <div><Label>Ubicación / Ciudad (visible)</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
+
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <h3 className="font-semibold">Pago por Transfermóvil</h3>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.transfermovilEnabled === true}
+                onChange={(e) => setForm({ ...form, transfermovilEnabled: e.target.checked })}
+              />
+              Habilitar Transfermóvil
+            </label>
+            <div>
+              <Label>Número o tarjeta receptora</Label>
+              <Input
+                value={form.transfermovilNumber || ''}
+                maxLength={40}
+                onChange={(e) => setForm({ ...form, transfermovilNumber: e.target.value })}
+                placeholder="Número de la tarjeta o teléfono"
+              />
+            </div>
+            <div>
+              <Label>Nombre del titular</Label>
+              <Input
+                value={form.transfermovilName || ''}
+                maxLength={100}
+                onChange={(e) => setForm({ ...form, transfermovilName: e.target.value })}
+                placeholder="Nombre del titular"
+              />
+            </div>
+            <div>
+              <Label>Cuenta receptora para verificar SMS</Label>
+              <Input
+                value={form.transfermovilAccount || ''}
+                maxLength={60}
+                onChange={(e) => setForm({ ...form, transfermovilAccount: e.target.value })}
+                placeholder="Cuenta que aparece en el SMS bancario"
+              />
+              <p className="text-xs text-muted-foreground">
+                Debe coincidir con la cuenta receptora indicada en el SMS de Transfermóvil.
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <h3 className="font-semibold">Pago por EnZona</h3>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.enzonaEnabled === true}
+                onChange={(e) => setForm({ ...form, enzonaEnabled: e.target.checked })}
+              />
+              Habilitar EnZona
+            </label>
+            <div>
+              <Label>Destinatario EnZona</Label>
+              <Input
+                value={form.enzonaRecipient || ''}
+                maxLength={150}
+                onChange={(e) => setForm({ ...form, enzonaRecipient: e.target.value })}
+                placeholder="Teléfono, cuenta o identificador receptor"
+              />
+            </div>
+          </div>
 
           <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
             <Label>Comisión por venta (%)</Label>

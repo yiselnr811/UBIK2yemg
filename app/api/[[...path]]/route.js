@@ -1228,7 +1228,7 @@ async function route(request, method, path) {
     const text = smsText.trim();
     let parsed = null;
     let match = text.match(
-      /transferencia\s+a\s+la\s+cuenta\s+(\d+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})/i
+      /transferencia\s+a\s+la\s+cuenta\s+([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})/i
     );
 
     if (match) {
@@ -1437,6 +1437,29 @@ async function route(request, method, path) {
                   );
                   finalStatus = 'paid_reconciliation_error';
                   reviewNotes = 'El pedido quedó pagado, pero el evento SMS no se finalizó. Requiere revisión administrativa.';
+
+                  try {
+                    await db.collection('transfer_payment_events').updateOne(
+                      {
+                        _id: eventId,
+                        status: 'matching_reference',
+                        matchingOrderId: candidate.id,
+                      },
+                      {
+                        $set: {
+                          status: 'paid_reconciliation_error',
+                          matchedOrderId: candidate.id,
+                          reviewNotes,
+                          reviewedAt: confirmedAt,
+                        },
+                      }
+                    );
+                  } catch (finalizeRecoveryError) {
+                    console.error(
+                      '[Transfermóvil] No se pudo marcar el evento para revisión administrativa:',
+                      finalizeRecoveryError?.message || finalizeRecoveryError
+                    );
+                  }
                 }
 
                 if (finalizeResult.modifiedCount === 1 && typeof candidate.buyerEmail === 'string' && candidate.buyerEmail.trim()) {
@@ -1480,12 +1503,62 @@ async function route(request, method, path) {
           }
         } else {
           reviewNotes = parsed.provider === 'transfermovil'
-            ? 'Ningún negocio habilitado tiene configurada la cuenta receptora exacta del SMS.'
+            ? 'No hay negocios con Transfermóvil habilitado para asociar este pago.'
             : 'No hay negocios con EnZona habilitado para asociar este pago.';
         }
       } catch (e) {
         console.error('[Transfermóvil] Error durante la coincidencia automática:', e?.message || e);
         reviewNotes = 'Error al comprobar coincidencias; requiere revisión manual.';
+
+        // Recuperación conservadora: nunca liberar un evento sin comprobar el pedido.
+        try {
+          const claimedEvent = await db.collection('transfer_payment_events').findOne({
+            _id: eventId,
+            status: 'matching_reference',
+          });
+
+          if (claimedEvent?.matchingOrderId) {
+            const claimedOrder = await db.collection('orders').findOne({
+              id: claimedEvent.matchingOrderId,
+            });
+
+            if (
+              claimedOrder &&
+              claimedOrder.paymentStatus === 'pending_payment' &&
+              claimedOrder.buyerTransactionReference === parsed.transactionReference
+            ) {
+              await db.collection('transfer_payment_events').updateOne(
+                {
+                  _id: eventId,
+                  status: 'matching_reference',
+                  matchingOrderId: claimedEvent.matchingOrderId,
+                },
+                {
+                  $set: {
+                    status: 'pending_review',
+                    matchedOrderId: null,
+                    reviewNotes: 'La conciliación falló antes de confirmar el pedido; requiere revisión manual.',
+                  },
+                  $unset: { matchingOrderId: '' },
+                }
+              );
+            } else {
+              await db.collection('transfer_payment_events').updateOne(
+                { _id: eventId, status: 'matching_reference' },
+                {
+                  $set: {
+                    reviewNotes: 'La conciliación falló y el estado del pedido no permite una recuperación automática segura; requiere revisión manual.',
+                  },
+                }
+              );
+            }
+          }
+        } catch (recoveryError) {
+          console.error(
+            '[Transfermóvil] Falló la recuperación segura del evento:',
+            recoveryError?.message || recoveryError
+          );
+        }
       }
     }
 
@@ -2276,6 +2349,7 @@ async function route(request, method, path) {
       // Nunca exponer públicamente la cuenta utilizada para contrastar los SMS.
       const safeBiz = { ...biz };
       delete safeBiz.transfermovilAccount;
+      delete safeBiz.transfermovilVerificationPhone;
 
       // Respetar también la privacidad de los contactos del negocio.
       if (biz.showContactsPublicly === false) {
@@ -2354,7 +2428,7 @@ async function route(request, method, path) {
       const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook',
         'showContactsPublicly', 'province', 'municipality', 'address', 'openingHours', 'closingHours', 'messenger',
         'businessType', 'country',
-        'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName', 'transfermovilAccount',
+        'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName', 'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
         'enzonaEnabled', 'enzonaRecipient'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
@@ -2370,6 +2444,8 @@ async function route(request, method, path) {
         transfermovilNumber: 40,
         transfermovilName: 100,
         transfermovilAccount: 60,
+        transfermovilContactPhone: 30,
+        transfermovilVerificationPhone: 30,
         enzonaRecipient: 150,
       };
 
@@ -2396,6 +2472,14 @@ async function route(request, method, path) {
       if (mergedPayment.transfermovilEnabled === true &&
           !String(mergedPayment.transfermovilName || '').trim()) {
         return json({ error: 'Introduce el nombre del titular antes de habilitar Transfermóvil.' }, 400);
+      }
+      if (mergedPayment.transfermovilEnabled === true &&
+          !String(mergedPayment.transfermovilContactPhone || '').trim()) {
+        return json({ error: 'Introduce el móvil de contacto antes de habilitar Transfermóvil.' }, 400);
+      }
+      if (mergedPayment.transfermovilEnabled === true &&
+          !String(mergedPayment.transfermovilVerificationPhone || '').trim()) {
+        return json({ error: 'Introduce el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
       }
       if (mergedPayment.enzonaEnabled === true &&
           !String(mergedPayment.enzonaRecipient || '').trim()) {
@@ -2727,10 +2811,12 @@ async function route(request, method, path) {
             .toArray()
         : [];
       const bizMap = Object.fromEntries(businesses.map((b) => {
-        // Strip private contacts when business opted out of public contacts
-        let safe = b;
-        if (b.showContactsPublicly === false) {
-          const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = b;
+        // Nunca exponer datos internos de verificación en respuestas públicas.
+        const { transfermovilAccount, transfermovilVerificationPhone, ...publicBiz } = b;
+        let safe = publicBiz;
+        // Respetar la privacidad de los contactos públicos del negocio.
+        if (publicBiz.showContactsPublicly === false) {
+          const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = safe;
           safe = { ...rest, contactsHidden: true };
         }
         if (lite) {
@@ -2760,15 +2846,17 @@ async function route(request, method, path) {
       const product = await db.collection('products').findOne({ id: path[1] });
       if (!product) return json({ error: 'Producto no encontrado' }, 404);
       const business = await db.collection('businesses').findOne({ id: product.businessId });
+      // Nunca exponer datos internos de verificación en respuestas públicas.
+      const { transfermovilAccount, transfermovilVerificationPhone, ...publicBusiness } = business || {};
       // Per-product privacy: optionally hide business contacts for THIS product
       const productHidesContacts = product.showPublicContact === false;
-      let safeBiz = business;
+      let safeBiz = business ? publicBusiness : null;
       if (business && productHidesContacts) {
-        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = business;
+        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = publicBusiness;
         safeBiz = { ...rest, contactsHidden: true };
       } else if (business && business.showContactsPublicly === false) {
         // business-level privacy still respected
-        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = business;
+        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = publicBusiness;
         safeBiz = { ...rest, contactsHidden: true };
       }
       return json({
@@ -2972,7 +3060,7 @@ return json({ payments: out });
     if (idempotencyKey) {
       const existing = await db.collection('orders').findOne({ idempotencyKey, buyerId: user.id });
       if (existing) {
-        return json({ order: existing, duplicate: true });
+        return json({ order: sanitizeBuyerOrder(existing), duplicate: true });
       }
     }
 
@@ -3034,8 +3122,12 @@ return json({ payments: out });
         ? business.transfermovilNumber.trim() : '';
       const name = typeof business?.transfermovilName === 'string'
         ? business.transfermovilName.trim() : '';
+      const contactPhone = typeof business?.transfermovilContactPhone === 'string'
+        ? business.transfermovilContactPhone.trim() : '';
+      const verificationPhone = typeof business?.transfermovilVerificationPhone === 'string'
+        ? business.transfermovilVerificationPhone.trim() : '';
 
-      if (business?.transfermovilEnabled !== true || !number || !name) {
+      if (business?.transfermovilEnabled !== true || !number || !name || !contactPhone || !verificationPhone) {
         return json({ error: 'Transfermóvil no está habilitado o faltan los datos del destinatario.' }, 400);
       }
 
@@ -3043,6 +3135,7 @@ return json({ payments: out });
         provider: 'transfermovil',
         recipientNumber: number,
         recipientName: name,
+        recipientContactPhone: contactPhone,
       };
     } else if (paymentMethod === 'enzona') {
       const recipient = typeof business?.enzonaRecipient === 'string'
@@ -3262,7 +3355,7 @@ return json({ payments: out });
           idempotencyKey,
           buyerId: user.id
         });
-        if (existing) return json({ order: existing, duplicate: true });
+        if (existing) return json({ order: sanitizeBuyerOrder(existing), duplicate: true });
       }
 
       throw creationError;
@@ -3273,7 +3366,7 @@ return json({ payments: out });
       console.error('[Email] failed to send order confirmation:', e?.message || e)
     );
 
-    return json({ order, invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
+    return json({ order: sanitizeBuyerOrder(order), invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
   }
 
   // Seller order management: only the verified owner of the business.
@@ -3944,7 +4037,19 @@ return json({ payments: out });
     });
   }
 
-  // GET /api/my/orders - List buyer's orders
+  // Quita datos internos de verificación de los pedidos entregados a compradores.
+function sanitizeBuyerOrder(order) {
+  if (!order || typeof order !== 'object') return order;
+  const safe = { ...order };
+  if (safe.paymentDetails && typeof safe.paymentDetails === 'object') {
+    safe.paymentDetails = { ...safe.paymentDetails };
+    delete safe.paymentDetails.recipientVerificationPhone;
+    delete safe.paymentDetails.recipientAccount;
+  }
+  return safe;
+}
+
+// GET /api/my/orders - List buyer's orders
   if (path[0] === 'my' && path[1] === 'orders' && method === 'GET') {
     const { user, error } = await requireUser(request);
     if (error) return error;
@@ -3952,7 +4057,7 @@ return json({ payments: out });
       .find({ buyerId: user.id })
       .sort({ createdAt: -1 })
       .toArray();
-    return json({ orders });
+    return json({ orders: orders.map(sanitizeBuyerOrder) });
   }
 
 
@@ -4252,7 +4357,9 @@ return json({ payments: out });
     if (order.buyerId !== user.id && user.role !== 'admin') {
       return json({ error: 'Sin permiso' }, 403);
     }
-    return json({ order });
+    return json({
+      order: order.buyerId === user.id ? sanitizeBuyerOrder(order) : order
+    });
   }
 
   // PUT /api/admin/orders/:id - Admin update order status (with history)
@@ -5297,7 +5404,7 @@ return json({ payments: out });
         'name', 'logo', 'description', 'whatsapp', 'telegram', 'sms',
         'location', 'instagram', 'facebook',
         'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName',
-        'transfermovilAccount',
+        'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
         'enzonaEnabled', 'enzonaRecipient'
       ];
       const update = {};
@@ -5314,6 +5421,8 @@ return json({ payments: out });
         transfermovilNumber: 40,
         transfermovilName: 100,
         transfermovilAccount: 60,
+        transfermovilContactPhone: 30,
+        transfermovilVerificationPhone: 30,
         enzonaRecipient: 150,
       };
 
@@ -5346,6 +5455,16 @@ return json({ payments: out });
       if (update.transfermovilEnabled === true &&
           !String(update.transfermovilName ?? existing.transfermovilName ?? '').trim()) {
         return json({ error: 'Introduce el nombre del titular antes de habilitar Transfermóvil.' }, 400);
+      }
+
+      if (update.transfermovilEnabled === true &&
+          !String(update.transfermovilContactPhone ?? existing.transfermovilContactPhone ?? '').trim()) {
+        return json({ error: 'Introduce el móvil de contacto antes de habilitar Transfermóvil.' }, 400);
+      }
+
+      if (update.transfermovilEnabled === true &&
+          !String(update.transfermovilVerificationPhone ?? existing.transfermovilVerificationPhone ?? '').trim()) {
+        return json({ error: 'Introduce el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
       }
 
       if (update.enzonaEnabled === true &&

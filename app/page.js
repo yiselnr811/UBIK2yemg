@@ -1550,7 +1550,8 @@ const App = () => {
       const hasCrypto = Array.isArray(config?.enabled) && config.enabled.length > 0;
       const hasTransfermovil = businessInfo?.transfermovilEnabled === true
         && Boolean(String(businessInfo?.transfermovilNumber || '').trim())
-        && Boolean(String(businessInfo?.transfermovilName || '').trim());
+        && Boolean(String(businessInfo?.transfermovilName || '').trim())
+        && Boolean(String(businessInfo?.transfermovilContactPhone || '').trim());
       const hasEnzona = businessInfo?.enzonaEnabled === true
         && Boolean(String(businessInfo?.enzonaRecipient || '').trim());
 
@@ -2275,7 +2276,8 @@ const App = () => {
               )}
               {checkoutBusiness?.transfermovilEnabled === true
                 && checkoutBusiness?.transfermovilNumber
-                && checkoutBusiness?.transfermovilName && (
+                && checkoutBusiness?.transfermovilName
+                && checkoutBusiness?.transfermovilContactPhone && (
                 <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
                   <input
                     type="radio"
@@ -2312,8 +2314,9 @@ const App = () => {
             {checkoutPaymentMethod === 'transfermovil' && (
               <div className="rounded-md bg-muted p-3 text-sm space-y-1">
                 <p className="font-semibold">Destinatario de Transfermóvil</p>
-                <p>Número: {checkoutBusiness?.transfermovilNumber}</p>
+                <p>Tarjeta receptora: {checkoutBusiness?.transfermovilNumber}</p>
                 <p>Titular: {checkoutBusiness?.transfermovilName}</p>
+                <p>Móvil de contacto: {checkoutBusiness?.transfermovilContactPhone}</p>
                 <p className="text-muted-foreground">El pedido quedará pendiente hasta que se revise el pago.</p>
               </div>
             )}
@@ -4478,7 +4481,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [transfermovilEnabled, setTransfermovilEnabled] = React.useState(business?.transfermovilEnabled === true);
   const [transfermovilNumber, setTransfermovilNumber] = React.useState(business?.transfermovilNumber || '');
   const [transfermovilName, setTransfermovilName] = React.useState(business?.transfermovilName || '');
+  const [transfermovilContactPhone, setTransfermovilContactPhone] = React.useState(business?.transfermovilContactPhone || '');
   const [transfermovilAccount, setTransfermovilAccount] = React.useState(business?.transfermovilAccount || '');
+  const [transfermovilVerificationPhone, setTransfermovilVerificationPhone] = React.useState(business?.transfermovilVerificationPhone || '');
   const [enzonaEnabled, setEnzonaEnabled] = React.useState(business?.enzonaEnabled === true);
   const [enzonaRecipient, setEnzonaRecipient] = React.useState(business?.enzonaRecipient || '');
   const [paymentSettingsSaving, setPaymentSettingsSaving] = React.useState(false);
@@ -4501,7 +4506,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
     setTransfermovilEnabled(business?.transfermovilEnabled === true);
     setTransfermovilNumber(business?.transfermovilNumber || '');
     setTransfermovilName(business?.transfermovilName || '');
+    setTransfermovilContactPhone(business?.transfermovilContactPhone || '');
     setTransfermovilAccount(business?.transfermovilAccount || '');
+    setTransfermovilVerificationPhone(business?.transfermovilVerificationPhone || '');
     setEnzonaEnabled(business?.enzonaEnabled === true);
     setEnzonaRecipient(business?.enzonaRecipient || '');
 
@@ -4604,7 +4611,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           transfermovilEnabled,
           transfermovilNumber: transfermovilNumber.trim(),
           transfermovilName: transfermovilName.trim(),
+          transfermovilContactPhone: transfermovilContactPhone.trim(),
           transfermovilAccount: transfermovilAccount.trim(),
+          transfermovilVerificationPhone: transfermovilVerificationPhone.trim(),
           enzonaEnabled,
           enzonaRecipient: enzonaRecipient.trim()
         }
@@ -4784,6 +4793,12 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         <div className="flex gap-2 flex-wrap">
           <Button
             variant="outline"
+            onClick={() => document.getElementById('sellerPaymentSettings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            Configurar pagos
+          </Button>
+          <Button
+            variant="outline"
             onClick={() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
           >
             {t.sellerOrdersTitle} ({sellerOrders.length})
@@ -4862,7 +4877,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 </div>
 
 <div className="mb-6 rounded-xl border border-gray-200 p-4">
-  <h2 className="mb-2 text-lg font-semibold">Configurar pagos por Transfermóvil y EnZona</h2>
+  <h2 id="sellerPaymentSettings" className="mb-2 scroll-mt-6 text-lg font-semibold">Configurar pagos por Transfermóvil y EnZona</h2>
   <p className="mb-4 text-sm text-gray-600">
     Introduce los datos de tu negocio que verá el comprador. Comprueba que sean correctos antes de habilitar cada método.
   </p>
@@ -4880,14 +4895,14 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
       <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
         <label className="block text-sm font-medium">
-          Número de teléfono o tarjeta receptora
+          Tarjeta receptora
           <input
             type="text"
             autoComplete="off"
             value={transfermovilNumber}
             onChange={(event) => setTransfermovilNumber(event.target.value)}
             maxLength={40}
-            placeholder="Número o tarjeta para recibir el pago"
+            placeholder="Número de la tarjeta que recibirá el pago"
             className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
           />
         </label>
@@ -4905,19 +4920,35 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           />
         </label>
 
-        <label className="block text-sm font-medium md:col-span-2">
-          Cuenta receptora para verificar el SMS
+        <label className="block text-sm font-medium">
+          Móvil de contacto
           <input
-            type="text"
-            autoComplete="off"
-            value={transfermovilAccount}
-            onChange={(event) => setTransfermovilAccount(event.target.value)}
-            maxLength={60}
-            placeholder="Identificador de la cuenta que debe aparecer en el SMS"
+            type="tel"
+            autoComplete="tel"
+            value={transfermovilContactPhone}
+            onChange={(event) => setTransfermovilContactPhone(event.target.value)}
+            maxLength={30}
+            placeholder="Número de contacto para el comprador"
             className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
           />
           <span className="mt-1 block text-xs text-gray-500">
-            Este dato se utilizará para contrastar la operación recibida. Guardarlo no confirma por sí solo ningún pago.
+            Este número se mostrará al comprador. Puede ser el mismo que el móvil de verificación.
+          </span>
+        </label>
+
+        <label className="block text-sm font-medium md:col-span-2">
+          Móvil para verificar
+          <input
+            type="tel"
+            autoComplete="tel"
+            value={transfermovilVerificationPhone}
+            onChange={(event) => setTransfermovilVerificationPhone(event.target.value)}
+            maxLength={30}
+            placeholder="Número del móvil que recibe los SMS de Transfermóvil"
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+          />
+          <span className="mt-1 block text-xs text-gray-500">
+            Indica el teléfono donde se reciben los SMS utilizados para comprobar los pagos.
           </span>
         </label>
       </div>
@@ -5439,7 +5470,9 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
   const pendingReports = reports.filter((r) => r?.status === 'pending');
   const cryptoInvoices = data.cryptoInvoices || [];
   const transfermovilEvents = Array.isArray(data?.transfermovilEvents) ? data.transfermovilEvents : [];
-  const transfermovilPending = transfermovilEvents.filter((event) => event?.status === 'pending_review').length;
+  const transfermovilPending = transfermovilEvents.filter((event) =>
+    ['pending_review', 'matching_reference', 'paid_reconciliation_error'].includes(event?.status)
+  ).length;
   const cryptoPending = cryptoInvoices.filter((i) => i.status === 'submitted' || i.status === 'pending').length;
   return (
     <section className="container mx-auto px-4 py-8">
@@ -6587,8 +6620,9 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
             <p className="text-2xl font-bold">{formatTotal(order.total, order.currency)}</p>
             {method === 'transfermovil' ? (
               <>
-                <p><strong>Número del destinatario:</strong> {details.recipientNumber || 'No disponible'}</p>
+                <p><strong>Tarjeta receptora:</strong> {details.recipientNumber || 'No disponible'}</p>
                 <p><strong>Titular:</strong> {details.recipientName || 'No disponible'}</p>
+                <p><strong>Móvil de contacto:</strong> {details.recipientContactPhone || 'No configurado por el vendedor'}</p>
               </>
             ) : (
               <p><strong>Destinatario de EnZona:</strong> {details.recipient || 'No disponible'}</p>
@@ -7039,12 +7073,12 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
               Habilitar Transfermóvil
             </label>
             <div>
-              <Label>Número o tarjeta receptora</Label>
+              <Label>Tarjeta receptora</Label>
               <Input
                 value={form.transfermovilNumber || ''}
                 maxLength={40}
                 onChange={(e) => setForm({ ...form, transfermovilNumber: e.target.value })}
-                placeholder="Número de la tarjeta o teléfono"
+                placeholder="Número de la tarjeta que recibirá el pago"
               />
             </div>
             <div>
@@ -7057,16 +7091,24 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
               />
             </div>
             <div>
-              <Label>Cuenta receptora para verificar SMS</Label>
+              <Label>Móvil de contacto</Label>
               <Input
-                value={form.transfermovilAccount || ''}
-                maxLength={60}
-                onChange={(e) => setForm({ ...form, transfermovilAccount: e.target.value })}
-                placeholder="Cuenta que aparece en el SMS bancario"
+                type="tel"
+                value={form.transfermovilContactPhone || ''}
+                maxLength={30}
+                onChange={(e) => setForm({ ...form, transfermovilContactPhone: e.target.value })}
+                placeholder="Número de contacto visible para el comprador"
               />
-              <p className="text-xs text-muted-foreground">
-                Debe coincidir con la cuenta receptora indicada en el SMS de Transfermóvil.
-              </p>
+            </div>
+            <div>
+              <Label>Móvil para verificar</Label>
+              <Input
+                type="tel"
+                value={form.transfermovilVerificationPhone || ''}
+                maxLength={30}
+                onChange={(e) => setForm({ ...form, transfermovilVerificationPhone: e.target.value })}
+                placeholder="Teléfono que recibe los SMS de Transfermóvil"
+              />
             </div>
           </div>
 

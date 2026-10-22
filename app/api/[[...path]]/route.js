@@ -2265,11 +2265,33 @@ async function route(request, method, path) {
     // Helper: strip private contact fields when business has showContactsPublicly === false
     const sanitizeBusiness = (biz, viewerUser) => {
       if (!biz) return biz;
-      const isOwner = viewerUser && (viewerUser.id === biz.userId || viewerUser.role === 'admin');
-      if (biz.showContactsPublicly === false && !isOwner) {
-        return { ...biz, whatsapp: '', telegram: '', sms: '', messenger: '', instagram: '', facebook: '', contactsHidden: true };
+
+      const isOwner = Boolean(
+        viewerUser && (viewerUser.id === biz.userId || viewerUser.role === 'admin')
+      );
+
+      // El vendedor y el administrador conservan acceso a la configuración interna.
+      if (isOwner) return biz;
+
+      // Nunca exponer públicamente la cuenta utilizada para contrastar los SMS.
+      const safeBiz = { ...biz };
+      delete safeBiz.transfermovilAccount;
+
+      // Respetar también la privacidad de los contactos del negocio.
+      if (biz.showContactsPublicly === false) {
+        return {
+          ...safeBiz,
+          whatsapp: '',
+          telegram: '',
+          sms: '',
+          messenger: '',
+          instagram: '',
+          facebook: '',
+          contactsHidden: true
+        };
       }
-      return biz;
+
+      return safeBiz;
     };
     if (path[1] && method === 'GET') {
       const business = await db.collection('businesses').findOne({ id: path[1] });
@@ -2331,9 +2353,54 @@ async function route(request, method, path) {
       const body = await request.json();
       const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook',
         'showContactsPublicly', 'province', 'municipality', 'address', 'openingHours', 'closingHours', 'messenger',
-        'businessType', 'country'];
+        'businessType', 'country',
+        'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName', 'transfermovilAccount',
+        'enzonaEnabled', 'enzonaRecipient'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      // Validar configuración de Transfermóvil y EnZona.
+      for (const key of ['transfermovilEnabled', 'enzonaEnabled']) {
+        if (key in body && typeof body[key] !== 'boolean') {
+          return json({ error: `El campo ${key} debe ser verdadero o falso.` }, 400);
+        }
+      }
+
+      const paymentTextLimits = {
+        transfermovilNumber: 40,
+        transfermovilName: 100,
+        transfermovilAccount: 60,
+        enzonaRecipient: 150,
+      };
+
+      for (const [key, maxLength] of Object.entries(paymentTextLimits)) {
+        if (!(key in body)) continue;
+        if (typeof body[key] !== 'string') {
+          return json({ error: `El campo ${key} debe ser texto.` }, 400);
+        }
+        const value = body[key].trim();
+        if (value.length > maxLength) {
+          return json({ error: `El campo ${key} supera la longitud permitida.` }, 400);
+        }
+        if (value && value.length < 3) {
+          return json({ error: `El campo ${key} es demasiado corto.` }, 400);
+        }
+        update[key] = value;
+      }
+
+      const mergedPayment = { ...business, ...update };
+      if (mergedPayment.transfermovilEnabled === true &&
+          !String(mergedPayment.transfermovilNumber || '').trim()) {
+        return json({ error: 'Introduce el número o tarjeta receptora antes de habilitar Transfermóvil.' }, 400);
+      }
+      if (mergedPayment.transfermovilEnabled === true &&
+          !String(mergedPayment.transfermovilName || '').trim()) {
+        return json({ error: 'Introduce el nombre del titular antes de habilitar Transfermóvil.' }, 400);
+      }
+      if (mergedPayment.enzonaEnabled === true &&
+          !String(mergedPayment.enzonaRecipient || '').trim()) {
+        return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+      }
 
       if ('cryptoPayoutWallets' in body) {
         const wallets = body.cryptoPayoutWallets;

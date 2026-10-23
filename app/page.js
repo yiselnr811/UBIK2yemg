@@ -1570,6 +1570,10 @@ const App = () => {
         toast.error('Este negocio no tiene Transfermóvil configurado correctamente.');
         return;
       }
+      if (requestedMethod === 'enzona' && !hasEnzona) {
+        toast.error('Este negocio no tiene EnZona configurado correctamente.');
+        return;
+      }
 
       setCheckoutPaymentMethod(requestedMethod);
       setCryptoPendingCheckout({
@@ -2171,7 +2175,9 @@ const App = () => {
             <DialogTitle>
               {checkoutPaymentMethod === 'transfermovil'
                 ? 'Pago por Transfermóvil'
-                : 'Elige tu criptomoneda y red'}
+                : checkoutPaymentMethod === 'enzona'
+                  ? 'Pago por EnZona'
+                  : 'Elige tu criptomoneda y red'}
             </DialogTitle>
             <DialogDescription>
               Selecciona cómo deseas pagar. El pedido se creará después de confirmar.
@@ -2270,6 +2276,7 @@ const App = () => {
                   disabled={checkoutSubmitting} required placeholder="+34 600 000 000" />
               </div>
             </div>
+            {checkoutPaymentMethod === 'crypto' && (
             <div className="space-y-3 border-t pt-4">
               <h3 className="font-semibold">Método de pago</h3>
               {checkoutPaymentMethod !== 'transfermovil' && Array.isArray(cryptoConfig?.enabled) && cryptoConfig.enabled.length > 0 && (
@@ -2288,23 +2295,8 @@ const App = () => {
                   </span>
                 </label>
               )}
-              {checkoutPaymentMethod !== 'transfermovil' && checkoutBusiness?.enzonaEnabled === true && checkoutBusiness?.enzonaRecipient && checkoutBusiness?.enzonaCardNumber && checkoutBusiness?.enzonaPhone && (
-                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
-                  <input
-                    type="radio"
-                    name="checkout-payment-method"
-                    checked={checkoutPaymentMethod === 'enzona'}
-                    onChange={() => setCheckoutPaymentMethod('enzona')}
-                    disabled={checkoutSubmitting}
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="font-medium">EnZona</span>
-                    <span className="block text-sm text-muted-foreground">Pago al destinatario configurado por el negocio.</span>
-                  </span>
-                </label>
-              )}
             </div>
+            )}
 
             {checkoutPaymentMethod === 'transfermovil' && (
               <div className="rounded-md bg-muted p-3 text-sm space-y-1">
@@ -3550,6 +3542,18 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
               >
                 <CreditCard className="h-5 w-5" />
                 Pagar con Transfermóvil
+              </Button>
+            )}
+            {product.stock > 0 && (
+              <Button
+                onClick={() => startCryptoCheckout(product, 'enzona')}
+                disabled={checkoutSubmitting}
+                variant="outline"
+                className="w-full h-14 rounded-xl mt-3 border-2 border-sky-500 text-sky-700 hover:bg-sky-500/10 font-bold flex items-center justify-center gap-2"
+                aria-label="Pagar con EnZona"
+              >
+                <CreditCard className="h-5 w-5" />
+                Pagar con EnZona
               </Button>
             )}
           </div>
@@ -5087,9 +5091,6 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </p>
   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
     {[
-      ['TRC20', 'TRON (TRC20) — USDT'],
-      ['ERC20', 'Ethereum (ERC20)'],
-      ['POLYGON', 'Polygon'],
       ['BASE', 'Base'],
       ['ARBITRUM', 'Arbitrum'],
       ['BEP20', 'BNB Smart Chain']
@@ -6415,7 +6416,7 @@ const PlanDialog = ({ open, onOpenChange, settings, payment, setPayment, onSubmi
         </div>
         {payment.method === 'usdc' && settings && (
           <div className="rounded-lg border bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
-            <div className="font-semibold text-amber-700 dark:text-amber-300 mb-1">Wallet USDC ({settings.usdcNetwork || 'TRC20'})</div>
+            <div className="font-semibold text-amber-700 dark:text-amber-300 mb-1">Wallet USDC ({settings.usdcNetwork || 'BASE'})</div>
             <div className="font-mono break-all">{settings.usdcWallet || '— sin configurar —'}</div>
             {priceUSD ? <div className="mt-2">Monto a transferir: <b>${Number(priceUSD).toFixed(2)} USDC</b></div> : null}
           </div>

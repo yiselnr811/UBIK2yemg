@@ -84,7 +84,7 @@ const CRYPTO_MIN_CONFIRMATIONS = {
 
 // Parse enabled networks from env
 function getEnabledCryptoNetworks() {
-  const allowedNewNetworks = new Set(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20']);
+  const allowedNewNetworks = new Set(['BASE', 'ARBITRUM', 'BEP20']);
   const env = process.env.CRYPTO_ENABLED_NETWORKS || '';
   const enabled = env.split(',').map(s => s.trim()).filter(Boolean);
   const networks = [];
@@ -303,7 +303,7 @@ const createOrderCryptoSchema = createOrderSchema.extend({
   shippingEmail: z.string().email().max(254),
   paymentMethod: z.literal('crypto'),
   cryptoCurrency: z.enum(['USDT', 'USDC']),
-  cryptoNetwork: z.enum(['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20']),
+  cryptoNetwork: z.enum(['BASE', 'ARBITRUM', 'BEP20']),
 });
 
 const submitTxSchema = z.object({
@@ -2503,7 +2503,7 @@ async function route(request, method, path) {
 
       if ('cryptoPayoutWallets' in body) {
         const wallets = body.cryptoPayoutWallets;
-        const networks = ['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM', 'BEP20'];
+        const networks = ['BASE', 'ARBITRUM', 'BEP20'];
         if (!wallets || typeof wallets !== 'object' || Array.isArray(wallets)) {
           return json({ error: 'La configuración de billeteras no es válida.' }, 400);
         }
@@ -3180,9 +3180,10 @@ return json({ payments: out });
       : shippingAddress;
 
     const now = new Date().toISOString();
+    const orderId = uuidv4();
     const order = {
-      id: uuidv4(),
-      publicInvoiceId: uuidv4(),
+      id: orderId,
+      publicInvoiceId: orderId,
       buyerId: user.id,
       buyerEmail: user.email,
       businessId,
@@ -4129,14 +4130,6 @@ function sanitizeBuyerOrder(order) {
       return json({ error: 'La verificación por SMS solo admite pedidos en CUP.' }, 409);
     }
 
-    if (
-      order.buyerTransactionReference &&
-      order.buyerTransactionReference !== reference
-    ) {
-      return json({
-        error: 'El pedido ya tiene otra referencia registrada. Contacta con soporte para corregirla.',
-      }, 409);
-    }
 
     const reused = await orders.findOne({
       id: { $ne: order.id },
@@ -4149,25 +4142,32 @@ function sanitizeBuyerOrder(order) {
     }
 
     const now = new Date().toISOString();
-    const saved = await orders.updateOne(
-      {
-        id: order.id,
-        buyerId: user.id,
-        paymentStatus: 'pending_payment',
-        paymentMethod: order.paymentMethod,
-        $or: [
-          { buyerTransactionReference: { $exists: false } },
-          { buyerTransactionReference: null },
-          { buyerTransactionReference: reference },
-        ],
-      },
-      {
-        $set: {
-          buyerTransactionReference: reference,
-          updatedAt: now,
+    let saved;
+
+    try {
+      saved = await orders.updateOne(
+        {
+          id: order.id,
+          buyerId: user.id,
+          paymentStatus: 'pending_payment',
+          paymentMethod: order.paymentMethod,
         },
+        {
+          $set: {
+            buyerTransactionReference: reference,
+            updatedAt: now,
+          },
+        }
+      );
+    } catch (error) {
+      if (error?.code === 11000 || error?.codeName === 'DuplicateKey') {
+        return json({
+          error: 'Esta referencia ya está asociada a otro pedido para este método de pago.',
+          code: 'DUPLICATE_PAYMENT_REFERENCE',
+        }, 409);
       }
-    );
+      throw error;
+    }
 
     if (saved.matchedCount !== 1) {
       const latest = await orders.findOne({ id: order.id, buyerId: user.id });
@@ -4203,11 +4203,41 @@ function sanitizeBuyerOrder(order) {
     }
 
     if (event.status === 'auto_approved' && event.matchedOrderId === order.id) {
+      const latestOrder = await orders.findOne({
+        id: order.id,
+        buyerId: user.id,
+      });
+
+      const confirmedAmountMatches =
+        Number.isFinite(Number(latestOrder?.paymentRef?.amount)) &&
+        Number.isFinite(Number(latestOrder?.total)) &&
+        Math.round(Number(latestOrder.paymentRef.amount) * 100) ===
+          Math.round(Number(latestOrder.total) * 100);
+
+      if (
+        latestOrder?.paymentStatus === 'paid' &&
+        latestOrder?.paymentRef?.provider === order.paymentMethod &&
+        latestOrder?.paymentRef?.transactionReference === reference &&
+        String(latestOrder?.paymentRef?.currency || '').toUpperCase() === 'CUP' &&
+        confirmedAmountMatches
+      ) {
+        return json({
+          ok: true,
+          status: 'paid',
+          message: 'El pago ya figura confirmado y coincide con la referencia.',
+        });
+      }
+
+      console.error(
+        '[Transfermóvil/EnZona] CRÍTICO: el evento figura procesado, pero el pedido no refleja un pago coherente.',
+        { eventId: event._id, orderId: order.id, provider: order.paymentMethod }
+      );
+
       return json({
         ok: true,
-        status: 'paid',
-        message: 'El SMS ya está asociado a este pedido.',
-      });
+        status: 'pending_review',
+        message: 'Existe una discrepancia entre el SMS procesado y el pedido. No vuelvas a pagar; requiere revisión administrativa.',
+      }, 409);
     }
 
     if (event.status !== 'pending_review') {

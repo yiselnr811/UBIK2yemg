@@ -188,7 +188,7 @@ const TRANSLATIONS = {
     shippingHistory: 'Historial de estados',
     confirmDelivery: 'Confirmar entrega',
     deliveryConfirmSuccess: 'Entrega confirmada por el vendedor.',
-    deliveryConfirmError: 'No se pudo confirmar la entrega.'
+    deliveryConfirmError: 'No se pudo confirmar la entrega.',
     saveTracking: 'Guardar seguimiento',
     saving: 'Guardando...',
     ordersLoadError: 'No se pudieron cargar los pedidos.',
@@ -356,7 +356,7 @@ const TRANSLATIONS = {
     shippingHistory: 'Status history',
     confirmDelivery: 'Confirm delivery',
     deliveryConfirmSuccess: 'Delivery confirmed by the seller.',
-    deliveryConfirmError: 'Could not confirm delivery.'
+    deliveryConfirmError: 'Could not confirm delivery.',
     saveTracking: 'Save tracking',
     saving: 'Saving...',
     ordersLoadError: "Couldn't load orders.",
@@ -524,7 +524,7 @@ const TRANSLATIONS = {
     shippingHistory: 'Cronologia degli stati',
     confirmDelivery: 'Conferma consegna',
     deliveryConfirmSuccess: 'Consegna confermata dal venditore.',
-    deliveryConfirmError: 'Impossibile confermare la consegna.'
+    deliveryConfirmError: 'Impossibile confermare la consegna.',
     saveTracking: 'Salva tracciamento',
     saving: 'Salvataggio...',
     ordersLoadError: 'Impossibile caricare gli ordini.',
@@ -692,7 +692,7 @@ const TRANSLATIONS = {
     shippingHistory: 'История статусов',
     confirmDelivery: 'Подтвердить доставку',
     deliveryConfirmSuccess: 'Продавец подтвердил доставку.',
-    deliveryConfirmError: 'Не удалось подтвердить доставку.'
+    deliveryConfirmError: 'Не удалось подтвердить доставку.',
     saveTracking: 'Сохранить отслеживание',
     saving: 'Сохранение...',
     ordersLoadError: 'Не удалось загрузить заказы.',

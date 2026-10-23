@@ -186,6 +186,9 @@ const TRANSLATIONS = {
     deliveryPhotos: 'Fotos de entrega (máximo 4 por actualización)',
     registeredPhotos: 'Fotos registradas',
     shippingHistory: 'Historial de estados',
+    confirmDelivery: 'Confirmar entrega',
+    deliveryConfirmSuccess: 'Entrega confirmada por el vendedor.',
+    deliveryConfirmError: 'No se pudo confirmar la entrega.'
     saveTracking: 'Guardar seguimiento',
     saving: 'Guardando...',
     ordersLoadError: 'No se pudieron cargar los pedidos.',
@@ -351,6 +354,9 @@ const TRANSLATIONS = {
     deliveryPhotos: 'Delivery photos (up to 4 per update)',
     registeredPhotos: 'Registered photos',
     shippingHistory: 'Status history',
+    confirmDelivery: 'Confirm delivery',
+    deliveryConfirmSuccess: 'Delivery confirmed by the seller.',
+    deliveryConfirmError: 'Could not confirm delivery.'
     saveTracking: 'Save tracking',
     saving: 'Saving...',
     ordersLoadError: "Couldn't load orders.",
@@ -516,6 +522,9 @@ const TRANSLATIONS = {
     deliveryPhotos: 'Foto della consegna (massimo 4 per aggiornamento)',
     registeredPhotos: 'Foto registrate',
     shippingHistory: 'Cronologia degli stati',
+    confirmDelivery: 'Conferma consegna',
+    deliveryConfirmSuccess: 'Consegna confermata dal venditore.',
+    deliveryConfirmError: 'Impossibile confermare la consegna.'
     saveTracking: 'Salva tracciamento',
     saving: 'Salvataggio...',
     ordersLoadError: 'Impossibile caricare gli ordini.',
@@ -681,6 +690,9 @@ const TRANSLATIONS = {
     deliveryPhotos: 'Фото доставки (не более 4 за обновление)',
     registeredPhotos: 'Зарегистрированные фотографии',
     shippingHistory: 'История статусов',
+    confirmDelivery: 'Подтвердить доставку',
+    deliveryConfirmSuccess: 'Продавец подтвердил доставку.',
+    deliveryConfirmError: 'Не удалось подтвердить доставку.'
     saveTracking: 'Сохранить отслеживание',
     saving: 'Сохранение...',
     ordersLoadError: 'Не удалось загрузить заказы.',
@@ -5656,6 +5668,55 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                   >
                     {saving ? t.saving : t.saveTracking}
                   </Button>
+
+                  {currentStatus === 'delivered' && (
+                    <div className="space-y-2">
+                      {order.sellerDeliveryConfirmation?.confirmedAt ? (
+                        <p className="text-sm font-medium text-green-700">
+                          {t.deliveryConfirmSuccess}
+                        </p>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={!paid || saving || !order.publicInvoiceId}
+                          onClick={async () => {
+                            setSellerOrderSaving((old) => ({ ...old, [order.id]: true }));
+                            setSellerOrderMessage((old) => ({ ...old, [order.id]: null }));
+                            try {
+                              await api(`/seller/orders/${encodeURIComponent(order.id)}/confirm-delivery`, {
+                                method: 'POST',
+                                token,
+                                body: { publicInvoiceId: order.publicInvoiceId },
+                              });
+                              const result = await api('/seller/orders', { token });
+                              setSellerOrders(
+                                Array.isArray(result?.orders)
+                                  ? result.orders.filter((item) => item && typeof item === 'object')
+                                  : []
+                              );
+                              setSellerOrderMessage((old) => ({
+                                ...old,
+                                [order.id]: { type: 'success', text: t.deliveryConfirmSuccess },
+                              }));
+                            } catch (error) {
+                              setSellerOrderMessage((old) => ({
+                                ...old,
+                                [order.id]: {
+                                  type: 'error',
+                                  text: error?.message || t.deliveryConfirmError,
+                                },
+                              }));
+                            } finally {
+                              setSellerOrderSaving((old) => ({ ...old, [order.id]: false }));
+                            }
+                          }}
+                        >
+                          {saving ? t.saving : t.confirmDelivery}
+                        </Button>
+                      )}
+                    </div>
+                  )}
 
                   {photos.length > 0 && (
                     <div className="space-y-2">

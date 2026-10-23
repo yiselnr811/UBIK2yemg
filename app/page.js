@@ -1553,7 +1553,9 @@ const App = () => {
         && Boolean(String(businessInfo?.transfermovilName || '').trim())
         && Boolean(String(businessInfo?.transfermovilContactPhone || '').trim());
       const hasEnzona = businessInfo?.enzonaEnabled === true
-        && Boolean(String(businessInfo?.enzonaRecipient || '').trim());
+        && Boolean(String(businessInfo?.enzonaRecipient || '').trim())
+        && Boolean(String(businessInfo?.enzonaCardNumber || '').trim())
+        && Boolean(String(businessInfo?.enzonaPhone || '').trim());
 
       if (!hasCrypto && !hasTransfermovil && !hasEnzona) {
         toast.error('Este negocio no tiene métodos de pago configurados.');
@@ -2286,7 +2288,7 @@ const App = () => {
                   </span>
                 </label>
               )}
-              {checkoutPaymentMethod !== 'transfermovil' && checkoutBusiness?.enzonaEnabled === true && checkoutBusiness?.enzonaRecipient && (
+              {checkoutPaymentMethod !== 'transfermovil' && checkoutBusiness?.enzonaEnabled === true && checkoutBusiness?.enzonaRecipient && checkoutBusiness?.enzonaCardNumber && checkoutBusiness?.enzonaPhone && (
                 <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
                   <input
                     type="radio"
@@ -2315,8 +2317,10 @@ const App = () => {
             )}
             {checkoutPaymentMethod === 'enzona' && (
               <div className="rounded-md bg-muted p-3 text-sm space-y-1">
-                <p className="font-semibold">Destinatario de EnZona</p>
-                <p>{checkoutBusiness?.enzonaRecipient}</p>
+                <p className="font-semibold">Datos para pagar por EnZona</p>
+                <p>Destinatario: {checkoutBusiness?.enzonaRecipient}</p>
+                <p>Tarjeta receptora: {checkoutBusiness?.enzonaCardNumber}</p>
+                <p>Móvil de contacto: {checkoutBusiness?.enzonaPhone}</p>
                 <p className="text-muted-foreground">El pedido quedará pendiente hasta que se revise el pago.</p>
               </div>
             )}
@@ -4500,6 +4504,8 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [transfermovilVerificationPhone, setTransfermovilVerificationPhone] = React.useState(business?.transfermovilVerificationPhone || '');
   const [enzonaEnabled, setEnzonaEnabled] = React.useState(business?.enzonaEnabled === true);
   const [enzonaRecipient, setEnzonaRecipient] = React.useState(business?.enzonaRecipient || '');
+  const [enzonaCardNumber, setEnzonaCardNumber] = React.useState(business?.enzonaCardNumber || '');
+  const [enzonaPhone, setEnzonaPhone] = React.useState(business?.enzonaPhone || '');
   const [paymentSettingsSaving, setPaymentSettingsSaving] = React.useState(false);
   const [paymentSettingsMessage, setPaymentSettingsMessage] = React.useState('');
 
@@ -4525,6 +4531,8 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
     setTransfermovilVerificationPhone(business?.transfermovilVerificationPhone || '');
     setEnzonaEnabled(business?.enzonaEnabled === true);
     setEnzonaRecipient(business?.enzonaRecipient || '');
+    setEnzonaCardNumber(business?.enzonaCardNumber || '');
+    setEnzonaPhone(business?.enzonaPhone || '');
 
     if (typeof window !== 'undefined' && business?.id) {
       try {
@@ -4629,7 +4637,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           transfermovilAccount: transfermovilAccount.trim(),
           transfermovilVerificationPhone: transfermovilVerificationPhone.trim(),
           enzonaEnabled,
-          enzonaRecipient: enzonaRecipient.trim()
+          enzonaRecipient: enzonaRecipient.trim(),
+          enzonaCardNumber: enzonaCardNumber.trim(),
+          enzonaPhone: enzonaPhone.trim()
         }
       });
 
@@ -4987,6 +4997,33 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           onChange={(event) => setEnzonaRecipient(event.target.value)}
           maxLength={150}
           placeholder="Usuario o destinatario para recibir el pago"
+          className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+        />
+      </label>
+
+      <label className="mt-3 block text-sm font-medium">
+        Número de tarjeta EnZona
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          value={enzonaCardNumber}
+          onChange={(event) => setEnzonaCardNumber(event.target.value)}
+          maxLength={60}
+          placeholder="Número de tarjeta receptora"
+          className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+        />
+      </label>
+
+      <label className="mt-3 block text-sm font-medium">
+        Móvil asociado a EnZona
+        <input
+          type="tel"
+          autoComplete="off"
+          value={enzonaPhone}
+          onChange={(event) => setEnzonaPhone(event.target.value)}
+          maxLength={30}
+          placeholder="Teléfono de contacto"
           className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
         />
       </label>
@@ -6639,7 +6676,11 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
                 <p><strong>Móvil de contacto:</strong> {details.recipientContactPhone || 'No configurado por el vendedor'}</p>
               </>
             ) : (
-              <p><strong>Destinatario de EnZona:</strong> {details.recipient || 'No disponible'}</p>
+              <>
+                <p><strong>Destinatario de EnZona:</strong> {details.recipient || 'No disponible'}</p>
+                <p><strong>Tarjeta receptora:</strong> {details.cardNumber || 'No disponible'}</p>
+                <p><strong>Móvil de contacto:</strong> {details.phone || 'No disponible'}</p>
+              </>
             )}
             <p><strong>Referencia del pedido:</strong> {order.publicInvoiceId || order.id}</p>
           </div>
@@ -7143,6 +7184,27 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
                 maxLength={150}
                 onChange={(e) => setForm({ ...form, enzonaRecipient: e.target.value })}
                 placeholder="Teléfono, cuenta o identificador receptor"
+              />
+            </div>
+            <div>
+              <Label>Número de tarjeta EnZona</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={form.enzonaCardNumber || ''}
+                maxLength={60}
+                onChange={(e) => setForm({ ...form, enzonaCardNumber: e.target.value })}
+                placeholder="Número de tarjeta receptora"
+              />
+            </div>
+            <div>
+              <Label>Móvil asociado a EnZona</Label>
+              <Input
+                type="tel"
+                value={form.enzonaPhone || ''}
+                maxLength={30}
+                onChange={(e) => setForm({ ...form, enzonaPhone: e.target.value })}
+                placeholder="Teléfono de contacto"
               />
             </div>
           </div>

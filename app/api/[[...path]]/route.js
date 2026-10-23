@@ -2429,7 +2429,7 @@ async function route(request, method, path) {
         'showContactsPublicly', 'province', 'municipality', 'address', 'openingHours', 'closingHours', 'messenger',
         'businessType', 'country',
         'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName', 'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
-        'enzonaEnabled', 'enzonaRecipient'];
+        'enzonaEnabled', 'enzonaRecipient', 'enzonaCardNumber', 'enzonaPhone'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
 
@@ -2447,6 +2447,8 @@ async function route(request, method, path) {
         transfermovilContactPhone: 30,
         transfermovilVerificationPhone: 30,
         enzonaRecipient: 150,
+        enzonaCardNumber: 60,
+        enzonaPhone: 30,
       };
 
       for (const [key, maxLength] of Object.entries(paymentTextLimits)) {
@@ -2477,13 +2479,26 @@ async function route(request, method, path) {
           !String(mergedPayment.transfermovilContactPhone || '').trim()) {
         return json({ error: 'Introduce el móvil de contacto antes de habilitar Transfermóvil.' }, 400);
       }
-      if (mergedPayment.transfermovilEnabled === true &&
-          !String(mergedPayment.transfermovilVerificationPhone || '').trim()) {
-        return json({ error: 'Introduce el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+      if (mergedPayment.transfermovilEnabled === true) {
+        const verificationPhone = String(
+          mergedPayment.transfermovilVerificationPhone || ''
+        ).trim() || String(mergedPayment.transfermovilContactPhone || '').trim();
+        if (!verificationPhone) {
+          return json({ error: 'Introduce el móvil de contacto o el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+        }
+        update.transfermovilVerificationPhone = verificationPhone;
+        mergedPayment.transfermovilVerificationPhone = verificationPhone;
       }
-      if (mergedPayment.enzonaEnabled === true &&
-          !String(mergedPayment.enzonaRecipient || '').trim()) {
-        return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+      if (mergedPayment.enzonaEnabled === true) {
+        if (!String(mergedPayment.enzonaRecipient || '').trim()) {
+          return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(mergedPayment.enzonaCardNumber || '').trim()) {
+          return json({ error: 'Introduce la tarjeta receptora antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(mergedPayment.enzonaPhone || '').trim()) {
+          return json({ error: 'Introduce el móvil receptor antes de habilitar EnZona.' }, 400);
+        }
       }
 
       if ('cryptoPayoutWallets' in body) {
@@ -3140,12 +3155,18 @@ return json({ payments: out });
     } else if (paymentMethod === 'enzona') {
       const recipient = typeof business?.enzonaRecipient === 'string'
         ? business.enzonaRecipient.trim() : '';
+      const cardNumber = typeof business?.enzonaCardNumber === 'string'
+        ? business.enzonaCardNumber.trim() : '';
+      const phone = typeof business?.enzonaPhone === 'string'
+        ? business.enzonaPhone.trim() : '';
 
-      if (business?.enzonaEnabled !== true || !recipient) {
-        return json({ error: 'EnZona no está habilitado o falta el destinatario.' }, 400);
+      if (business?.enzonaEnabled !== true || !recipient || !cardNumber || !phone) {
+        return json({
+          error: 'EnZona no está habilitado o faltan el destinatario, la tarjeta o el móvil.'
+        }, 400);
       }
 
-      paymentDetails = { provider: 'enzona', recipient };
+      paymentDetails = { provider: 'enzona', recipient, cardNumber, phone };
     } else if (paymentMethod !== 'crypto') {
       return json({ error: 'Método de pago no válido.' }, 400);
     }
@@ -5405,7 +5426,7 @@ function sanitizeBuyerOrder(order) {
         'location', 'instagram', 'facebook',
         'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName',
         'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
-        'enzonaEnabled', 'enzonaRecipient'
+        'enzonaEnabled', 'enzonaRecipient', 'enzonaCardNumber', 'enzonaPhone'
       ];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
@@ -5424,6 +5445,8 @@ function sanitizeBuyerOrder(order) {
         transfermovilContactPhone: 30,
         transfermovilVerificationPhone: 30,
         enzonaRecipient: 150,
+        enzonaCardNumber: 60,
+        enzonaPhone: 30,
       };
 
       for (const [key, maxLength] of Object.entries(paymentTextLimits)) {
@@ -5462,14 +5485,28 @@ function sanitizeBuyerOrder(order) {
         return json({ error: 'Introduce el móvil de contacto antes de habilitar Transfermóvil.' }, 400);
       }
 
-      if (update.transfermovilEnabled === true &&
-          !String(update.transfermovilVerificationPhone ?? existing.transfermovilVerificationPhone ?? '').trim()) {
-        return json({ error: 'Introduce el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+      if (update.transfermovilEnabled === true) {
+        const verificationPhone = String(
+          update.transfermovilVerificationPhone ?? existing.transfermovilVerificationPhone ?? ''
+        ).trim() || String(
+          update.transfermovilContactPhone ?? existing.transfermovilContactPhone ?? ''
+        ).trim();
+        if (!verificationPhone) {
+          return json({ error: 'Introduce el móvil de contacto o el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+        }
+        update.transfermovilVerificationPhone = verificationPhone;
       }
 
-      if (update.enzonaEnabled === true &&
-          !String(update.enzonaRecipient ?? existing.enzonaRecipient ?? '').trim()) {
-        return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+      if (update.enzonaEnabled === true) {
+        if (!String(update.enzonaRecipient ?? existing.enzonaRecipient ?? '').trim()) {
+          return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(update.enzonaCardNumber ?? existing.enzonaCardNumber ?? '').trim()) {
+          return json({ error: 'Introduce la tarjeta receptora antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(update.enzonaPhone ?? existing.enzonaPhone ?? '').trim()) {
+          return json({ error: 'Introduce el móvil receptor antes de habilitar EnZona.' }, 400);
+        }
       }
 
       if ('commissionRateBps' in body) {

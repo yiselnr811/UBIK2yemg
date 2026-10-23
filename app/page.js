@@ -1996,6 +1996,10 @@ const App = () => {
             }}
             onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
             isLogged={!!user}
+            token={token}
+            user={user}
+            business={business}
+            onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
             dataSaver={dataSaver}
             hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
             suggestions={suggestions} suggestOpen={suggestOpen} setSuggestOpen={setSuggestOpen}
@@ -2732,13 +2736,17 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 
 // ============ HOME ============
 
-function PublicInvoiceScanner() {
+function PublicInvoiceScanner({ token, user, business, onLoginNeeded }) {
   const [open, setOpen] = React.useState(false);
   const [scanning, setScanning] = React.useState(false);
   const [value, setValue] = React.useState('');
   const [invoice, setInvoice] = React.useState(null);
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+  const [resolvedInvoiceId, setResolvedInvoiceId] = React.useState('');
+  const [actionsInfo, setActionsInfo] = React.useState(null);
+  const [actionLoading, setActionLoading] = React.useState('');
+  const [actionMessage, setActionMessage] = React.useState('');
   const videoRef = React.useRef(null);
 
   const stopCamera = React.useCallback(() => {
@@ -2775,6 +2783,9 @@ function PublicInvoiceScanner() {
     setLoading(true);
     setError('');
     setInvoice(null);
+    setResolvedInvoiceId('');
+    setActionsInfo(null);
+    setActionMessage('');
     try {
       const response = await fetch('/api/public/invoices/' + encodeURIComponent(token), {
         method: 'GET',
@@ -2785,6 +2796,7 @@ function PublicInvoiceScanner() {
         throw new Error(data.error || 'Factura no encontrada o no válida.');
       }
       setInvoice(data);
+      setResolvedInvoiceId(token);
       setValue(raw);
       setScanning(false);
       stopCamera();
@@ -2792,6 +2804,89 @@ function PublicInvoiceScanner() {
       setError(e.message || 'No se pudo verificar la factura.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!invoice || !resolvedInvoiceId || !token || !user) {
+      setActionsInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    api('/invoices/' + encodeURIComponent(resolvedInvoiceId) + '/actions', {
+      token,
+      timeout: 12000,
+      retries: 0,
+    }).then(data => {
+      if (!cancelled) {
+        setActionsInfo(data);
+        setActionMessage('');
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setActionsInfo(null);
+        setActionMessage(
+          'No se pudieron consultar las acciones. Comprueba que has iniciado sesión con la cuenta del comprador o del negocio vendedor.'
+        );
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [invoice, resolvedInvoiceId, token, user]);
+
+  const confirmQrAction = async (action) => {
+    if (!token || !user || !actionsInfo?.orderId || !resolvedInvoiceId) {
+      setActionMessage('Inicia sesión con la cuenta autorizada para continuar.');
+      return;
+    }
+
+    setActionLoading(action);
+    setActionMessage('');
+
+    try {
+      const isDelivery = action === 'delivery';
+      if (
+        isDelivery &&
+        !actionsInfo.actions?.confirmDelivery
+      ) {
+        throw new Error('La entrega no está disponible para este pedido.');
+      }
+      if (
+        !isDelivery &&
+        !actionsInfo.actions?.confirmReceipt
+      ) {
+        throw new Error('La recepción no está disponible para este pedido.');
+      }
+
+      const path = isDelivery
+        ? '/seller/orders/' + encodeURIComponent(actionsInfo.orderId) + '/confirm-delivery'
+        : '/orders/' + encodeURIComponent(actionsInfo.orderId) + '/confirm-receipt';
+
+      await api(path, {
+        method: 'POST',
+        token,
+        body: { publicInvoiceId: resolvedInvoiceId },
+        timeout: 15000,
+        retries: 0,
+      });
+
+      const updated = await api(
+        '/invoices/' + encodeURIComponent(resolvedInvoiceId) + '/actions',
+        { token, timeout: 12000, retries: 0 }
+      );
+
+      setActionsInfo(updated);
+      setActionMessage(
+        isDelivery
+          ? 'Entrega confirmada correctamente.'
+          : 'Recepción confirmada correctamente.'
+      );
+    } catch (e) {
+      setActionMessage(e.message || 'No se pudo registrar la confirmación.');
+    } finally {
+      setActionLoading('');
     }
   };
 
@@ -2952,7 +3047,61 @@ function PublicInvoiceScanner() {
               </div>
               <p><b>Total:</b> {invoice.total ?? '—'} {invoice.currency || '—'}</p>
               <p><b>Estado del pago:</b> {invoice.paymentStatus || 'No disponible'}</p>
-              <p className="text-xs text-gray-700">La validez de la factura no demuestra por sí sola que el pago esté confirmado. Este escáner no modifica pedidos, pagos ni escrow.</p>
+              <p className="text-xs text-gray-700">
+                La validez de la factura no demuestra por sí sola que el pago esté confirmado.
+                Escanear el QR públicamente no modifica pedidos ni pagos.
+              </p>
+
+              {!token || !user ? (
+                <button
+                  type="button"
+                  onClick={() => onLoginNeeded?.()}
+                  className="w-full rounded-lg bg-blue-700 px-3 py-2 font-bold text-white"
+                >
+                  Iniciar sesión para confirmar entrega o recepción
+                </button>
+              ) : (
+                <div className="space-y-2 border-t border-green-200 pt-3">
+                  {actionsInfo?.actions?.confirmDelivery && (
+                    <button
+                      type="button"
+                      disabled={!!actionLoading}
+                      onClick={() => confirmQrAction('delivery')}
+                      className="w-full rounded-lg bg-blue-700 px-3 py-2 font-bold text-white disabled:opacity-50"
+                    >
+                      {actionLoading === 'delivery'
+                        ? 'Confirmando entrega…'
+                        : 'Confirmar entrega (vendedor)'}
+                    </button>
+                  )}
+
+                  {actionsInfo?.actions?.confirmReceipt && (
+                    <button
+                      type="button"
+                      disabled={!!actionLoading}
+                      onClick={() => confirmQrAction('receipt')}
+                      className="w-full rounded-lg bg-green-700 px-3 py-2 font-bold text-white disabled:opacity-50"
+                    >
+                      {actionLoading === 'receipt'
+                        ? 'Confirmando recepción…'
+                        : 'Confirmar recepción (comprador)'}
+                    </button>
+                  )}
+
+                  {actionsInfo && !actionsInfo.actions?.confirmDelivery &&
+                    !actionsInfo.actions?.confirmReceipt && (
+                      <p className="text-xs text-gray-700">
+                        No hay acciones disponibles para esta cuenta en el estado actual de la factura.
+                      </p>
+                    )}
+                </div>
+              )}
+
+              {actionMessage && (
+                <p role="status" className="rounded-lg bg-white p-2 text-sm text-gray-800">
+                  {actionMessage}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -2961,7 +3110,7 @@ function PublicInvoiceScanner() {
   );
 }
 
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onSearch, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onSearch, onPublish, onRegister, isLogged, token, user, business, onLoginNeeded, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
   const [showFeaturedProducts, setShowFeaturedProducts] = React.useState(true);
   const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
@@ -3037,7 +3186,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               </div>
             </div>
 
-            <PublicInvoiceScanner />
+            <PublicInvoiceScanner token={token} user={user} business={business} onLoginNeeded={onLoginNeeded} />
 
             {/* CTA buttons compact */}
             <div className="mt-3 flex gap-2 justify-center max-w-xl mx-auto">
@@ -5280,6 +5429,47 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     <Badge variant={paid ? 'default' : 'outline'}>
                       {paid ? t.paymentConfirmedLabel : t.paymentPendingLabel}
                     </Badge>
+                  </div>
+
+                  <div className="rounded-md border p-3 space-y-1 text-sm">
+                    <h4 className="font-semibold">Datos de entrega</h4>
+                    <p>
+                      <span className="font-medium">Destinatario:</span>{" "}
+                      {order.shipping?.name || order.buyerName || "No indicado"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Teléfono:</span>{" "}
+                      {order.shipping?.phone || order.buyerPhone || "No indicado"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Carnet/ID:</span>{" "}
+                      {order.shipping?.recipientId || "No indicado"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Dirección:</span>{" "}
+                      {order.shipping?.address || "No indicada"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Método:</span>{" "}
+                      {{
+                        pickup: "Recogida",
+                        delivery: "Entrega a domicilio",
+                      }[order.deliveryMethod || order.shipping?.deliveryMethod] ||
+                        order.deliveryMethod ||
+                        order.shipping?.deliveryMethod ||
+                        "No indicado"}
+                    </p>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => downloadOrderInvoice(order)}
+                    >
+                      Descargar factura PDF
+                    </Button>
                   </div>
 
                   {order.buyerReceiptConfirmation?.confirmedAt ? (

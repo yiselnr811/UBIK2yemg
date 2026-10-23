@@ -2049,6 +2049,111 @@ async function route(request, method, path) {
   }
 
 
+
+  // Consulta autenticada de acciones disponibles para una factura QR.
+  // Solo devuelve el ID interno al comprador o vendedor autorizado.
+  if (
+    path[0] === 'invoices' &&
+    path[1] &&
+    path[2] === 'actions' &&
+    path.length === 3 &&
+    method === 'GET'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const publicInvoiceId = String(path[1]);
+    if (!/^[0-9a-f-]{36}$/i.test(publicInvoiceId)) {
+      return json({ error: 'Factura no encontrada.' }, 404);
+    }
+
+    const order = await db.collection('orders').findOne(
+      { publicInvoiceId },
+      {
+        projection: {
+          _id: 0,
+          id: 1,
+          publicInvoiceId: 1,
+          buyerId: 1,
+          businessId: 1,
+          paymentStatus: 1,
+          status: 1,
+          shippingStatus: 1,
+          sellerDeliveryConfirmation: 1,
+          buyerReceiptConfirmation: 1,
+        },
+      }
+    );
+
+    if (!order) return json({ error: 'Factura no encontrada.' }, 404);
+
+    const isBuyer = String(order.buyerId || '') === String(user.id || '');
+
+    let isSeller = false;
+    if (order.businessId) {
+      const businesses = db.collection('businesses');
+      let business = user.businessId
+        ? await businesses.findOne({ id: user.businessId, userId: user.id })
+        : null;
+
+      if (!business) {
+        business = await businesses.findOne({
+          id: order.businessId,
+          userId: user.id,
+        });
+      }
+
+      if (!business) {
+        business = await businesses.findOne({ userId: user.id });
+      }
+
+      isSeller = Boolean(
+        business && String(business.id || '') === String(order.businessId)
+      );
+    }
+
+    if (!isBuyer && !isSeller) {
+      return json({ error: 'No tienes permiso para consultar las acciones de esta factura.' }, 403);
+    }
+
+    const paid =
+      order.paymentStatus === 'paid' ||
+      (
+        ['paid', 'processing', 'shipped', 'delivered'].includes(order.status) &&
+        (
+          order.paymentStatus === undefined ||
+          order.paymentStatus === null ||
+          order.paymentStatus === ''
+        )
+      );
+
+    const delivered =
+      order.shippingStatus === 'delivered' ||
+      order.status === 'delivered';
+
+    const sellerConfirmed =
+      Boolean(order.sellerDeliveryConfirmation?.confirmedAt);
+
+    const buyerConfirmed =
+      Boolean(order.buyerReceiptConfirmation?.confirmedAt);
+
+    return json({
+      invoiceNumber: publicInvoiceId.toUpperCase(),
+      role: isBuyer && isSeller ? 'buyer_and_seller' : isBuyer ? 'buyer' : 'seller',
+      actions: {
+        confirmDelivery: isSeller && paid && delivered && !sellerConfirmed,
+        confirmReceipt: isBuyer && paid && delivered && sellerConfirmed && !buyerConfirmed,
+      },
+      state: {
+        paid,
+        delivered,
+        sellerConfirmed,
+        buyerConfirmed,
+      },
+      orderId: order.id,
+    });
+  }
+
   // Factura pública: solo expone información comercial no sensible.
   if (path[0] === 'public' && path[1] === 'invoices' &&
       path[2] && path.length === 3 && method === 'GET') {
@@ -4001,6 +4106,12 @@ return json({ payments: out });
             ],
           },
           {
+            'sellerDeliveryConfirmation.confirmedAt': {
+              $exists: true,
+              $nin: [null, ''],
+            },
+          },
+          {
             $or: [
               { 'buyerReceiptConfirmation.confirmedAt': { $exists: false } },
               { 'buyerReceiptConfirmation.confirmedAt': null },
@@ -4642,32 +4753,6 @@ function sanitizeBuyerOrder(order) {
     drawLine('Estado real del pago: ' + (statusLabels[paymentStatus] || paymentStatus));
     drawLine('La validez de esta factura no demuestra por sí sola que el pago esté confirmado.', {
       size: 9, gap: 16
-    });
-
-    // Página de verificación separada: el QR no cambia estados ni aprueba pagos.
-    const qrPage = pdf.addPage(pageSize);
-    qrPage.drawText('VERIFICACIÓN PÚBLICA DE FACTURA', {
-      x: 48, y: 780, size: 16, font: bold, color: rgb(0.12, 0.16, 0.22)
-    });
-    const requestOrigin = new URL(request.url).origin;
-    const base = BASE_URL && !BASE_URL.includes('localhost')
-      ? BASE_URL : requestOrigin;
-    const verifyUrl = base.replace(/\/+$/, '') + '/invoice/' +
-      encodeURIComponent(order.publicInvoiceId);
-    const qrData = await QRCode.toDataURL(verifyUrl, {
-      errorCorrectionLevel: 'M', margin: 2, width: 320
-    });
-    const qrImage = await pdf.embedPng(qrData);
-    qrPage.drawImage(qrImage, { x: 177, y: 390, width: 240, height: 240 });
-    qrPage.drawText('Escanea el QR para consultar la información pública.', {
-      x: 80, y: 350, size: 11, font, color: rgb(0.12, 0.16, 0.22)
-    });
-    qrPage.drawText('La consulta no confirma pagos ni libera fondos.', {
-      x: 95, y: 328, size: 10, font: bold, color: rgb(0.12, 0.16, 0.22)
-    });
-    qrPage.drawText(verifyUrl.slice(0, 100), {
-      x: 48, y: 295, size: 8, font, color: rgb(0.12, 0.16, 0.22),
-      maxWidth: 495
     });
 
     const bytes = await pdf.save();

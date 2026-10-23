@@ -4268,6 +4268,17 @@ function sanitizeBuyerOrder(order) {
             buyerTransactionReference: reference,
             updatedAt: now,
           },
+          ...(order.buyerTransactionReference &&
+          order.buyerTransactionReference !== reference
+            ? {
+                $push: {
+                  buyerTransactionReferenceHistory: {
+                    reference: order.buyerTransactionReference,
+                    replacedAt: now,
+                  },
+                },
+              }
+            : {}),
         }
       );
     } catch (error) {

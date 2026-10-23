@@ -6842,6 +6842,9 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
     order?.buyerTransactionReference || ''
   );
   const [submittingReference, setSubmittingReference] = useState(false);
+  const [editingReference, setEditingReference] = useState(
+    !order?.buyerTransactionReference
+  );
 
   const submitTransactionReference = async (event) => {
     event.preventDefault();
@@ -6879,6 +6882,8 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
         buyerTransactionReference: reference,
         ...(isPaid ? { paymentStatus: 'paid', status: 'paid' } : {}),
       });
+
+      setEditingReference(false);
 
       if (isPaid) {
         toast.success(result.message || 'El pago figura como confirmado.');
@@ -6936,43 +6941,83 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
             )}
             <p><strong>Referencia del pedido:</strong> {order.publicInvoiceId || order.id}</p>
           </div>
-          <form onSubmit={submitTransactionReference} className="space-y-3 rounded-lg border p-4">
-            <label htmlFor="transfer-transaction-reference" className="block text-sm font-semibold">
-              Referencia real de la transferencia
-            </label>
-            <input
-              id="transfer-transaction-reference"
-              type="text"
-              value={transactionReference}
-              onChange={(event) => setTransactionReference(event.target.value)}
-              maxLength={100}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="Ej.: número de transacción del comprobante"
-              disabled={submittingReference || order.paymentStatus !== 'pending_payment'}
-              className="w-full rounded-md border bg-background px-3 py-2 text-sm"
-              required
-            />
-            <p className="text-xs text-muted-foreground">
-              Introduce el número de transacción que aparece en el comprobante, no el número de pedido.
-            </p>
-            <Button
-              type="submit"
-              disabled={
-                submittingReference ||
-                order.paymentStatus !== 'pending_payment' ||
-                !transactionReference.trim()
-              }
-              className="w-full"
-            >
-              {submittingReference ? 'Comprobando referencia…' : 'Enviar referencia de pago'}
-            </Button>
-            {order.paymentStatus === 'paid' && (
+          <div className="space-y-3 rounded-lg border p-4">
+            {order?.buyerTransactionReference && !editingReference ? (
+              <div className="space-y-3">
+                <p className="text-sm font-semibold">Referencia enviada</p>
+                <p className="break-all rounded-md bg-muted p-3 font-mono text-sm">
+                  {order.buyerTransactionReference}
+                </p>
+                {order.paymentStatus === 'pending_payment' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={submittingReference}
+                    onClick={() => {
+                      setTransactionReference(order.buyerTransactionReference || '');
+                      setEditingReference(true);
+                    }}
+                  >
+                    ✏️ Corregir número de transacción
+                  </Button>
+                )}
+              </div>
+            ) : order.paymentStatus === 'pending_payment' ? (
+              <form onSubmit={submitTransactionReference} className="space-y-3">
+                <label htmlFor="transfer-transaction-reference" className="block text-sm font-semibold">
+                  {order?.buyerTransactionReference
+                    ? 'Introduce la referencia correcta'
+                    : 'Referencia real de la transferencia'}
+                </label>
+                <input
+                  id="transfer-transaction-reference"
+                  type="text"
+                  value={transactionReference}
+                  onChange={(event) => setTransactionReference(event.target.value)}
+                  maxLength={100}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Ej.: número de transacción del comprobante"
+                  disabled={submittingReference}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Introduce el número de transacción del comprobante, no el número de pedido.
+                </p>
+                <Button
+                  type="submit"
+                  disabled={submittingReference || !transactionReference.trim()}
+                  className="w-full"
+                >
+                  {submittingReference
+                    ? 'Comprobando referencia…'
+                    : order?.buyerTransactionReference
+                      ? 'Actualizar referencia'
+                      : 'Enviar referencia de pago'}
+                </Button>
+                {order?.buyerTransactionReference && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full"
+                    disabled={submittingReference}
+                    onClick={() => {
+                      setTransactionReference(order.buyerTransactionReference || '');
+                      setEditingReference(false);
+                    }}
+                  >
+                    Cancelar corrección
+                  </Button>
+                )}
+              </form>
+            ) : (
               <p className="text-sm font-semibold text-green-700">
-                El sistema registra este pedido como pagado.
+                El sistema registra este pedido como pagado. La referencia ya no se puede modificar.
               </p>
             )}
-          </form>
+          </div>
           <p className="text-sm text-muted-foreground">
             Conserva el comprobante. La referencia se comparará con el SMS recibido por el sistema. Si falta información o hay discrepancias, el pedido seguirá pendiente de revisión. Un SMS por sí solo no constituye una prueba bancaria criptográfica.
           </p>

@@ -188,7 +188,7 @@ const TRANSLATIONS = {
     shippingHistory: 'Historial de estados',
     confirmDelivery: 'Confirmar entrega',
     deliveryConfirmSuccess: 'Entrega confirmada por el vendedor.',
-    deliveryConfirmError: 'No se pudo confirmar la entrega.'
+    deliveryConfirmError: 'No se pudo confirmar la entrega.',
     saveTracking: 'Guardar seguimiento',
     saving: 'Guardando...',
     ordersLoadError: 'No se pudieron cargar los pedidos.',

@@ -2141,7 +2141,7 @@ async function route(request, method, path) {
       invoiceNumber: publicInvoiceId.toUpperCase(),
       role: isBuyer && isSeller ? 'buyer_and_seller' : isBuyer ? 'buyer' : 'seller',
       actions: {
-        confirmDelivery: isSeller && paid && delivered && !sellerConfirmed,
+        confirmDelivery: isSeller && paid && !sellerConfirmed,
         confirmReceipt: isBuyer && paid && delivered && sellerConfirmed && !buyerConfirmed,
       },
       state: {
@@ -3746,10 +3746,6 @@ return json({ payments: out });
       return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
     }
 
-    if (order.shippingStatus !== 'delivered' && order.status !== 'delivered') {
-      return json({ error: 'Primero debes marcar el pedido como entregado.' }, 409);
-    }
-
     if (order.sellerDeliveryConfirmation?.confirmedAt) {
       return json({
         order,
@@ -3782,12 +3778,6 @@ return json({ payments: out });
           },
           {
             $or: [
-              { shippingStatus: 'delivered' },
-              { status: 'delivered' },
-            ],
-          },
-          {
-            $or: [
               { 'sellerDeliveryConfirmation.confirmedAt': { $exists: false } },
               { 'sellerDeliveryConfirmation.confirmedAt': null },
             ],
@@ -3796,6 +3786,8 @@ return json({ payments: out });
       },
       {
         $set: {
+          status: 'delivered',
+          shippingStatus: 'delivered',
           sellerDeliveryConfirmation: confirmation,
           updatedAt: now,
         },

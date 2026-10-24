@@ -5865,8 +5865,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     {saving ? t.saving : t.saveTracking}
                   </Button>
 
-                  {currentStatus === 'delivered' && (
-                    <div className="space-y-2">
+                  <div className="space-y-2">
                       {order.sellerDeliveryConfirmation?.confirmedAt ? (
                         <p className="text-sm font-medium text-green-700">
                           {t.deliveryConfirmSuccess}
@@ -5911,8 +5910,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                           {saving ? t.saving : t.confirmDelivery}
                         </Button>
                       )}
-                    </div>
-                  )}
+                  </div>
 
                   {photos.length > 0 && (
                     <div className="space-y-2">

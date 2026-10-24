@@ -5497,7 +5497,7 @@ function sanitizeBuyerOrder(order) {
         .collection('businesses')
         .find(
           { id: { $in: users.map((u) => u.businessId) } },
-          { projection: { id: 1, name: 1, deliveryEnabled: 1, verified: 1, verifiedAt: 1, verifiedBy: 1 } }
+          { projection: { id: 1, name: 1, deliveryEnabled: 1, verified: 1, verifiedAt: 1, verifiedBy: 1, cryptoEnabled: 1 } }
         )
         .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));

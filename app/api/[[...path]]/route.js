@@ -3235,6 +3235,9 @@ return json({ payments: out });
     const businessId = businessIds[0];
     const business = await db.collection('businesses').findOne({ id: businessId });
     const paymentMethod = parsed.data.paymentMethod || 'crypto';
+    if (paymentMethod === 'crypto' && business?.cryptoEnabled !== true) {
+      return json({ error: 'Este negocio no tiene habilitados los pagos en criptomonedas.' }, 403);
+    }
     let paymentDetails = null;
 
     if (paymentMethod === 'transfermovil') {
@@ -5544,13 +5547,14 @@ function sanitizeBuyerOrder(order) {
         'location', 'instagram', 'facebook',
         'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName',
         'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
-        'enzonaEnabled', 'enzonaRecipient', 'enzonaCardNumber', 'enzonaPhone'
+        'enzonaEnabled', 'enzonaRecipient', 'enzonaCardNumber', 'enzonaPhone',
+        'cryptoEnabled'
       ];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
 
       // Validar la configuración de pagos antes de guardar.
-      for (const key of ['transfermovilEnabled', 'enzonaEnabled']) {
+      for (const key of ['transfermovilEnabled', 'enzonaEnabled', 'cryptoEnabled']) {
         if (key in body && typeof body[key] !== 'boolean') {
           return json({ error: `El campo ${key} debe ser verdadero o falso.` }, 400);
         }

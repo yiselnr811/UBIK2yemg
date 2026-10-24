@@ -1559,7 +1559,8 @@ const App = () => {
         }
       }
 
-      const hasCrypto = Array.isArray(config?.enabled) && config.enabled.length > 0;
+      const businessCryptoEnabled = businessInfo?.cryptoEnabled === true;
+      const hasCrypto = businessCryptoEnabled && Array.isArray(config?.enabled) && config.enabled.length > 0;
       const hasTransfermovil = businessInfo?.transfermovilEnabled === true
         && Boolean(String(businessInfo?.transfermovilNumber || '').trim())
         && Boolean(String(businessInfo?.transfermovilName || '').trim())
@@ -7503,6 +7504,7 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
       // Pre-load existing values, defaulting new fields safely so admin can edit without losing data
       setForm({
         showContactsPublicly: true, // default visible
+        cryptoEnabled: false, // requiere activación administrativa
         province: '', municipality: '', address: '', openingHours: '', closingHours: '', messenger: '',
         commissionRateBps: 300,
         ...biz,
@@ -7608,6 +7610,20 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
           </div>
           <div><Label>Ubicación / Ciudad (visible)</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
 
+          <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <span className="text-sm font-semibold">Aceptar pagos en criptomonedas</span>
+              <input
+                type="checkbox"
+                checked={form.cryptoEnabled === true}
+                onChange={(e) => setForm({ ...form, cryptoEnabled: e.target.checked })}
+                className="h-4 w-4"
+              />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              Permite pagar con USDT o USDC si la plataforma tiene redes habilitadas.
+            </p>
+          </div>
           <div className="rounded-md border border-border p-3 space-y-3">
             <h3 className="font-semibold">Pago por Transfermóvil</h3>
             <label className="flex items-center gap-2 text-sm">

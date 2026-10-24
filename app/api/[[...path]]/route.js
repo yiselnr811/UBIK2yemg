@@ -127,7 +127,7 @@ function getCryptoConfig() {
 
 function normalizeTxHash(txHash) {
   if (!txHash) return '';
-  return txHash.toLowerCase().replace(/^0x/, '');
+  return txHash.trim().toLowerCase().replace(/^0x/, '');
 }
 
 // Upload base64/data-URL or raw URL to Cloudinary; return secure URL.
@@ -307,7 +307,10 @@ const createOrderCryptoSchema = createOrderSchema.extend({
 });
 
 const submitTxSchema = z.object({
-  txHash: z.string().min(32).max(130), // hex with or without 0x
+  txHash: z.string().trim().regex(
+    /^(?:0x)?[0-9a-fA-F]{64}$/,
+    'El hash debe contener exactamente 64 caracteres hexadecimales, con o sin prefijo 0x'
+  ),
 });
 
 const approveInvoiceSchema = z.object({

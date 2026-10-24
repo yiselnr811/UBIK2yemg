@@ -31,11 +31,11 @@ export const metadata = {
   },
   icons: {
     icon: [
-      { url: '/favicon.png', sizes: '64x64', type: 'image/png' },
-      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+      { url: '/favicon.png?v=20261024', sizes: '64x64', type: 'image/png' },
+      { url: '/icon-192.png?v=20261024', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png?v=20261024', sizes: '512x512', type: 'image/png' },
     ],
-    apple: '/icon-192.png',
+    apple: '/icon-192.png?v=20261024',
   },
   openGraph: {
     title: 'UBIK2 YEMG — Todo en un solo lugar',

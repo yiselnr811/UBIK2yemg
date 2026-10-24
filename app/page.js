@@ -2393,7 +2393,7 @@ const App = () => {
                   <p className="font-semibold">
                     Importe estimado: {amount.toLocaleString('es-ES', {
                       minimumFractionDigits: 2,
-                      maximumFractionDigits: 8
+                      maximumFractionDigits: 4
                     })} {selected?.currency || ''}
                   </p>
                   <p className="text-xs text-muted-foreground">
@@ -4730,10 +4730,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                       disabled={!!invoiceLoading[order.id]}
                     >
                       {invoiceLoading[order.id]
-                        ? '{t.loadingInvoice}'
+                        ? t.loadingInvoice
                         : openInvoiceId === order.id
-                          ? '{t.hideInvoice}'
-                          : '{t.viewPaymentInvoice}'}
+                          ? t.hideInvoice
+                          : t.viewPaymentInvoice}
                     </Button>
 
                     {openInvoiceId === order.id && invoiceErrors[order.id] && (
@@ -4748,10 +4748,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                         </p>
                         <p className="text-sm">
                           Importe esperado: <strong>
-                            {formatMoney(
-                              invoices[order.id].expectedAmount,
-                              invoices[order.id].currency || 'USDT'
-                            )}
+                            {Number(invoices[order.id].expectedAmount).toLocaleString('es-ES', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 4
+                            })} {invoices[order.id].currency || 'USDT'}
                           </strong>
                         </p>
                         <p className="text-sm">Red: {invoices[order.id].network || '—'}</p>
@@ -6070,7 +6070,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                     }>{inv.status}</Badge>
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    {inv.currency} {inv.network} · {Number(inv.expectedAmount).toLocaleString('es-ES', {minimumFractionDigits: 2})} {inv.currency} · {inv.txHash ? inv.txHash.slice(0, 16) + '...' : 'sin hash'}
+                    {inv.currency} {inv.network} · {Number(inv.expectedAmount).toLocaleString('es-ES', {minimumFractionDigits: 2, maximumFractionDigits: 4})} {inv.currency} · {inv.txHash ? inv.txHash.slice(0, 16) + '...' : 'sin hash'}
                   </div>
                   {inv.txHash && (
                     <a

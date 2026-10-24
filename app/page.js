@@ -4030,6 +4030,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
   const [invoiceSubmitMessages, setInvoiceSubmitMessages] = useState({});
   const [receiptConfirmLoading, setReceiptConfirmLoading] = useState({});
   const [receiptConfirmMessages, setReceiptConfirmMessages] = useState({});
+  const [referenceDrafts, setReferenceDrafts] = useState({});
+  const [referenceEditing, setReferenceEditing] = useState({});
+  const [referenceSubmitting, setReferenceSubmitting] = useState({});
+  const [referenceMessages, setReferenceMessages] = useState({});
 
 
   useEffect(() => {
@@ -4062,6 +4066,79 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 
     return () => { cancelled = true; };
   }, [token]);
+
+  const submitOrderPaymentReference = async (order, event) => {
+    event.preventDefault();
+
+    const orderId = order?.id;
+    const reference = String(
+      referenceDrafts[orderId] ?? order?.buyerTransactionReference ?? ''
+    ).trim();
+
+    if (!orderId) {
+      toast.error('No se pudo identificar el pedido.');
+      return;
+    }
+
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(reference)) {
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: 'Introduce una referencia de 4 a 100 letras, números, guiones o guiones bajos.'
+      }));
+      return;
+    }
+
+    if (!token) {
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: 'Inicia sesión para registrar la referencia.'
+      }));
+      return;
+    }
+
+    setReferenceSubmitting((prev) => ({ ...prev, [orderId]: true }));
+    setReferenceMessages((prev) => ({ ...prev, [orderId]: '' }));
+
+    try {
+      const result = await api(
+        `/orders/${encodeURIComponent(orderId)}/submit-payment-reference`,
+        {
+          method: 'POST',
+          body: { transactionReference: reference },
+          token,
+        }
+      );
+
+      const isPaid = ['paid', 'auto_approved'].includes(result.status);
+
+      setOrders((prev) => prev.map((item) =>
+        item.id === orderId
+          ? {
+              ...item,
+              buyerTransactionReference: reference,
+              ...(isPaid ? { paymentStatus: 'paid', status: 'paid' } : {}),
+            }
+          : item
+      ));
+
+      setReferenceDrafts((prev) => ({ ...prev, [orderId]: reference }));
+      setReferenceEditing((prev) => ({ ...prev, [orderId]: false }));
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: result.message ||
+          (isPaid
+            ? 'Pago confirmado.'
+            : 'Referencia guardada. El pago sigue pendiente de verificación.')
+      }));
+    } catch (error) {
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: error?.message || 'No se pudo guardar la referencia.'
+      }));
+    } finally {
+      setReferenceSubmitting((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
 
   const loadInvoice = async (order) => {
     if (openInvoiceId === order.id) {
@@ -4335,6 +4412,125 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     <p className="text-sm">
                       Estado del pago: <strong>{order.paymentStatus || 'Pendiente'}</strong>
                     </p>
+
+                    {['transfermovil', 'enzona'].includes(order.paymentMethod) &&
+                     String(order.currency || '').toUpperCase() === 'CUP' &&
+                     order.paymentStatus === 'pending_payment' && (
+                      <div className="mt-3 rounded-lg border p-3 space-y-3">
+                        <h4 className="font-semibold">Referencia de transferencia</h4>
+
+                        {order.buyerTransactionReference && !referenceEditing[order.id] ? (
+                          <div className="space-y-2">
+                            <p className="text-sm">Referencia registrada:</p>
+                            <p className="font-mono text-sm break-all rounded-md bg-muted p-2">
+                              {order.buyerTransactionReference}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              disabled={!!referenceSubmitting[order.id]}
+                              onClick={() => {
+                                setReferenceDrafts((prev) => ({
+                                  ...prev,
+                                  [order.id]: order.buyerTransactionReference || ''
+                                }));
+                                setReferenceEditing((prev) => ({
+                                  ...prev,
+                                  [order.id]: true
+                                }));
+                                setReferenceMessages((prev) => ({
+                                  ...prev,
+                                  [order.id]: ''
+                                }));
+                              }}
+                            >
+                              ✏️ Corregir número de transacción
+                            </Button>
+                          </div>
+                        ) : (
+                          <form
+                            onSubmit={(event) => submitOrderPaymentReference(order, event)}
+                            className="space-y-3"
+                          >
+                            <label
+                              htmlFor={`order-reference-${order.id}`}
+                              className="block text-sm font-medium"
+                            >
+                              {order.buyerTransactionReference
+                                ? 'Introduce la referencia correcta'
+                                : 'Introduce la referencia real de la transferencia'}
+                            </label>
+                            <Input
+                              id={`order-reference-${order.id}`}
+                              value={
+                                referenceDrafts[order.id] ??
+                                order.buyerTransactionReference ??
+                                ''
+                              }
+                              onChange={(event) => setReferenceDrafts((prev) => ({
+                                ...prev,
+                                [order.id]: event.target.value
+                              }))}
+                              maxLength={100}
+                              autoComplete="off"
+                              spellCheck={false}
+                              placeholder="Número de transacción del comprobante"
+                              disabled={!!referenceSubmitting[order.id]}
+                              required
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              No introduzcas el número del pedido. El pago solo se confirmará si el sistema verifica una coincidencia válida.
+                            </p>
+                            <Button
+                              type="submit"
+                              disabled={
+                                !!referenceSubmitting[order.id] ||
+                                !String(
+                                  referenceDrafts[order.id] ??
+                                  order.buyerTransactionReference ??
+                                  ''
+                                ).trim()
+                              }
+                            >
+                              {referenceSubmitting[order.id]
+                                ? 'Comprobando…'
+                                : order.buyerTransactionReference
+                                  ? 'Guardar corrección'
+                                  : 'Registrar referencia'}
+                            </Button>
+                            {order.buyerTransactionReference && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                disabled={!!referenceSubmitting[order.id]}
+                                onClick={() => {
+                                  setReferenceDrafts((prev) => ({
+                                    ...prev,
+                                    [order.id]: order.buyerTransactionReference || ''
+                                  }));
+                                  setReferenceEditing((prev) => ({
+                                    ...prev,
+                                    [order.id]: false
+                                  }));
+                                  setReferenceMessages((prev) => ({
+                                    ...prev,
+                                    [order.id]: ''
+                                  }));
+                                }}
+                              >
+                                Cancelar
+                              </Button>
+                            )}
+                          </form>
+                        )}
+
+                        {referenceMessages[order.id] && (
+                          <p className="text-sm break-words" role="status">
+                            {referenceMessages[order.id]}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="md:text-right">
                     <div className="text-xl font-bold">

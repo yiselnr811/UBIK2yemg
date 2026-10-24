@@ -3365,8 +3365,15 @@ return json({ payments: out });
       // el importe visible del mismo valor entero usado para verificar la cadena.
       // Convertir a unidades enteras sin multiplicaciones imprecisas.
       // El importe de origen ya puede tener precisión limitada por Number.
-      const amountDecimal = amountInCrypto.toFixed(networkConfig.decimals);
+      const amountDecimal = orderCurrency === 'CUP'
+        ? amountInCrypto.toFixed(4)
+        : amountInCrypto.toFixed(networkConfig.decimals);
       const expectedAmountRaw = parseUnits(amountDecimal, networkConfig.decimals).toString();
+
+      if (BigInt(expectedAmountRaw) <= 0n) {
+        return json({ error: 'El importe convertido es demasiado pequeño para pagarlo con criptomonedas.' }, 400);
+      }
+
       const expectedAmount = Number(formatUnits(BigInt(expectedAmountRaw), networkConfig.decimals));
 
       const expiresAt = new Date();
@@ -3380,6 +3387,7 @@ return json({ payments: out });
       invoice = {
         id: uuidv4(),
         orderId: order.id,
+        originalOrderCurrency: orderCurrency,
         buyerId: user.id,
         businessId: order.businessId,
         commissionRateBps,

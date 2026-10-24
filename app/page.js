@@ -7240,11 +7240,18 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
     const padded = raw.padStart(decimals + 1, '0');
     const integerPart = decimals > 0 ? padded.slice(0, -decimals) : padded;
     let fractionalPart = decimals > 0
-      ? padded.slice(-decimals).replace(/0+$/, '')
+      ? padded.slice(-decimals)
       : '';
 
-    if (fractionalPart.length < 2) {
-      fractionalPart = fractionalPart.padEnd(2, '0');
+    if (String(invoice.originalOrderCurrency || '').toUpperCase() === 'CUP') {
+      // Los pedidos CUP convertidos a cripto se generan con 4 decimales.
+      fractionalPart = fractionalPart.slice(0, 4).padEnd(4, '0');
+    } else {
+      // Monedas distintas de CUP y facturas antiguas: formato anterior.
+      fractionalPart = fractionalPart.replace(/0+$/, '');
+      if (fractionalPart.length < 2) {
+        fractionalPart = fractionalPart.padEnd(2, '0');
+      }
     }
 
     const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -7327,7 +7334,7 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
               </div>
               <div>
                 <p className="text-muted-foreground">En unidades mínimas</p>
-                <p className="font-mono text-xs break-all">{invoice.expectedAmountRaw}</p>
+                <p className="font-mono text-xs break-all [overflow-wrap:anywhere] leading-relaxed">{invoice.expectedAmountRaw}</p>
               </div>
             </div>
           </div>

@@ -2073,6 +2073,7 @@ const App = () => {
           <ManualPaymentCheckout
             order={checkoutOrder}
             token={token}
+            usdRate={settings?.usdRate}
             onOrderUpdate={setCheckoutOrder}
             onCancel={cancelCheckout}
             onBack={() => setView('home')}
@@ -7252,9 +7253,36 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
   );
 };
 
-const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }) => {
+const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack, usdRate: currentUsdRate }) => {
   const method = order?.paymentMethod;
   const details = order?.paymentDetails || {};
+
+  // Priorizar el importe CUP calculado por el servidor.
+  // Compatibilidad con pedidos antiguos que no guardaron ese campo.
+  const savedLocalAmount = Number(order?.localPaymentAmountCUP);
+  const orderCurrency = String(order?.currency || 'CUP').toUpperCase();
+  const originalSubtotal = Number(order?.subtotal);
+  const deliveryFeeCUP = Number(order?.deliveryFeeCUP ?? 0);
+  const conversionRate = Number(order?.deliveryFeeUsdRate ?? currentUsdRate);
+
+  const derivedLocalAmountCUP = orderCurrency === 'CUP'
+    ? (Number.isFinite(Number(order?.total)) && Number(order.total) > 0
+        ? Number(order.total)
+        : null)
+    : ['USD', 'USDT', 'USDC'].includes(orderCurrency) &&
+      Number.isFinite(originalSubtotal) &&
+      originalSubtotal > 0 &&
+      Number.isFinite(conversionRate) &&
+      conversionRate > 0 &&
+      Number.isFinite(deliveryFeeCUP) &&
+      deliveryFeeCUP >= 0
+        ? Math.round((originalSubtotal * conversionRate + deliveryFeeCUP + Number.EPSILON) * 100) / 100
+        : null;
+
+  const localPaymentAmountCUP =
+    Number.isFinite(savedLocalAmount) && savedLocalAmount > 0
+      ? savedLocalAmount
+      : derivedLocalAmountCUP;
   const [transactionReference, setTransactionReference] = useState(
     order?.buyerTransactionReference || ''
   );
@@ -7342,15 +7370,22 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
           </div>
           <div className="space-y-2 rounded-lg border p-4">
             <p className="text-sm text-muted-foreground">
-              {Number.isFinite(Number(order.localPaymentAmountCUP)) && Number(order.localPaymentAmountCUP) > 0
+              {localPaymentAmountCUP != null
                 ? 'Importe exacto a transferir (CUP)'
-                : 'Importe del pedido'}
+                : 'Importe no disponible'}
             </p>
-            <p className="text-2xl font-bold">
-              {formatTotal(order.localPaymentAmountCUP ?? order.total, order.localPaymentAmountCUP != null ? 'CUP' : order.currency)}
-            </p>
-            {order.localPaymentAmountCUP != null &&
-              String(order.currency || '').toUpperCase() !== 'CUP' && (
+            {localPaymentAmountCUP != null ? (
+              <p className="text-2xl font-bold">
+                {formatTotal(localPaymentAmountCUP, 'CUP')}
+              </p>
+            ) : (
+              <p className="text-sm font-semibold text-red-600">
+                No se puede calcular el importe en CUP de forma segura.
+                No realices la transferencia. Vuelve atrás e intenta crear el pedido nuevamente.
+              </p>
+            )}
+            {localPaymentAmountCUP != null &&
+              orderCurrency !== 'CUP' && (
                 <p className="text-sm text-muted-foreground">
                   Importe original del pedido: {formatTotal(order.total, order.currency)}
                 </p>

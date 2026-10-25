@@ -2642,13 +2642,33 @@ async function route(request, method, path) {
 
 
       if ('deliveryEnabled' in body) {
-        if (typeof body.deliveryEnabled !== 'boolean') {
-          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+        if (user.role !== 'admin') {
+          return json({ error: 'Solo un administrador puede autorizar o revocar las entregas.' }, 403);
         }
-        if (body.deliveryEnabled && user.role !== 'admin' && user.plan !== 'premium') {
-          return json({ error: 'Se requiere un plan Premium para activar las entregas' }, 403);
+        if (typeof body.deliveryEnabled !== 'boolean') {
+          return json({ error: 'El estado de entregas debe ser verdadero o falso.' }, 400);
+        }
+        if (body.deliveryEnabled && business.verified !== true) {
+          return json({ error: 'Solo se pueden habilitar entregas para negocios verificados.' }, 400);
         }
         update.deliveryEnabled = body.deliveryEnabled;
+      }
+
+      if ('deliveryFeeCUP' in body) {
+        if (business.deliveryEnabled !== true && user.role !== 'admin') {
+          return json({ error: 'El administrador debe habilitar las entregas antes de configurar la tarifa.' }, 403);
+        }
+        if (
+          typeof body.deliveryFeeCUP !== 'number' ||
+          !Number.isFinite(body.deliveryFeeCUP) ||
+          body.deliveryFeeCUP < 0 ||
+          body.deliveryFeeCUP > 1000000
+        ) {
+          return json({ error: 'La tarifa debe ser un número entre 0 y 1000000 CUP.' }, 400);
+        }
+        update.deliveryFeeCUP = Math.round(
+          (body.deliveryFeeCUP + Number.EPSILON) * 100
+        ) / 100;
       }
 
       // Validation: if hiding contacts, require physical presence info
@@ -3286,34 +3306,83 @@ return json({ payments: out });
       return json({ error: 'Método de pago no válido.' }, 400);
     }
 
-    // Enforce delivery eligibility on the server, never trust the client.
-    if (deliveryMethod === 'delivery' && (user.plan !== 'premium' || business?.deliveryEnabled !== true)) {
-      return json({ error: 'La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.' }, 403);
+    // Validar modalidad y elegibilidad exclusivamente en el servidor.
+    if (!['pickup', 'delivery'].includes(deliveryMethod)) {
+      return json({ error: 'Método de entrega no válido.' }, 400);
     }
+
+    if (
+      deliveryMethod === 'delivery' &&
+      (user.plan !== 'premium' || business?.deliveryEnabled !== true)
+    ) {
+      return json({
+        error: 'La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.'
+      }, 403);
+    }
+
     const finalShippingAddress = deliveryMethod === 'pickup'
       ? `Recogida en el negocio: ${String(business?.name || 'negocio')}`.slice(0, 500)
       : shippingAddress;
 
-    let localPaymentAmountCUP = null;
-    if (paymentMethod === 'transfermovil' || paymentMethod === 'enzona') {
-      const settings = await getSettings(db);
-      const configuredRate = Number(settings.usdRate);
-      const usdRate = Number.isFinite(configuredRate) && configuredRate > 0
-        ? configuredRate
-        : 120;
-      const orderCurrency = String(currency || 'CUP').toUpperCase();
+    const roundMoney = (value) =>
+      Math.round((value + Number.EPSILON) * 100) / 100;
 
-      if (orderCurrency === 'CUP') {
-        localPaymentAmountCUP = Number(subtotal);
-      } else if (['USD', 'USDT', 'USDC'].includes(orderCurrency)) {
-        localPaymentAmountCUP = Number(subtotal) * usdRate;
-      } else {
+    const settings = await getSettings(db);
+    const configuredRate = Number(settings.usdRate);
+    const usdRate = Number.isFinite(configuredRate) && configuredRate > 0
+      ? configuredRate
+      : 120;
+
+    const orderCurrency = String(currency || 'CUP').toUpperCase();
+    const orderSubtotal = roundMoney(Number(subtotal));
+
+    if (!Number.isFinite(orderSubtotal) || orderSubtotal <= 0) {
+      return json({ error: 'El subtotal del pedido no es válido.' }, 400);
+    }
+
+    let deliveryFeeCUP = 0;
+    let deliveryFee = 0;
+
+    if (deliveryMethod === 'delivery') {
+      deliveryFeeCUP = Number(business.deliveryFeeCUP ?? 0);
+
+      if (
+        !Number.isFinite(deliveryFeeCUP) ||
+        deliveryFeeCUP < 0 ||
+        deliveryFeeCUP > 1000000
+      ) {
+        return json({ error: 'La tarifa configurada por el negocio no es válida.' }, 400);
+      }
+
+      if (!['CUP', 'USD', 'USDT', 'USDC'].includes(orderCurrency)) {
         return json({
-          error: `No hay una conversión configurada de ${orderCurrency} a CUP para pagos locales.`,
+          error: `No hay una conversión configurada para la tarifa de entrega en ${orderCurrency}.`
         }, 400);
       }
 
-      localPaymentAmountCUP = Math.round((localPaymentAmountCUP + Number.EPSILON) * 100) / 100;
+      deliveryFee = orderCurrency === 'CUP'
+        ? deliveryFeeCUP
+        : deliveryFeeCUP / usdRate;
+
+      deliveryFee = roundMoney(deliveryFee);
+    }
+
+    // Guardar el importe calculado por el servidor; nunca aceptar la tarifa del cliente.
+    const total = roundMoney(orderSubtotal + deliveryFee);
+
+    let localPaymentAmountCUP = null;
+
+    if (paymentMethod === 'transfermovil' || paymentMethod === 'enzona') {
+      if (orderCurrency === 'CUP') {
+        localPaymentAmountCUP = total;
+      } else if (['USD', 'USDT', 'USDC'].includes(orderCurrency)) {
+        localPaymentAmountCUP = roundMoney(total * usdRate);
+      } else {
+        return json({
+          error: `No hay una conversión configurada de ${orderCurrency} a CUP para pagos locales.`
+        }, 400);
+      }
+
       if (!Number.isFinite(localPaymentAmountCUP) || localPaymentAmountCUP <= 0) {
         return json({ error: 'No se pudo calcular un importe válido en CUP.' }, 400);
       }
@@ -3329,8 +3398,12 @@ return json({ payments: out });
       businessId,
       businessName: business?.name || '',
       items: orderItems,
-      subtotal,
-      total: subtotal, // conservar el importe y moneda originales
+      subtotal: orderSubtotal,
+      total,
+      deliveryFeeCUP,
+      deliveryFee,
+      deliveryFeeCurrency: currency,
+      deliveryFeeUsdRate: usdRate,
       currency,
       ...(localPaymentAmountCUP !== null ? { localPaymentAmountCUP } : {}),
       paymentMethod,
@@ -3374,9 +3447,12 @@ return json({ payments: out });
 
       // Convertir según la moneda original del pedido.
       // usdRate representa CUP por 1 USD; USD, USDT y USDC usan paridad 1:1.
+      const configuredOrderRate = Number(order.deliveryFeeUsdRate);
       const settings = await getSettings(db);
       const configuredUsdRate = Number(settings.usdRate);
-      const usdRate = Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120;
+      const usdRate = Number.isFinite(configuredOrderRate) && configuredOrderRate > 0
+        ? configuredOrderRate
+        : (Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120);
       const orderCurrency = String(order.currency || 'CUP').toUpperCase();
       let amountInCrypto;
 
@@ -4781,6 +4857,16 @@ function sanitizeBuyerOrder(order) {
     drawLine('Negocio: ' + String(order.businessName || 'No indicado').slice(0, 120));
     drawLine('Fecha: ' + (order.createdAt || 'No indicada'));
     drawLine('Método de entrega: ' + String(order.deliveryMethod || 'No indicado'));
+    const invoiceCurrency = String(order.currency || 'CUP').toUpperCase();
+    const invoiceSubtotal = Number(order.subtotal ?? order.total ?? 0) || 0;
+    const invoiceDeliveryFee = Number(order.deliveryFee ?? 0) || 0;
+    const invoiceDeliveryFeeCUP = Number(order.deliveryFeeCUP ?? 0) || 0;
+
+    drawLine('Subtotal de productos: ' + invoiceSubtotal.toFixed(2) + ' ' + invoiceCurrency);
+    drawLine('Tarifa de entrega: ' + invoiceDeliveryFee.toFixed(2) + ' ' + invoiceCurrency);
+    if (invoiceCurrency !== 'CUP' && invoiceDeliveryFeeCUP > 0) {
+      drawLine('Equivalente de la entrega: ' + invoiceDeliveryFeeCUP.toFixed(2) + ' CUP');
+    }
     drawLine('DATOS DEL DESTINATARIO', { size: 12, bold: true, gap: 23 });
     drawLine('Nombre: ' + String(order.shipping?.name || 'No indicado'));
     drawLine('Teléfono: ' + String(order.shipping?.phone || 'No indicado'));
@@ -5698,16 +5784,24 @@ function sanitizeBuyerOrder(order) {
 
       if ('verified' in body) {
         if (typeof body.verified !== 'boolean') {
-          return json({ error: 'El estado de verificación debe ser verdadero o falso' }, 400);
+          return json({ error: 'El estado de verificación debe ser verdadero o falso.' }, 400);
         }
         update.verified = body.verified;
         update.verifiedAt = body.verified ? new Date().toISOString() : null;
         update.verifiedBy = body.verified ? user.id : null;
+
+        if (!body.verified) {
+          update.deliveryEnabled = false;
+        }
       }
 
       if ('deliveryEnabled' in body) {
         if (typeof body.deliveryEnabled !== 'boolean') {
-          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+          return json({ error: 'El estado de entregas debe ser verdadero o falso.' }, 400);
+        }
+        const effectiveVerified = update.verified ?? (existing.verified === true);
+        if (body.deliveryEnabled && !effectiveVerified) {
+          return json({ error: 'Primero debes verificar el negocio para autorizar las entregas.' }, 400);
         }
         update.deliveryEnabled = body.deliveryEnabled;
       }

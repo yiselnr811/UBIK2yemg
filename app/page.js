@@ -2252,6 +2252,32 @@ const App = () => {
               </div>
 
               <div className="space-y-1">
+                {(() => {
+                  const items = cryptoPendingCheckout?.items || [];
+                  if (!items.length) return null;
+                  const currency = String(items[0]?.product?.currency || 'CUP').toUpperCase();
+                  const roundMoney = (value) =>
+                    Math.round((value + Number.EPSILON) * 100) / 100;
+                  const subtotal = roundMoney(items.reduce(
+                    (sum, item) => sum + (Number(item.product?.price) || 0) * (Number(item.quantity) || 0),
+                    0
+                  ));
+                  const rateValue = Number(settings?.usdRate);
+                  const rate = Number.isFinite(rateValue) && rateValue > 0 ? rateValue : 120;
+                  const feeCUP = deliveryMethod === 'delivery'
+                    ? Number(checkoutBusiness?.deliveryFeeCUP ?? 0)
+                    : 0;
+                  const fee = currency === 'CUP' ? roundMoney(feeCUP)
+                    : ['USD', 'USDT', 'USDC'].includes(currency) ? roundMoney(feeCUP / rate) : null;
+                  return (
+                    <div className="mb-3 space-y-1 rounded-lg border bg-muted/40 p-3 text-sm" aria-live="polite">
+                      <p>Subtotal: <strong>{subtotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</strong></p>
+                      <p>{deliveryMethod === 'delivery' ? 'Tarifa de entrega' : 'Entrega'}: <strong>{fee === null ? 'Conversión no disponible' : `${fee.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</strong></p>
+                      <p className="font-bold">Total estimado: {fee === null ? 'No disponible' : `${roundMoney(subtotal + fee).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</p>
+                      <p className="text-xs text-muted-foreground">El servidor calcula y confirma el total definitivo.</p>
+                    </div>
+                  );
+                })()}
                 <Label htmlFor="crypto-recipient-id">ID del destinatario</Label>
                 <Input id="crypto-recipient-id" autoComplete="off" maxLength={50}
                   value={cryptoRecipientData.recipientId}
@@ -2360,21 +2386,30 @@ const App = () => {
               const items = cryptoPendingCheckout?.items || [];
               if (!items.length) return null;
 
-              const total = items.reduce(
+              const roundMoney = (value) =>
+                Math.round((value + Number.EPSILON) * 100) / 100;
+              const subtotal = roundMoney(items.reduce(
                 (sum, item) => sum + (Number(item.product?.price) || 0) * (Number(item.quantity) || 0),
                 0
-              );
+              ));
               const orderCurrency = String(items[0]?.product?.currency || 'CUP').toUpperCase();
               const configuredRate = Number(settings?.usdRate);
               const usdRate = Number.isFinite(configuredRate) && configuredRate > 0
                 ? configuredRate
                 : 120;
+              const feeCUP = deliveryMethod === 'delivery'
+                ? Number(checkoutBusiness?.deliveryFeeCUP ?? 0)
+                : 0;
+              const fee = deliveryMethod !== 'delivery' ? 0
+                : orderCurrency === 'CUP' ? roundMoney(feeCUP)
+                : ['USD', 'USDT', 'USDC'].includes(orderCurrency) ? roundMoney(feeCUP / usdRate)
+                : null;
+              const total = fee === null ? subtotal : roundMoney(subtotal + fee);
 
-              const amount = orderCurrency === 'CUP'
-                ? total / usdRate
-                : ['USD', 'USDT', 'USDC'].includes(orderCurrency)
-                  ? total
-                  : null;
+              const amount = fee === null ? null
+                : orderCurrency === 'CUP' ? total / usdRate
+                : ['USD', 'USDT', 'USDC'].includes(orderCurrency) ? total
+                : null;
 
               const selected = cryptoConfig?.enabled?.find(
                 (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
@@ -4949,6 +4984,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [walletMessage, setWalletMessage] = React.useState('');
   const [businessDescription, setBusinessDescription] = React.useState(business?.description || '');
   const [businessLocation, setBusinessLocation] = React.useState(business?.location || '');
+  const [businessDeliveryFeeCUP, setBusinessDeliveryFeeCUP] = React.useState(String(business?.deliveryFeeCUP ?? 0));
   const [transfermovilEnabled, setTransfermovilEnabled] = React.useState(business?.transfermovilEnabled === true);
   const [transfermovilNumber, setTransfermovilNumber] = React.useState(business?.transfermovilNumber || '');
   const [transfermovilName, setTransfermovilName] = React.useState(business?.transfermovilName || '');
@@ -5004,6 +5040,10 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       }
     }
   }, [business?.id]);
+
+  React.useEffect(() => {
+    setBusinessDeliveryFeeCUP(String(business?.deliveryFeeCUP ?? 0));
+  }, [business?.id, business?.deliveryFeeCUP, business?.deliveryEnabled]);
 
   const saveSectionPreferences = (next) => {
     if (!business?.id || typeof window === 'undefined') return;
@@ -5109,6 +5149,16 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
   const saveBusinessProfile = async () => {
     if (!business?.id || businessSaving) return;
+
+    const fee = Number(businessDeliveryFeeCUP);
+    if (
+      business?.deliveryEnabled === true &&
+      (!Number.isFinite(fee) || fee < 0 || fee > 1000000)
+    ) {
+      setBusinessMessage('La tarifa debe estar entre 0 y 1000000 CUP.');
+      return;
+    }
+
     setBusinessSaving(true);
     setBusinessMessage('');
     try {
@@ -5117,11 +5167,14 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         token,
         body: {
           description: businessDescription,
-          location: businessLocation
+          location: businessLocation,
+          ...(business?.deliveryEnabled === true
+            ? { deliveryFeeCUP: Math.round((fee + Number.EPSILON) * 100) / 100 }
+            : {})
         }
       });
       if (result?.error) throw new Error(result.error);
-      setBusinessMessage('Descripción y ubicación guardadas correctamente.');
+      setBusinessMessage(business?.deliveryEnabled === true ? 'Información y tarifa guardadas correctamente.' : 'Descripción y ubicación guardadas correctamente.');
       toast.success('Información del negocio actualizada');
     } catch (error) {
       setBusinessMessage(error?.message || 'No se pudo guardar la información.');
@@ -5339,6 +5392,24 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         placeholder="La Habana, Cuba"
       />
     </label>
+    {business?.deliveryEnabled === true && (
+      <label className="block text-sm font-medium">
+        Tarifa de entrega a domicilio (CUP)
+        <input
+          type="number"
+          min="0"
+          max="1000000"
+          step="0.01"
+          inputMode="decimal"
+          value={businessDeliveryFeeCUP}
+          onChange={(event) => setBusinessDeliveryFeeCUP(event.target.value)}
+          className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+        />
+        <span className="mt-1 block text-xs text-muted-foreground">
+          Define el coste de entrega. La opción debe estar habilitada por el administrador.
+        </span>
+      </label>
+    )}
   </div>
   <div className="mt-3 flex flex-wrap items-center gap-3">
     <button
@@ -7851,7 +7922,7 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
               />
             </label>
             <p className="text-[11px] text-muted-foreground">
-              Activa las entregas para este negocio. El vendedor necesita un plan Premium.
+              Solo habilita entregas si el negocio está verificado. El vendedor configura su tarifa en CUP; el comprador necesita plan Premium.
             </p>
           </div>
 

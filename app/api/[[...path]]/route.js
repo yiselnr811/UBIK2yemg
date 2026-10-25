@@ -3376,7 +3376,11 @@ return json({ payments: out });
       if (orderCurrency === 'CUP') {
         localPaymentAmountCUP = total;
       } else if (['USD', 'USDT', 'USDC'].includes(orderCurrency)) {
-        localPaymentAmountCUP = roundMoney(total * usdRate);
+        // Convertir los productos directamente desde su subtotal original.
+        // Sumar el domicilio en CUP sin redondearlo previamente en USDT/USDC.
+        localPaymentAmountCUP = roundMoney(
+          orderSubtotal * usdRate + deliveryFeeCUP
+        );
       } else {
         return json({
           error: `No hay una conversión configurada de ${orderCurrency} a CUP para pagos locales.`

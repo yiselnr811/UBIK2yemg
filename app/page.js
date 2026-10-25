@@ -5147,6 +5147,48 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
     }
   };
 
+  const saveDeliveryFee = async () => {
+    if (!business?.id || businessSaving) return;
+
+    if (business?.deliveryEnabled !== true) {
+      setBusinessMessage('El administrador debe habilitar las entregas primero.');
+      return;
+    }
+
+    const fee = Number(businessDeliveryFeeCUP);
+    if (
+      businessDeliveryFeeCUP.trim() === '' ||
+      !Number.isFinite(fee) ||
+      fee < 0 ||
+      fee > 1000000
+    ) {
+      setBusinessMessage('Introduce una tarifa válida entre 0 y 1000000 CUP.');
+      return;
+    }
+
+    setBusinessSaving(true);
+    setBusinessMessage('');
+
+    try {
+      const result = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: {
+          deliveryFeeCUP: Math.round((fee + Number.EPSILON) * 100) / 100
+        }
+      });
+
+      if (result?.error) throw new Error(result.error);
+
+      setBusinessMessage('Tarifa de entrega guardada correctamente.');
+      toast.success('Tarifa de entrega actualizada');
+    } catch (error) {
+      setBusinessMessage(error?.message || 'No se pudo guardar la tarifa.');
+    } finally {
+      setBusinessSaving(false);
+    }
+  };
+
   const saveBusinessProfile = async () => {
     if (!business?.id || businessSaving) return;
 
@@ -5392,23 +5434,41 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         placeholder="La Habana, Cuba"
       />
     </label>
-    {business?.deliveryEnabled === true && (
-      <label className="block text-sm font-medium">
-        Tarifa de entrega a domicilio (CUP)
-        <input
-          type="number"
-          min="0"
-          max="1000000"
-          step="0.01"
-          inputMode="decimal"
-          value={businessDeliveryFeeCUP}
-          onChange={(event) => setBusinessDeliveryFeeCUP(event.target.value)}
-          className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
-        />
-        <span className="mt-1 block text-xs text-muted-foreground">
-          Define el coste de entrega. La opción debe estar habilitada por el administrador.
-        </span>
-      </label>
+    {business?.deliveryEnabled === true ? (
+      <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+        <label className="block text-sm font-semibold">
+          Tarifa de entrega a domicilio (CUP)
+          <input
+            type="number"
+            min="0"
+            max="1000000"
+            step="0.01"
+            inputMode="decimal"
+            value={businessDeliveryFeeCUP}
+            onChange={(event) => setBusinessDeliveryFeeCUP(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-3 text-base"
+            aria-describedby="delivery-fee-help"
+          />
+        </label>
+        <p id="delivery-fee-help" className="text-xs text-gray-700">
+          Introduce el costo del domicilio en CUP. Puedes usar 0 si no cobras por la entrega.
+        </p>
+        <button
+          type="button"
+          onClick={saveDeliveryFee}
+          disabled={businessSaving}
+          className="w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white disabled:opacity-50"
+        >
+          {businessSaving ? 'Guardando tarifa…' : 'Guardar tarifa de entrega'}
+        </button>
+      </div>
+    ) : (
+      <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+        <strong>Entrega a domicilio no habilitada.</strong>
+        <p className="mt-1">
+          Solicita al administrador que autorice las entregas para tu negocio. Cuando estén habilitadas, podrás configurar aquí el costo en CUP.
+        </p>
+      </div>
     )}
   </div>
   <div className="mt-3 flex flex-wrap items-center gap-3">

@@ -1347,8 +1347,10 @@ async function route(request, method, path) {
             businessId: { $in: businessIds },
             paymentMethod: parsed.provider,
             paymentStatus: 'pending_payment',
-            currency: 'CUP',
-            total: amount,
+            $or: [
+              { currency: 'CUP', total: amount },
+              { localPaymentAmountCUP: amount },
+            ],
             buyerTransactionReference: parsed.transactionReference,
             createdAt: { $gte: cutoff },
           }).limit(2).toArray();
@@ -1377,8 +1379,10 @@ async function route(request, method, path) {
                   businessId: candidate.businessId,
                   paymentMethod: parsed.provider,
                   paymentStatus: 'pending_payment',
-                  currency: 'CUP',
-                  total: amount,
+                  $or: [
+                    { currency: 'CUP', total: amount },
+                    { localPaymentAmountCUP: amount },
+                  ],
                   buyerTransactionReference: parsed.transactionReference,
                   createdAt: { $gte: cutoff },
                 },
@@ -3290,6 +3294,31 @@ return json({ payments: out });
       ? `Recogida en el negocio: ${String(business?.name || 'negocio')}`.slice(0, 500)
       : shippingAddress;
 
+    let localPaymentAmountCUP = null;
+    if (paymentMethod === 'transfermovil' || paymentMethod === 'enzona') {
+      const settings = await getSettings(db);
+      const configuredRate = Number(settings.usdRate);
+      const usdRate = Number.isFinite(configuredRate) && configuredRate > 0
+        ? configuredRate
+        : 120;
+      const orderCurrency = String(currency || 'CUP').toUpperCase();
+
+      if (orderCurrency === 'CUP') {
+        localPaymentAmountCUP = Number(subtotal);
+      } else if (['USD', 'USDT', 'USDC'].includes(orderCurrency)) {
+        localPaymentAmountCUP = Number(subtotal) * usdRate;
+      } else {
+        return json({
+          error: `No hay una conversión configurada de ${orderCurrency} a CUP para pagos locales.`,
+        }, 400);
+      }
+
+      localPaymentAmountCUP = Math.round((localPaymentAmountCUP + Number.EPSILON) * 100) / 100;
+      if (!Number.isFinite(localPaymentAmountCUP) || localPaymentAmountCUP <= 0) {
+        return json({ error: 'No se pudo calcular un importe válido en CUP.' }, 400);
+      }
+    }
+
     const now = new Date().toISOString();
     const orderId = uuidv4();
     const order = {
@@ -3301,8 +3330,9 @@ return json({ payments: out });
       businessName: business?.name || '',
       items: orderItems,
       subtotal,
-      total: subtotal, // no tax/shipping for now
+      total: subtotal, // conservar el importe y moneda originales
       currency,
+      ...(localPaymentAmountCUP !== null ? { localPaymentAmountCUP } : {}),
       paymentMethod,
       paymentDetails,
       deliveryMethod,
@@ -4243,8 +4273,17 @@ function sanitizeBuyerOrder(order) {
       return json({ error: 'El pedido ya no está pendiente de pago.' }, 409);
     }
 
-    if (String(order.currency || '').toUpperCase() !== 'CUP') {
-      return json({ error: 'La verificación por SMS solo admite pedidos en CUP.' }, 409);
+    const hasValidLocalAmount =
+      Number.isFinite(Number(order.localPaymentAmountCUP)) &&
+      Number(order.localPaymentAmountCUP) > 0;
+
+    if (
+      String(order.currency || '').toUpperCase() !== 'CUP' &&
+      !hasValidLocalAmount
+    ) {
+      return json({
+        error: 'El pedido no tiene un importe CUP válido para la verificación por SMS.',
+      }, 409);
     }
 
 
@@ -4336,11 +4375,15 @@ function sanitizeBuyerOrder(order) {
         buyerId: user.id,
       });
 
+      const expectedConfirmedAmount = Number(
+        latestOrder?.localPaymentAmountCUP ?? latestOrder?.total
+      );
       const confirmedAmountMatches =
         Number.isFinite(Number(latestOrder?.paymentRef?.amount)) &&
-        Number.isFinite(Number(latestOrder?.total)) &&
+        Number.isFinite(expectedConfirmedAmount) &&
+        expectedConfirmedAmount > 0 &&
         Math.round(Number(latestOrder.paymentRef.amount) * 100) ===
-          Math.round(Number(latestOrder.total) * 100);
+          Math.round(expectedConfirmedAmount * 100);
 
       if (
         latestOrder?.paymentStatus === 'paid' &&
@@ -4376,10 +4419,12 @@ function sanitizeBuyerOrder(order) {
       });
     }
 
+    const expectedLocalAmount = Number(order.localPaymentAmountCUP ?? order.total);
     const sameAmount =
-      Number.isFinite(Number(order.total)) &&
+      Number.isFinite(expectedLocalAmount) &&
+      expectedLocalAmount > 0 &&
       Number.isFinite(Number(event.amount)) &&
-      Math.round(Number(order.total) * 100) ===
+      Math.round(expectedLocalAmount * 100) ===
         Math.round(Number(event.amount) * 100);
 
     const createdMs = Date.parse(order.createdAt);
@@ -4430,8 +4475,10 @@ function sanitizeBuyerOrder(order) {
         buyerId: user.id,
         paymentStatus: 'pending_payment',
         paymentMethod: order.paymentMethod,
-        currency: 'CUP',
-        total: order.total,
+        $or: [
+          { currency: 'CUP', total: order.total },
+          { localPaymentAmountCUP: expectedLocalAmount },
+        ],
         buyerTransactionReference: reference,
       },
       {

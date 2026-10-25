@@ -1995,7 +1995,7 @@ const App = () => {
             featured={featured} products={products} loading={loading}
             topBusinesses={topBusinesses}
             filters={filters} setFilters={setFilters}
-            onProduct={openProduct} onBusiness={openBusiness}
+            onProduct={openProduct} onBusiness={openBusiness} onAddToCart={addToCart} usdRate={settings?.usdRate}
             favorites={favorites} toggleFav={toggleFav}
             onShare={shareProduct} onReport={openReport}
             onCTA={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); } }}
@@ -2041,16 +2041,16 @@ const App = () => {
             token={token} isLogged={!!user}
             onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
             onShareBusiness={shareBusiness} onShareProduct={shareProduct}
-            onReport={openReport}
+            onReport={openReport} onAddToCart={addToCart} usdRate={settings?.usdRate}
           />
         )}
 
-        {view === 'cart' && <CartView t={t} lang={lang} items={cart} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
+        {view === 'cart' && <CartView t={t} lang={lang} items={cart} usdRate={settings?.usdRate} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
 
         {view === 'favorites' && (
           <FavoritesView
             t={t} favorites={favorites} onProduct={openProduct} toggleFav={toggleFav}
-            onShare={shareProduct} onReport={openReport}
+            onShare={shareProduct} onReport={openReport} onAddToCart={addToCart} usdRate={settings?.usdRate}
           />
         )}
 
@@ -3123,7 +3123,7 @@ function PublicInvoiceScanner({ token, user, business, onLoginNeeded }) {
   );
 }
 
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onSearch, onPublish, onRegister, isLogged, token, user, business, onLoginNeeded, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onSearch, onPublish, onRegister, isLogged, token, user, business, onLoginNeeded, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites, onAddToCart, usdRate }) => {
   const [showFeaturedProducts, setShowFeaturedProducts] = React.useState(true);
   const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
@@ -3285,7 +3285,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 {showFeaturedProducts && (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
             {featured.map((p) => (
-              <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+              <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} onAddToCart={onAddToCart} usdRate={usdRate} />
             ))}
           </div>
           )}
@@ -3391,7 +3391,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
               {products.map((p) => (
-                <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+                <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} onAddToCart={onAddToCart} usdRate={usdRate} />
               ))}
             </div>
             {hasMore && (
@@ -3464,7 +3464,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
 };
 
 // ============ PRODUCT CARD ============
-const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight }) => {
+const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, onAddToCart, usdRate }) => {
   const contactsHidden = p.contactsHidden === true || p.showPublicContact === false || p.business?.contactsHidden === true;
   const { waLink, tgLink, smsLink } = contactsHidden ? {} : buildContactLinks(p);
 
@@ -3508,6 +3508,11 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
 
       <CardContent className="p-3">
         <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none">{formatPrice(p.price, p.currency)}</div>
+        {['USD', 'USDT', 'USDC'].includes(String(p.currency || '').toUpperCase()) && Number(p.price) > 0 && Number(usdRate) > 0 && (
+          <div className="text-xs font-semibold text-muted-foreground mt-1">
+            ≈ {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number((Number(p.price) * Number(usdRate)).toPrecision(2)))} CUP
+          </div>
+        )}
         <div className="text-sm font-medium mt-1.5 line-clamp-2 leading-tight min-h-[2.5rem]">{p.name}</div>
         <div className="flex items-center justify-between mt-1 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-0.5 truncate">
@@ -3518,6 +3523,15 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
             <Clock className="h-3 w-3" /> {timeAgo(p.createdAt)}
           </span>
         </div>
+        <button
+          type="button"
+          disabled={!(Number(p.stock) > 0)}
+          onClick={(e) => { e.stopPropagation(); onAddToCart?.(p); }}
+          className="mt-3 w-full h-9 rounded-lg bg-[#1565C0] hover:bg-[#0d4fa3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition"
+        >
+          <ShoppingBag className="h-4 w-4" />
+          {Number(p.stock) > 0 ? 'Añadir al carrito' : 'Sin stock'}
+        </button>
         <div className="flex gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
           {waLink && (
             <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp">
@@ -3762,7 +3776,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 };
 
 // ============ BUSINESS DETAIL ============
-const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, token, isLogged, onLoginNeeded, onShareBusiness, onShareProduct, onReport }) => {
+const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, token, isLogged, onLoginNeeded, onShareBusiness, onShareProduct, onReport, onAddToCart, usdRate }) => {
   if (!data) return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   const { business, products } = data;
   const wa = (business.whatsapp || '').replace(/[^0-9+]/g, '').replace('+', '');
@@ -3834,6 +3848,7 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, toke
               onFav={() => toggleFav(p.id)}
               onShare={() => onShareProduct?.({ ...p, business })}
               onReport={() => onReport?.(p.id, business.id)}
+              onAddToCart={onAddToCart} usdRate={usdRate}
             />
           ))}
         </div>
@@ -3846,7 +3861,7 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, toke
 };
 
 // ============ FAVORITES ============
-const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport }) => {
+const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport, onAddToCart, usdRate }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -3868,7 +3883,7 @@ const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport }
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
           {items.map((p) => (
-            <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={true} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+            <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={true} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} onAddToCart={onAddToCart} usdRate={usdRate} />
           ))}
         </div>
       )}
@@ -3991,27 +4006,103 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
 };
 
 // ============ SHOPPING CART ============
-const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting, t, lang }) => {
+const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting, t, lang, usdRate }) => {
+  const currencyOf = (product) => String(product?.currency || 'CUP').toUpperCase();
+  const currencies = [...new Set(items.map(({ product }) => currencyOf(product)))];
+  const mixedCurrencies = currencies.length > 1;
   const total = items.reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
+  const locale = lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES';
+  const money = (value) => Number(value).toLocaleString(locale, { maximumFractionDigits: 2 });
+  const approximateCup = (product) => {
+    const currency = currencyOf(product);
+    const price = Number(product?.price);
+    const rate = Number(usdRate);
+    if (!['USD', 'USDT', 'USDC'].includes(currency) || !(price > 0) || !(rate > 0)) return null;
+    return price * rate;
+  };
+
   return (
     <section className="container mx-auto px-4 py-8 max-w-4xl">
-      <div className="flex items-center justify-between gap-3 mb-6"><div><h1 className="text-3xl font-extrabold">{t.cartTitle}</h1><p className="text-muted-foreground">{t.cartSubtitle}</p></div><Button variant="outline" onClick={onBack}>{t.continueShopping}</Button></div>
-      {!items.length ? <Card><CardContent className="p-10 text-center"><ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/><h2 className="text-xl font-bold mb-2">{t.emptyCart}</h2><p className="text-muted-foreground mb-4">{t.emptyCartDesc}</p><Button onClick={onBack}>{t.viewProducts}</Button></CardContent></Card> : <>
-        <div className="space-y-3">{items.map(({ product, quantity }) => <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
-          {product.image ? <img src={product.image} alt={product.name || t.productFallback} className="w-20 h-20 rounded-lg object-cover bg-muted"/> : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
-          <div className="flex-1 min-w-0"><div className="font-bold truncate">{product.name || t.productFallback}</div><div className="text-sm text-muted-foreground">{product.price} {product.currency || 'CUP'} c/u</div><div className="flex items-center gap-2 mt-2"><Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button><span>{quantity}</span><Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button></div></div>
-          <div className="font-bold whitespace-nowrap">{((Number(product.price) || 0) * quantity).toLocaleString(lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES')} {product.currency || 'CUP'}</div>
-        </CardContent></Card>)}</div>
-        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">{t.estimatedSubtotal}</div><div className="text-2xl font-extrabold">{total.toLocaleString(lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">{t.serverCalculatesTotal}</p></div><div className="flex w-full flex-col gap-3 sm:w-auto">
-          <Button size="lg" disabled={submitting} onClick={() => onCheckout(items, 'crypto')} className="brand-gradient text-white font-bold">
-            {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}
-            {t.payCartCrypto}
-          </Button>
-          <Button size="lg" variant="outline" disabled={submitting} onClick={() => onCheckout(items, 'transfermovil')} className="border-2 border-[#00A86B] text-[#008653] font-bold">
-            <CreditCard className="h-4 w-4 mr-2"/>
-            Pagar con Transfermóvil
-          </Button>
-        </div></CardContent></Card>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div>
+          <h1 className="text-3xl font-extrabold">{t.cartTitle}</h1>
+          <p className="text-muted-foreground">{t.cartSubtitle}</p>
+        </div>
+        <Button variant="outline" onClick={onBack}>{t.continueShopping}</Button>
+      </div>
+      {!items.length ? (
+        <Card><CardContent className="p-10 text-center">
+          <ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/>
+          <h2 className="text-xl font-bold mb-2">{t.emptyCart}</h2>
+          <p className="text-muted-foreground mb-4">{t.emptyCartDesc}</p>
+          <Button onClick={onBack}>{t.viewProducts}</Button>
+        </CardContent></Card>
+      ) : <>
+        <div className="space-y-3">
+          {items.map(({ product, quantity }) => {
+            const currency = currencyOf(product);
+            const cup = approximateCup(product);
+            return (
+              <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
+                {product.image
+                  ? <img src={product.image} alt={product.name || t.productFallback} className="w-20 h-20 rounded-lg object-cover bg-muted"/>
+                  : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold truncate">{product.name || t.productFallback}</div>
+                  <div className="text-sm text-muted-foreground">{money(product.price)} {currency} c/u</div>
+                  {cup !== null && <div className="text-xs text-muted-foreground">≈ {money(cup)} CUP c/u</div>}
+                  <div className="flex items-center gap-2 mt-2">
+                    <Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button>
+                    <span>{quantity}</span>
+                    <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button>
+                  </div>
+                </div>
+                <div className="text-right font-bold whitespace-nowrap">
+                  <div>{money((Number(product.price) || 0) * quantity)} {currency}</div>
+                  {cup !== null && <div className="text-xs text-muted-foreground font-normal">≈ {money(cup * quantity)} CUP</div>}
+                </div>
+              </CardContent></Card>
+            );
+          })}
+        </div>
+        <Card className="mt-5"><CardContent className="p-5 flex flex-col gap-4">
+          <div>
+            <div className="text-sm text-muted-foreground">{t.estimatedSubtotal}</div>
+            {mixedCurrencies ? (
+              <>
+                <div className="text-sm font-semibold text-amber-700">El carrito contiene monedas diferentes.</div>
+                {currencies.map((currency) => {
+                  const subtotal = items.filter(({ product }) => currencyOf(product) === currency)
+                    .reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
+                  return <div key={currency} className="text-xl font-extrabold">{money(subtotal)} {currency}</div>;
+                })}
+                <p className="text-xs text-muted-foreground mt-1">Para continuar, deja productos de una sola moneda en el carrito.</p>
+              </>
+            ) : (
+              <>
+                <div className="text-2xl font-extrabold">{money(total)} {currencies[0] || 'CUP'}</div>
+                {currencies[0] && ['USD', 'USDT', 'USDC'].includes(currencies[0]) && Number(usdRate) > 0 &&
+                  <div className="text-sm text-muted-foreground">Equivalente aproximado: {money(total * Number(usdRate))} CUP</div>}
+                <p className="text-xs text-muted-foreground mt-1">{t.serverCalculatesTotal}</p>
+              </>
+            )}
+          </div>
+          <div className="flex w-full flex-col gap-3">
+            <Button size="lg" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'crypto')} className="brand-gradient text-white font-bold">
+              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}
+              {t.payCartCrypto}
+            </Button>
+            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'transfermovil')} className="border-2 border-[#00A86B] text-[#008653] font-bold">
+              <CreditCard className="h-4 w-4 mr-2"/>
+              Pagar con Transfermóvil
+            </Button>
+            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'enzona')} className="border-2 border-[#2563EB] text-[#1D4ED8] font-bold">
+              <CreditCard className="h-4 w-4 mr-2"/>
+              Pagar con EnZona
+            </Button>
+          </div>
+        </CardContent></Card>
       </>}
     </section>
   );
@@ -7119,8 +7210,20 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
             </p>
           </div>
           <div className="space-y-2 rounded-lg border p-4">
-            <p className="text-sm text-muted-foreground">Importe del pedido</p>
-            <p className="text-2xl font-bold">{formatTotal(order.total, order.currency)}</p>
+            <p className="text-sm text-muted-foreground">
+              {Number.isFinite(Number(order.localPaymentAmountCUP)) && Number(order.localPaymentAmountCUP) > 0
+                ? 'Importe exacto a transferir (CUP)'
+                : 'Importe del pedido'}
+            </p>
+            <p className="text-2xl font-bold">
+              {formatTotal(order.localPaymentAmountCUP ?? order.total, order.localPaymentAmountCUP != null ? 'CUP' : order.currency)}
+            </p>
+            {order.localPaymentAmountCUP != null &&
+              String(order.currency || '').toUpperCase() !== 'CUP' && (
+                <p className="text-sm text-muted-foreground">
+                  Importe original del pedido: {formatTotal(order.total, order.currency)}
+                </p>
+              )}
             {method === 'transfermovil' ? (
               <>
                 <p><strong>Tarjeta receptora:</strong> {details.recipientNumber || 'No disponible'}</p>

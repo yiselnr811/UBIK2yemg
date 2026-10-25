@@ -3510,7 +3510,7 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
         <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none">{formatPrice(p.price, p.currency)}</div>
         {['USD', 'USDT', 'USDC'].includes(String(p.currency || '').toUpperCase()) && Number(p.price) > 0 && Number(usdRate) > 0 && (
           <div className="text-xs font-semibold text-muted-foreground mt-1">
-            ≈ {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number((Number(p.price) * Number(usdRate)).toPrecision(2)))} CUP
+            {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number(p.price) * Number(usdRate))} CUP
           </div>
         )}
         <div className="text-sm font-medium mt-1.5 line-clamp-2 leading-tight min-h-[2.5rem]">{p.name}</div>
@@ -4050,7 +4050,7 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
                 <div className="flex-1 min-w-0">
                   <div className="font-bold truncate">{product.name || t.productFallback}</div>
                   <div className="text-sm text-muted-foreground">{money(product.price)} {currency} c/u</div>
-                  {cup !== null && <div className="text-xs text-muted-foreground">≈ {money(cup)} CUP c/u</div>}
+                  {cup !== null && <div className="text-xs text-muted-foreground">Equivalente: {money(cup)} CUP c/u</div>}
                   <div className="flex items-center gap-2 mt-2">
                     <Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button>
                     <span>{quantity}</span>
@@ -4060,7 +4060,7 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
                 </div>
                 <div className="text-right font-bold whitespace-nowrap">
                   <div>{money((Number(product.price) || 0) * quantity)} {currency}</div>
-                  {cup !== null && <div className="text-xs text-muted-foreground font-normal">≈ {money(cup * quantity)} CUP</div>}
+                  {cup !== null && <div className="text-xs text-muted-foreground font-normal">{money(cup * quantity)} CUP</div>}
                 </div>
               </CardContent></Card>
             );
@@ -4083,7 +4083,7 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
               <>
                 <div className="text-2xl font-extrabold">{money(total)} {currencies[0] || 'CUP'}</div>
                 {currencies[0] && ['USD', 'USDT', 'USDC'].includes(currencies[0]) && Number(usdRate) > 0 &&
-                  <div className="text-sm text-muted-foreground">Equivalente aproximado: {money(total * Number(usdRate))} CUP</div>}
+                  <div className="text-sm text-muted-foreground">Equivalente según la tasa configurada: {money(total * Number(usdRate))} CUP</div>}
                 <p className="text-xs text-muted-foreground mt-1">{t.serverCalculatesTotal}</p>
               </>
             )}
@@ -6463,7 +6463,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Red USDC</Label><Input value={settings.usdcNetwork || ''} onChange={(e) => setSettings({ ...settings, usdcNetwork: e.target.value })} /></div>
-                  <div><Label>Tasa de cambio (CUP por 1 USD)</Label><Input type="number" min="0.01" max="10000" step="0.01" value={settings.usdRate ?? 120} onChange={(e) => setSettings({ ...settings, usdRate: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Ej: 120" /><p className="text-xs text-muted-foreground">Se utiliza para convertir precios en CUP a USDT/USDC.</p></div>
+                  <div><Label>Tasa de cambio (CUP por 1 USD)</Label><Input type="number" min="0.01" max="10000" step="0.01" value={settings.usdRate ?? 120} onChange={(e) => setSettings({ ...settings, usdRate: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Ej: 120" /><p className="text-xs text-muted-foreground">Se utiliza para calcular el equivalente en CUP de precios en USD, USDT y USDC, y los pagos locales.</p></div>
                   <div><Label>Precio Premium (USD)</Label><Input type="number" step="0.01" value={settings.premiumPriceUSD ?? 0} onChange={(e) => setSettings({ ...settings, premiumPriceUSD: Number(e.target.value) })} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">

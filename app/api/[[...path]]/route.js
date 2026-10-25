@@ -962,9 +962,6 @@ function jsonCached(data, status = 200, maxAge = 60) {
   return NextResponse.json(data, {
     status,
     headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
       'Cache-Control': `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`,
     },
   });
@@ -1110,14 +1107,7 @@ const CURRENCIES = [
 ];
 
 function json(data, status = 200) {
-  return NextResponse.json(data, {
-    status,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    },
-  });
+  return NextResponse.json(data, { status });
 }
 
 function getUserFromToken(request) {
@@ -5912,11 +5902,4 @@ export const POST = handler;
 export const PUT = handler;
 export const DELETE = handler;
 export const OPTIONS = async () =>
-  new NextResponse(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    },
-  });
+  new NextResponse(null, { status: 204 });

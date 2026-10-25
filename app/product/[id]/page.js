@@ -18,8 +18,12 @@ async function fetchProduct(id) {
     const business = product.businessId
       ? await db.collection('businesses').findOne({ id: product.businessId }, { projection: { name: 1, location: 1, address: 1, province: 1, municipality: 1 } })
       : null;
+    const settings = await db.collection('settings').findOne(
+      { id: 'global' },
+      { projection: { usdRate: 1 } }
+    );
     await client.close();
-    return { ...product, business };
+    return { ...product, business, usdRate: Number(settings?.usdRate) };
   } catch (e) {
     return null;
   }
@@ -31,10 +35,21 @@ export async function generateMetadata({ params }) {
     return { title: 'Producto no encontrado · UBIK2 YEMG', description: 'Marketplace cubano de MiPymes' };
   }
   const currency = String(product.currency || 'CUP').toUpperCase();
-  const priceLabel = `${Number(product.price).toLocaleString('es-ES', {
+  const supportedCurrencies = ['CUP', 'MLC', 'USD', 'EUR', 'GBP', 'CAD', 'MXN', 'USDT', 'USDC'];
+  const displayCurrency = supportedCurrencies.includes(currency) ? currency : 'CUP';
+  const priceNumber = Number(product.price);
+  const basePriceLabel = `${priceNumber.toLocaleString('es-ES', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  })} ${['USD', 'USDC', 'CUP'].includes(currency) ? currency : 'CUP'}`;
+  })} ${displayCurrency}`;
+  const rate = Number(product.usdRate);
+  const cupEquivalent = ['USD', 'USDT', 'USDC'].includes(displayCurrency)
+    && Number.isFinite(rate) && rate > 0 && Number.isFinite(priceNumber)
+    ? `${(priceNumber * rate).toLocaleString('es-ES', { maximumFractionDigits: 2 })} CUP`
+    : '';
+  const priceLabel = cupEquivalent
+    ? `${basePriceLabel} (≈ ${cupEquivalent})`
+    : basePriceLabel;
   const title = `${product.name} — ${priceLabel} · UBIK2 YEMG`;
   const businessName = product.business?.name || 'UBIK2 YEMG';
   const businessAddress = [...new Set([
@@ -87,12 +102,24 @@ export default async function SharedProductPage({ params }) {
   const safeId = encodeURIComponent(params.id);
   const targetUrl = `/?product=${safeId}`;
   const currency = String(product?.currency || 'CUP').toUpperCase();
-  const priceLabel = product
-    ? `${Number(product.price).toLocaleString('es-ES', {
+  const supportedCurrencies = ['CUP', 'MLC', 'USD', 'EUR', 'GBP', 'CAD', 'MXN', 'USDT', 'USDC'];
+  const displayCurrency = supportedCurrencies.includes(currency) ? currency : 'CUP';
+  const priceNumber = Number(product?.price);
+  const basePriceLabel = product
+    ? `${priceNumber.toLocaleString('es-ES', {
         minimumFractionDigits: 0,
         maximumFractionDigits: 2,
-      })} ${['USD', 'USDC', 'CUP'].includes(currency) ? currency : 'CUP'}`
+      })} ${displayCurrency}`
     : '';
+  const rate = Number(product?.usdRate);
+  const cupEquivalent = product
+    && ['USD', 'USDT', 'USDC'].includes(displayCurrency)
+    && Number.isFinite(rate) && rate > 0 && Number.isFinite(priceNumber)
+    ? `${(priceNumber * rate).toLocaleString('es-ES', { maximumFractionDigits: 2 })} CUP`
+    : '';
+  const priceLabel = cupEquivalent
+    ? `${basePriceLabel} (≈ ${cupEquivalent})`
+    : basePriceLabel;
   return (
     <>
       {/* eslint-disable-next-line @next/next/no-sync-scripts */}

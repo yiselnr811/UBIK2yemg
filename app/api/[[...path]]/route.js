@@ -3501,7 +3501,7 @@ return json({ payments: out });
       // El importe de origen ya puede tener precisión limitada por Number.
       const amountDecimal = orderCurrency === 'CUP'
         ? amountInCrypto.toFixed(4)
-        : amountInCrypto.toFixed(networkConfig.decimals);
+        : amountInCrypto.toFixed(2);
       const expectedAmountRaw = parseUnits(amountDecimal, networkConfig.decimals).toString();
 
       if (BigInt(expectedAmountRaw) <= 0n) {

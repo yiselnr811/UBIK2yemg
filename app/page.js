@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useId } from 'react';
 import jsQR from 'jsqr';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1222,21 +1222,40 @@ const App = () => {
 
   // === Autocomplete (debounced) ===
   useEffect(() => {
+    let cancelled = false;
     const q = (searchInput || '').trim();
+
     if (q.length < 2) {
       setSuggestions([]);
       setSuggestLoading(false);
-      return;
+      return () => { cancelled = true; };
     }
+
     setSuggestLoading(true);
     const ctrl = new AbortController();
+
     const timer = setTimeout(() => {
-      api(`/search/suggest?q=${encodeURIComponent(q)}`, { signal: ctrl.signal, retries: 0, timeout: 4000 })
-        .then((d) => setSuggestions(d.suggestions || []))
-        .catch(() => setSuggestions([]))
-        .finally(() => setSuggestLoading(false));
+      api(`/search/suggest?q=${encodeURIComponent(q)}`, {
+        signal: ctrl.signal,
+        retries: 0,
+        timeout: 4000
+      })
+        .then((d) => {
+          if (!cancelled) setSuggestions(d.suggestions || []);
+        })
+        .catch(() => {
+          if (!cancelled && !ctrl.signal.aborted) setSuggestions([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSuggestLoading(false);
+        });
     }, 280); // debounce ~280ms — gentle on Cuban networks
-    return () => { clearTimeout(timer); ctrl.abort(); };
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      ctrl.abort();
+    };
   }, [searchInput]);
 
   const onSuggestionClick = useCallback((s) => {
@@ -2652,7 +2671,37 @@ const Logo = ({ size = 'md', withText = false, onDark = false }) => {
 
 const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, setOpen, loading, onPick, compact = false }) => {
   const [focused, setFocused] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const suggestionId = useId();
   const show = focused && open && (suggestions?.length > 0 || loading);
+
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [value, suggestions]);
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+
+    if (!suggestions?.length) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => current >= suggestions.length - 1 ? 0 : current + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => current <= 0 ? suggestions.length - 1 : current - 1);
+    } else if (e.key === 'Enter' && show && activeIndex >= 0 && activeIndex < suggestions.length) {
+      e.preventDefault();
+      onPick(suggestions[activeIndex]);
+      setActiveIndex(-1);
+    }
+  };
   return (
     <div className="relative flex-1">
       <form onSubmit={(e) => { e.preventDefault(); setOpen(false); onSubmit(e); }}>
@@ -2663,19 +2712,33 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
           onFocus={() => { setFocused(true); setOpen(true); }}
           onBlur={() => setTimeout(() => setFocused(false), 180)}
           placeholder={placeholder}
+          role="combobox"
+          aria-label={placeholder || "Buscar productos y negocios"}
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={Boolean(show)}
+          aria-controls={suggestionId}
+          aria-activedescendant={show && activeIndex >= 0 && activeIndex < suggestions.length ? `${suggestionId}-option-${activeIndex}` : undefined}
+          onKeyDown={handleSearchKeyDown}
           className={compact ? 'pl-9 h-9' : 'pl-9 pr-20 h-10 bg-muted/40'}
           autoComplete="off"
         />
         {!compact && (
-          <Button type="submit" size="sm" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
+          <Button type="submit" size="sm" aria-label="Buscar" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
             Buscar
           </Button>
         )}
       </form>
       {show && (
-        <div className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg overflow-hidden z-50 max-h-80 overflow-y-auto">
+        <div
+          id={suggestionId}
+          role="listbox"
+          aria-label="Sugerencias de búsqueda"
+          aria-busy={Boolean(loading)}
+          className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg overflow-hidden z-50 max-h-80 overflow-y-auto"
+        >
           {loading && suggestions.length === 0 && (
-            <div className="p-3 text-xs text-muted-foreground flex items-center gap-2">
+            <div role="status" aria-live="polite" className="p-3 text-xs text-muted-foreground flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full border-2 border-[#1565C0] border-t-transparent animate-spin" />
               Buscando sugerencias…
             </div>
@@ -2683,8 +2746,13 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
           {suggestions.map((s, i) => (
             <button
               key={`${s.type}-${s.value}-${i}`}
+              id={`${suggestionId}-option-${i}`}
               type="button"
-              onMouseDown={(e) => { e.preventDefault(); onPick(s); }}
+              role="option"
+              aria-selected={activeIndex === i}
+              onMouseEnter={() => setActiveIndex(i)}
+              aria-label={`${s.type === 'product' ? 'Producto' : s.type === 'business' ? 'Negocio' : 'Categoría'}: ${s.label}`}
+              onMouseDown={(e) => { e.preventDefault(); onPick(s); setActiveIndex(-1); }}
               className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex items-center justify-between gap-2 border-b last:border-b-0 border-border/40"
             >
               <span className="flex items-center gap-2 truncate">
@@ -2742,7 +2810,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
           <Plus className="h-4 w-4 mr-1" /> {t.publish}
         </Button>
 
-        <Button variant="ghost" size="icon" onClick={() => setView('favorites')} className="relative">
+        <Button variant="ghost" size="icon" onClick={() => setView('favorites')} className="relative" aria-label={`Favoritos (${favorites.length})`} title="Favoritos">
           <Heart className="h-5 w-5" />
           {favorites.length > 0 && (
             <span className="absolute -top-1 -right-1 bg-[#00A86B] text-white text-[9px] rounded-full h-4 min-w-4 px-1 flex items-center justify-center font-bold">
@@ -2770,13 +2838,13 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
           {dataSaver ? <Leaf className="h-5 w-5" /> : <ImageIcon className="h-5 w-5" />}
         </Button>
 
-        <Button variant="ghost" size="icon" onClick={() => setDark(!dark)}>
+        <Button variant="ghost" size="icon" onClick={() => setDark(!dark)} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"} title={dark ? "Activar tema claro" : "Activar tema oscuro"}>
           {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon"><Globe className="h-5 w-5" /></Button>
+            <Button variant="ghost" size="icon" aria-label={t.languageLabel} title={t.languageLabel}><Globe className="h-5 w-5" /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel>{t.languageLabel}</DropdownMenuLabel>
@@ -3631,6 +3699,8 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
           </Badge>
         )}
         <button
+          type="button"
+          aria-label={isFav ? `Quitar ${p.name} de favoritos` : `Añadir ${p.name} a favoritos`}
           onClick={(e) => { e.stopPropagation(); onFav(); }}
           className="absolute top-2 right-2 h-8 w-8 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-md hover:scale-110 transition"
         >
@@ -3666,17 +3736,17 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
         </button>
         <div className="flex gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
           {waLink && (
-            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp">
+            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp" aria-label={`Contactar por WhatsApp sobre ${p.name}`}>
               <MessageCircle className="h-4 w-4" />
             </a>
           )}
           {tgLink && (
-            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center transition" title="Telegram">
+            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center transition" title="Telegram" aria-label={`Contactar por Telegram sobre ${p.name}`}>
               <Send className="h-4 w-4" />
             </a>
           )}
           {smsLink && (
-            <a href={smsLink} className="flex-1 h-8 rounded-md bg-foreground hover:opacity-90 text-background flex items-center justify-center transition" title="SMS">
+            <a href={smsLink} className="flex-1 h-8 rounded-md bg-foreground hover:opacity-90 text-background flex items-center justify-center transition" title="SMS" aria-label={`Enviar SMS sobre ${p.name}`}>
               <Phone className="h-4 w-4" />
             </a>
           )}
@@ -4572,7 +4642,19 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       )}
 
       <div className="grid md:grid-cols-3 gap-4">
-        <Card className="hover-lift cursor-pointer" onClick={onFavorites}>
+        <Card
+    role="button"
+    tabIndex={0}
+    aria-label={`Ver ${favoritesCount} productos guardados`}
+    onClick={onFavorites}
+    onKeyDown={(event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onFavorites?.();
+      }
+    }}
+    className="hover-lift cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A86B] focus-visible:ring-offset-2"
+  >
           <CardContent className="p-6">
             <Heart className="h-8 w-8 text-red-500 mb-2" />
             <div className="text-2xl font-bold">{favoritesCount}</div>
@@ -4596,7 +4678,8 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       </div>
 
       <div className="mt-8">
-        <h2 className="text-2xl font-bold mb-4">{t.myOrdersInvoices}</h2>
+        <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-2">{t.myOrdersInvoices}</h2>
+        <p className="text-sm text-muted-foreground mb-4">Consulta el estado de tus pedidos, pagos y facturas.</p>
 
         {ordersLoading && (
           <Card><CardContent className="p-6">{t.loadingOrders}</CardContent></Card>
@@ -4620,37 +4703,42 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 
         <div className="space-y-4">
           {orders.map((order) => (
-            <Card key={order.id || order._id}>
-              <CardContent className="p-5 space-y-3">
+            <Card key={order.id || order._id} className="border-border/80 shadow-sm transition-shadow duration-200 hover:shadow-md">
+              <CardContent className="p-4 sm:p-5 space-y-4">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                   <div>
-                    <h3 className="font-bold break-all">
+                    <h3 className="text-base sm:text-lg font-bold tracking-tight break-all">
                       Pedido {order.id || order._id}
                     </h3>
-                    <p className="text-sm text-muted-foreground">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       {t.orderDate}: {formatDate(order.createdAt)}
                     </p>
-                    <p className="text-sm">
-                      {t.orderStatus}: <strong>{order.status || order.shippingStatus || 'Pendiente'}</strong>
-                    </p>
-                    <p className="text-sm">
-                      Estado del pago: <strong>{order.paymentStatus || 'Pendiente'}</strong>
-                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
+                        <span className="font-medium">{t.orderStatus}:</span>
+                        <strong className="break-words">{order.status || order.shippingStatus || 'Pendiente'}</strong>
+                      </div>
+                      <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-950 dark:border-green-900 dark:bg-green-950/40 dark:text-green-100">
+                        <span className="font-medium">Estado del pago:</span>
+                        <strong className="break-words">{order.paymentStatus || 'Pendiente'}</strong>
+                      </div>
+                    </div>
 
                     {['transfermovil', 'enzona'].includes(order.paymentMethod) &&
                      order.paymentStatus === 'pending_payment' && (
-                      <div className="mt-3 rounded-lg border p-3 space-y-3">
-                        <h4 className="font-semibold">Referencia de transferencia</h4>
+                      <div className="mt-4 rounded-xl border border-blue-200/80 bg-blue-50/50 p-4 space-y-4 dark:border-blue-900 dark:bg-blue-950/20">
+                        <h4 className="text-base font-bold tracking-tight">Referencia de transferencia</h4>
 
                         {order.buyerTransactionReference && !referenceEditing[order.id] ? (
-                          <div className="space-y-2">
-                            <p className="text-sm">Referencia registrada:</p>
-                            <p className="font-mono text-sm break-all rounded-md bg-muted p-2">
+                          <div className="space-y-3">
+                            <p className="text-sm font-medium text-muted-foreground">Referencia registrada:</p>
+                            <p className="rounded-lg border bg-background px-3 py-3 font-mono text-base font-semibold break-all">
                               {order.buyerTransactionReference}
                             </p>
                             <Button
                               type="button"
                               variant="outline"
+                              className="min-h-11 w-full whitespace-normal text-sm sm:w-auto"
                               disabled={!!referenceSubmitting[order.id]}
                               onClick={() => {
                                 setReferenceDrafts((prev) => ({
@@ -4673,11 +4761,11 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                         ) : (
                           <form
                             onSubmit={(event) => submitOrderPaymentReference(order, event)}
-                            className="space-y-3"
+                            className="space-y-4"
                           >
                             <label
                               htmlFor={`order-reference-${order.id}`}
-                              className="block text-sm font-medium"
+                              className="block text-sm font-semibold leading-6"
                             >
                               {order.buyerTransactionReference
                                 ? 'Introduce la referencia correcta'
@@ -4698,14 +4786,16 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                               autoComplete="off"
                               spellCheck={false}
                               placeholder="Número de transacción del comprobante"
+                              className="min-h-12 bg-background text-base"
                               disabled={!!referenceSubmitting[order.id]}
                               required
                             />
-                            <p className="text-xs text-muted-foreground">
+                            <p className="rounded-lg bg-muted/60 p-3 text-sm leading-6 text-muted-foreground">
                               No introduzcas el número del pedido. El pago solo se confirmará si el sistema verifica una coincidencia válida.
                             </p>
                             <Button
                               type="submit"
+                              className="min-h-11 w-full whitespace-normal font-semibold sm:w-auto"
                               disabled={
                                 !!referenceSubmitting[order.id] ||
                                 !String(
@@ -4725,6 +4815,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                               <Button
                                 type="button"
                                 variant="ghost"
+                                className="min-h-11 w-full sm:w-auto"
                                 disabled={!!referenceSubmitting[order.id]}
                                 onClick={() => {
                                   setReferenceDrafts((prev) => ({
@@ -4748,15 +4839,18 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                         )}
 
                         {referenceMessages[order.id] && (
-                          <p className="text-sm break-words" role="status">
+                          <p className="rounded-lg border bg-background p-3 text-sm leading-6 break-words" role="status">
                             {referenceMessages[order.id]}
                           </p>
                         )}
                       </div>
                     )}
                   </div>
-                  <div className="md:text-right">
-                    <div className="text-xl font-bold">
+                  <div className="rounded-xl border bg-muted/30 p-4 md:min-w-52 md:text-right">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Total del pedido
+                    </p>
+                    <div className="mt-1 text-2xl font-bold tracking-tight">
                       {formatMoney(order.total, order.currency || 'USD')}
                     </div>
                     {['transfermovil', 'enzona'].includes(
@@ -4774,8 +4868,13 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                             : null;
 
                       return localAmount != null ? (
-                        <div className="mt-1 text-sm font-semibold text-green-700">
-                          Importe a transferir: {formatMoney(localAmount, 'CUP')}
+                        <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3 text-left dark:border-green-900 dark:bg-green-950/40">
+                          <p className="text-xs font-semibold text-green-800 dark:text-green-300">
+                            Importe a transferir en CUP
+                          </p>
+                          <p className="mt-1 text-lg font-bold text-green-900 dark:text-green-100">
+                            {formatMoney(localAmount, 'CUP')}
+                          </p>
                         </div>
                       ) : (
                         <div className="mt-1 text-sm font-semibold text-red-600">
@@ -4789,18 +4888,29 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                   </div>
                 </div>
 
-                <div>
-                  <h4 className="font-semibold mb-2">Productos</h4>
+                <div className="rounded-xl border border-border/80 p-3 sm:p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-muted-foreground">
+                    Productos del pedido
+                  </h4>
                   {Array.isArray(order.items) && order.items.length > 0 ? (
-                    <ul className="list-disc pl-5 space-y-1">
+                    <ul className="space-y-2">
                       {order.items.map((item, index) => (
-                        <li key={item.productId || item.id || index} className="text-sm">
-                          {item.name || item.title || 'Producto'}
-                          {' · Cantidad: '}{item.quantity ?? 1}
-                          {' · '}{formatMoney(
-                            item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 1)),
-                            item.currency || order.currency || 'USD'
-                          )}
+                        <li
+                          key={item.productId || item.id || index}
+                          className="flex flex-col gap-1 rounded-lg bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                        >
+                          <span className="text-sm font-medium break-words">
+                            {item.name || item.title || 'Producto'}
+                          </span>
+                          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                            <span>Cantidad: {item.quantity ?? 1}</span>
+                            <strong className="text-base text-foreground">
+                              {formatMoney(
+                                item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 1)),
+                                item.currency || order.currency || 'USD'
+                              )}
+                            </strong>
+                          </span>
                         </li>
                       ))}
                     </ul>
@@ -4810,8 +4920,8 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 </div>
 
                 {order.shipping && (
-                  <div className="rounded-lg border p-3">
-                    <h4 className="font-semibold mb-1">{t.deliveryData}</h4>
+                  <div className="rounded-xl border bg-muted/20 p-4 space-y-2">
+                    <h4 className="text-base font-bold tracking-tight mb-2">{t.deliveryData}</h4>
                     {order.shipping.recipientId && <p className="text-sm">ID del destinatario: {order.shipping.recipientId}</p>}
                     {order.shipping.name && <p className="text-sm">Nombre: {order.shipping.name}</p>}
                     {order.shipping.email && <p className="text-sm">Correo electrónico: {order.shipping.email}</p>}
@@ -4832,12 +4942,12 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 {(order.shippingStatus || order.trackingNumber || order.trackingCarrier ||
                   (Array.isArray(order.statusHistory) && order.statusHistory.length > 0) ||
                   (Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0)) && (
-                  <div className="rounded-lg border p-3 space-y-3">
-                    <h3 className="font-semibold">Seguimiento del envío</h3>
+                  <div className="rounded-xl border border-blue-200/80 bg-blue-50/40 p-4 space-y-4 dark:border-blue-900 dark:bg-blue-950/20">
+                    <h3 className="text-base font-bold tracking-tight">Seguimiento del envío</h3>
                     {order.shippingStatus && (
-                      <p className="text-sm">
-                        Estado:
-                        <strong className="ml-1">
+                      <p className="flex flex-wrap items-center gap-2 rounded-lg border bg-background p-3 text-sm">
+                        <span className="font-medium text-muted-foreground">Estado:</span>
+                        <strong className="rounded-full bg-blue-100 px-3 py-1 text-sm font-semibold text-blue-900 dark:bg-blue-900/60 dark:text-blue-100">
                           {{
                             processing: t.preparingOrder,
                             shipped: t.shipped,
@@ -4847,17 +4957,23 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                       </p>
                     )}
                     {(order.trackingNumber || order.trackingCarrier) && (
-                      <p className="text-sm">
-                        Transportista: {order.trackingCarrier || 'No indicado'}
-                        {' · '}Seguimiento: {order.trackingNumber || 'Pendiente'}
-                      </p>
+                      <div className="rounded-lg border bg-background p-3 space-y-2 text-sm">
+                        <p className="break-words">
+                          <span className="font-medium text-muted-foreground">Transportista:</span>{' '}
+                          <span className="font-semibold">{order.trackingCarrier || 'No indicado'}</span>
+                        </p>
+                        <p className="break-words">
+                          <span className="font-medium text-muted-foreground">Seguimiento:</span>{' '}
+                          <span className="font-mono font-semibold">{order.trackingNumber || 'Pendiente'}</span>
+                        </p>
+                      </div>
                     )}
                     {Array.isArray(order.statusHistory) && order.statusHistory.length > 0 && (
                       <div className="space-y-2">
-                        <h4 className="text-sm font-medium">Historial del envío</h4>
+                        <h4 className="text-sm font-semibold tracking-tight">Historial del envío</h4>
                         {[...order.statusHistory].reverse().map((entry, index) => (
                           <div key={entry.id || `${entry.at || entry.createdAt || 'evento'}-${index}`}
-                               className="border-l-2 pl-3 py-1 space-y-1">
+                               className="rounded-r-lg border-l-4 border-blue-300 bg-background p-3 space-y-2 dark:border-blue-800">
                             <p className="text-sm font-medium">
                               {{
                                 processing: t.preparingOrder,
@@ -4883,15 +4999,15 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     )}
                     {Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0 && (
                       <div className="space-y-2">
-                        <h4 className="text-sm font-medium">Fotos de entrega</h4>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <h4 className="text-sm font-semibold tracking-tight">Fotos de entrega</h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                           {order.deliveryPhotos.map((photo, index) => (
                             <a key={`${photo}-${index}`} href={photo}
                                target="_blank" rel="noopener noreferrer"
-                               className="block">
+                               className="block min-h-11 overflow-hidden rounded-xl border bg-background transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
                               <img src={photo} alt={`Foto de entrega ${index + 1}`}
                                    loading="lazy"
-                                   className="w-full h-28 object-cover rounded-md border" />
+                                   className="h-32 w-full object-cover sm:h-36" />
                             </a>
                           ))}
                         </div>
@@ -4901,31 +5017,56 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 )}
 
 
-                <div className="pt-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => downloadOrderInvoice(order)}
-                  >
-                    {t.downloadInvoiceQR}
-                  </Button>
-                  {order.publicInvoiceId && (
-                    <Button variant="outline" onClick={() => downloadInvoiceQR(order)}>
-                      Descargar QR en PNG
+                <div className="mt-4 rounded-xl border bg-muted/10 p-3 sm:p-4">
+                  <h4 className="mb-3 text-sm font-semibold tracking-tight">
+                    Documentos del pedido
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:gap-2">
+                    <Button
+                      className="min-h-11 w-full justify-center sm:w-auto"
+                      variant="outline"
+                      onClick={() => downloadOrderInvoice(order)}
+                    >
+                      {t.downloadInvoiceQR}
                     </Button>
-                  )}
-                  {order.publicInvoiceId && (
-                    <Button variant="outline" onClick={() =>
-                      window.open(`/invoice/${encodeURIComponent(order.publicInvoiceId)}`, '_blank', 'noopener,noreferrer')
-                    }>
-                      {t.verifyInvoice}
-                    </Button>
-                  )}
+
+                    {order.publicInvoiceId && (
+                      <Button
+                        className="min-h-11 w-full justify-center sm:w-auto"
+                        variant="outline"
+                        onClick={() => downloadInvoiceQR(order)}
+                      >
+                        Descargar QR en PNG
+                      </Button>
+                    )}
+
+                    {order.publicInvoiceId && (
+                      <Button
+                        className="min-h-11 w-full justify-center sm:w-auto"
+                        variant="outline"
+                        onClick={() =>
+                          window.open(
+                            `/invoice/${encodeURIComponent(order.publicInvoiceId)}`,
+                            '_blank',
+                            'noopener,noreferrer'
+                          )
+                        }
+                      >
+                        {t.verifyInvoice}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 {order.publicInvoiceId && (
-                  <p className="text-xs text-muted-foreground pt-2 break-all">
-                    {t.invoiceNumber} <strong>{order.publicInvoiceId}</strong>
-                  </p>
+                  <div className="mt-3 rounded-lg border bg-muted/20 p-3">
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      {t.invoiceNumber}
+                    </p>
+                    <p className="mt-1 break-all font-mono text-sm font-semibold leading-6 text-foreground">
+                      {order.publicInvoiceId}
+                    </p>
+                  </div>
                 )}
 
                 {(
@@ -4942,11 +5083,12 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                      ) && (
                       <div className="pt-3 space-y-2">
                         {order.buyerReceiptConfirmation?.confirmedAt ? (
-                          <p className="text-sm text-green-700 font-medium">
+                          <p className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm font-semibold text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status" aria-live="polite">
                             Recepción confirmada.
                           </p>
                         ) : (
                           <Button
+                            className="w-full sm:w-auto min-h-11 justify-center font-semibold focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                             onClick={() => confirmOrderReceipt(order)}
                             disabled={
                               !!receiptConfirmLoading[order.id] ||
@@ -4959,7 +5101,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                           </Button>
                         )}
                         {receiptConfirmMessages[order.id] && (
-                          <p className="text-sm" role="status">
+                          <p className="rounded-lg border bg-muted/30 p-3 text-sm leading-6 break-words" role="status" aria-live="polite">
                             {receiptConfirmMessages[order.id]}
                           </p>
                         )}
@@ -4983,30 +5125,36 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     </Button>
 
                     {openInvoiceId === order.id && invoiceErrors[order.id] && (
-                      <p className="text-sm text-red-600 mt-2">{invoiceErrors[order.id]}</p>
+                      <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm leading-6 text-destructive break-words" role="alert">
+                        {invoiceErrors[order.id]}
+                      </p>
                     )}
 
                     {openInvoiceId === order.id && invoices[order.id] && (
-                      <div className="rounded-lg border p-4 mt-3 space-y-1 break-words">
-                        <h4 className="font-semibold">Factura de pago</h4>
+                      <div className="mt-3 space-y-4 rounded-xl border bg-card p-4 break-words">
+                        <h4 className="text-base font-bold tracking-tight">Factura de pago</h4>
                         <p className="text-sm">
                           Estado: <strong>{invoices[order.id].status || 'Pendiente'}</strong>
                         </p>
-                        <p className="text-sm">
-                          Importe esperado: <strong>
+                        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                          <p className="text-xs font-semibold text-muted-foreground">Importe esperado</p>
+                          <p className="mt-1 text-xl font-bold tracking-tight">
                             {Number(invoices[order.id].expectedAmount).toLocaleString('es-ES', {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 4
                             })} {invoices[order.id].currency || 'USDT'}
-                          </strong>
-                        </p>
-                        <p className="text-sm">Red: {invoices[order.id].network || '—'}</p>
-                        <p className="text-sm">
-                          Dirección de pago: {invoices[order.id].receiverAddress || '—'}
-                        </p>
-                        <p className="text-sm">
-                          Vence: {formatDate(invoices[order.id].expiresAt)}
-                        </p>
+                          </p>
+                        </div>
+                        <div className="space-y-3 rounded-lg border bg-muted/20 p-3 text-sm">
+                          <p><span className="font-semibold">Red:</span> {invoices[order.id].network || '—'}</p>
+                          <div>
+                            <p className="mb-1 font-semibold">Dirección de pago</p>
+                            <p className="break-all rounded-md bg-background p-2 font-mono text-xs leading-5">
+                              {invoices[order.id].receiverAddress || '—'}
+                            </p>
+                          </div>
+                          <p><span className="font-semibold">Vence:</span> {formatDate(invoices[order.id].expiresAt)}</p>
+                        </div>
                         {invoices[order.id].txHash && (
                           <p className="text-sm break-all">
                             Transacción enviada: {invoices[order.id].txHash}
@@ -5016,8 +5164,11 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                         {!['approved', 'rejected', 'expired', 'submitted'].includes(
                           String(invoices[order.id].status || '').toLowerCase()
                         ) && (
-                          <div className="pt-3 space-y-2">
-                            <Label htmlFor={`invoice-tx-${order.id}`}>
+                          <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                            <Label
+                              htmlFor={`invoice-tx-${order.id}`}
+                              className="text-sm font-semibold"
+                            >
                               Hash de la transacción
                             </Label>
                             <Input
@@ -5037,11 +5188,12 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                               placeholder="Pega aquí el hash de la operación"
                               autoComplete="off"
                               spellCheck={false}
-                              className="font-mono text-sm"
+                              className="min-h-11 w-full font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                               disabled={!!invoiceSubmitLoading[order.id]}
                             />
                             <Button
                               type="button"
+                              className="min-h-11 w-full justify-center font-semibold focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
                               onClick={() => submitInvoiceTxHash(order)}
                               disabled={
                                 !!invoiceSubmitLoading[order.id] ||
@@ -5055,7 +5207,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                                 : 'Enviar hash'}
                             </Button>
                             {invoiceSubmitMessages[order.id] && (
-                              <p className="text-sm break-words" role="status">
+                              <p className="rounded-lg border bg-background p-3 text-sm leading-6 break-words" role="status" aria-live="polite">
                                 {invoiceSubmitMessages[order.id]}
                               </p>
                             )}
@@ -5482,26 +5634,28 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             <p className="text-muted-foreground text-sm">Gestiona tu catálogo y suscripción.</p>
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full md:w-auto">
           <Button
             variant="outline"
+            className="min-h-11 w-full justify-center px-3 text-sm"
             onClick={() => document.getElementById('sellerPaymentSettings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
           >
             Configurar pagos
           </Button>
           <Button
             variant="outline"
+            className="min-h-11 w-full justify-center px-3 text-sm"
             onClick={() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
           >
             {t.sellerOrdersTitle} ({sellerOrders.length})
           </Button>
-          <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio">
+          <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio" className="min-h-11 w-full justify-center px-3 text-sm">
             <Share2 className="h-4 w-4 mr-2" /> Compartir negocio
           </Button>
-          <Button variant="outline" onClick={onPlan}>
+          <Button variant="outline" onClick={onPlan} className="min-h-11 w-full justify-center px-3 text-sm">
             <Crown className="h-4 w-4 mr-2 text-amber-500" /> {isPremium ? 'Premium activo' : 'Mejorar plan'}
           </Button>
-          <Button onClick={onNew} className="bg-[#00A86B] hover:bg-[#008F5B] text-white">
+          <Button onClick={onNew} className="col-span-2 sm:col-span-1 min-h-12 w-full sm:w-auto justify-center px-4 font-semibold shadow-sm bg-[#00A86B] hover:bg-[#008F5B] text-white">
             <Plus className="h-4 w-4 mr-2" /> Nuevo producto
           </Button>
         </div>
@@ -5530,8 +5684,8 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       )}
 
 
-<div className="mb-6 rounded-xl border border-gray-200 p-4">
-  <h2 className="mb-3 text-lg font-semibold">Mi negocio: descripción y ubicación</h2>
+<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 className="mb-3 text-lg font-bold tracking-tight">Mi negocio: descripción y ubicación</h2>
   <div className="grid grid-cols-1 gap-3">
     <label className="block text-sm font-medium">
       Descripción del negocio
@@ -5540,7 +5694,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         onChange={(event) => setBusinessDescription(event.target.value)}
         maxLength={1000}
         rows={3}
-        className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+        className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
         placeholder="Describe tu negocio y lo que ofreces"
       />
     </label>
@@ -5550,7 +5704,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         value={businessLocation}
         onChange={(event) => setBusinessLocation(event.target.value)}
         maxLength={200}
-        className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+        className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
         placeholder="La Habana, Cuba"
       />
     </label>
@@ -5577,7 +5731,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           type="button"
           onClick={saveDeliveryFee}
           disabled={businessSaving}
-          className="w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white disabled:opacity-50"
+          className="min-h-12 w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {businessSaving ? 'Guardando tarifa…' : 'Guardar tarifa de entrega'}
         </button>
@@ -5596,7 +5750,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       type="button"
       onClick={saveBusinessProfile}
       disabled={businessSaving}
-      className="rounded-lg bg-green-700 px-4 py-2 font-medium text-white disabled:opacity-50"
+      className="min-h-12 w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
     >
       {businessSaving ? 'Guardando…' : 'Guardar información'}
     </button>
@@ -5604,14 +5758,14 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </div>
 </div>
 
-<div className="mb-6 rounded-xl border border-gray-200 p-4">
-  <h2 id="sellerPaymentSettings" className="mb-2 scroll-mt-6 text-lg font-semibold">Configurar pagos por Transfermóvil y EnZona</h2>
+<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 id="sellerPaymentSettings" className="mb-2 scroll-mt-6 text-lg font-bold tracking-tight">Configurar pagos por Transfermóvil y EnZona</h2>
   <p className="mb-4 text-sm text-gray-600">
     Introduce los datos de tu negocio que verá el comprador. Comprueba que sean correctos antes de habilitar cada método.
   </p>
 
   <div className="space-y-4">
-    <section className="rounded-lg border border-gray-200 p-3">
+    <section className="rounded-xl border border-gray-200 bg-muted/20 p-4 sm:p-5">
       <label className="flex items-center gap-2 font-semibold">
         <input
           type="checkbox"
@@ -5631,7 +5785,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             onChange={(event) => setTransfermovilNumber(event.target.value)}
             maxLength={40}
             placeholder="Número de la tarjeta que recibirá el pago"
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
           />
         </label>
 
@@ -5644,7 +5798,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             onChange={(event) => setTransfermovilName(event.target.value)}
             maxLength={100}
             placeholder="Nombre del titular de la cuenta"
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
           />
         </label>
 
@@ -5657,7 +5811,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             onChange={(event) => setTransfermovilContactPhone(event.target.value)}
             maxLength={30}
             placeholder="Número de contacto para el comprador"
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
           />
           <span className="mt-1 block text-xs text-gray-500">
             Este número se mostrará al comprador. Puede ser el mismo que el móvil de verificación.
@@ -5673,7 +5827,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             onChange={(event) => setTransfermovilVerificationPhone(event.target.value)}
             maxLength={30}
             placeholder="Número del móvil que recibe los SMS de Transfermóvil"
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
           />
           <span className="mt-1 block text-xs text-gray-500">
             Indica el teléfono donde se reciben los SMS utilizados para comprobar los pagos.
@@ -5682,7 +5836,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       </div>
     </section>
 
-    <section className="rounded-lg border border-gray-200 p-3">
+    <section className="rounded-xl border border-gray-200 bg-muted/20 p-4 sm:p-5">
       <label className="flex items-center gap-2 font-semibold">
         <input
           type="checkbox"
@@ -5701,7 +5855,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           onChange={(event) => setEnzonaRecipient(event.target.value)}
           maxLength={150}
           placeholder="Usuario o destinatario para recibir el pago"
-          className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
         />
       </label>
 
@@ -5715,7 +5869,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           onChange={(event) => setEnzonaCardNumber(event.target.value)}
           maxLength={60}
           placeholder="Número de tarjeta receptora"
-          className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
         />
       </label>
 
@@ -5728,7 +5882,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           onChange={(event) => setEnzonaPhone(event.target.value)}
           maxLength={30}
           placeholder="Teléfono de contacto"
-          className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-2"
+          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
         />
       </label>
     </section>
@@ -5739,7 +5893,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       type="button"
       onClick={saveSellerPaymentSettings}
       disabled={paymentSettingsSaving}
-      className="rounded-lg bg-green-700 px-4 py-2 font-medium text-white disabled:opacity-50"
+      className="min-h-12 w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
     >
       {paymentSettingsSaving ? 'Guardando…' : 'Guardar configuración de pagos'}
     </button>
@@ -5749,9 +5903,10 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </div>
 </div>
 
-<div className="mb-4 rounded-xl border border-gray-200 p-4">
-  <h2 className="mb-3 text-lg font-semibold">Personalizar panel del vendedor</h2>
-  <div className="flex flex-wrap gap-3">
+<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 className="mb-2 text-lg font-bold tracking-tight">Personalizar panel del vendedor</h2>
+  <p className="mb-4 text-sm text-muted-foreground">Elige qué secciones quieres ver mientras administras tu negocio.</p>
+  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
     <button
       type="button"
       aria-pressed={showWallets}
@@ -5760,7 +5915,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         setShowWallets(next);
         saveSectionPreferences({ showWallets: next });
       }}
-      className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium"
+      className="min-h-12 w-full rounded-lg border border-gray-300 bg-background px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
     >
       {showWallets ? 'Ocultar billeteras de cobro' : 'Mostrar billeteras de cobro'}
     </button>
@@ -5772,7 +5927,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         setShowInventory(next);
         saveSectionPreferences({ showInventory: next });
       }}
-      className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium"
+      className="min-h-12 w-full rounded-lg border border-gray-300 bg-background px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
     >
       {showInventory ? 'Ocultar inventario' : 'Mostrar inventario'}
     </button>
@@ -5783,8 +5938,8 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 </div>
 
 {showWallets && (
-<div className="mb-6 rounded-xl border border-gray-200 p-4">
-  <h2 className="mb-2 text-lg font-semibold">Billeteras para recibir pagos</h2>
+<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 className="mb-2 text-lg font-bold tracking-tight">Billeteras para recibir pagos</h2>
   <p className="mb-4 text-sm text-gray-600">
     Configura las direcciones de destino de tu negocio. Deja vacío un campo para borrar esa dirección.
     {t.walletsNoTransfers}
@@ -5807,7 +5962,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             [network]: event.target.value
           }))}
           placeholder={`Dirección ${network}`}
-          className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+          className="mt-1 min-h-12 w-full rounded-lg border border-gray-300 bg-background px-3 py-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
         />
       </label>
     ))}
@@ -5817,7 +5972,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       type="button"
       onClick={saveCryptoPayoutWallets}
       disabled={walletSaving}
-      className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white disabled:opacity-50"
+      className="min-h-12 w-full rounded-lg bg-blue-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
     >
       {walletSaving ? 'Guardando…' : t.saveWallets}
     </button>
@@ -5829,7 +5984,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 {showInventory && (
 <>
 {/* Stats — 4 cards instead of 3 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Card><CardContent className="p-4">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{t.totalProducts}</div>
           <div className="text-2xl font-bold mt-1">{stats.total}</div>
@@ -5854,14 +6009,14 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="mb-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <TabsList className="flex flex-wrap h-auto">
-            <TabsTrigger value="all">Todos ({stats.total})</TabsTrigger>
-            <TabsTrigger value="active">Activos ({stats.active})</TabsTrigger>
-            <TabsTrigger value="out">
-              Agotados {stats.outOfStock > 0 && <span className="ml-1 text-orange-600 font-bold">({stats.outOfStock})</span>}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 sm:grid-cols-4 lg:w-auto">
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="all">Todos ({stats.total})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="active">Activos ({stats.active})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="out">
+              Agotados {stats.outOfStock > 0 && <span className="ml-1 font-bold text-orange-600">({stats.outOfStock})</span>}
             </TabsTrigger>
-            <TabsTrigger value="featured">Destacados ({stats.featured})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="featured">Destacados ({stats.featured})</TabsTrigger>
           </TabsList>
           <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input type="checkbox" checked={groupByCategory} onChange={(e) => setGroupByCategory(e.target.checked)} />
@@ -5908,9 +6063,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 )}
 
       {/* Seguimiento de pedidos del vendedor - Fase 5 */}
-      <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-4">
+      <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-5 scroll-mt-4">
         <div>
-          <h2 className="text-xl font-bold">{t.sellerOrdersTitle}</h2>
+          <h2 className="text-xl font-bold tracking-tight sm:text-2xl">{t.sellerOrdersTitle}</h2>
           <p className="text-sm text-muted-foreground">
             {t.sellerOrdersDesc}
           </p>
@@ -5949,7 +6104,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           </CardContent></Card>
         )}
 
-        <div className="space-y-4">
+        <div className="space-y-5">
           {sellerOrders.map((order) => {
             const form = sellerOrderForms[order.id] || {};
             const saving = Boolean(sellerOrderSaving[order.id]);
@@ -5968,9 +6123,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                 : (currentStatus === 'processing' ? ['processing', 'shipped'] : ['shipped', 'delivered']);
 
             return (
-              <Card key={order.id}>
-                <CardContent className="p-4 space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
+              <Card key={order.id} className="overflow-hidden border-border/80 shadow-sm">
+                <CardContent className="space-y-4 p-4 sm:p-5">
+                  <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
                     <div>
                       <h3 className="font-bold">{t.orderLabel} #{String(order.id || 'Sin identificador')}</h3>
                       <p className="text-xs text-muted-foreground">
@@ -5982,8 +6137,8 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     </Badge>
                   </div>
 
-                  <div className="rounded-md border p-3 space-y-1 text-sm">
-                    <h4 className="font-semibold">Datos de entrega</h4>
+                  <div className="space-y-2 rounded-xl border border-border/80 bg-muted/30 p-3 text-sm sm:p-4">
+                    <h4 className="font-semibold tracking-tight">Datos de entrega</h4>
                     <p>
                       <span className="font-medium">Destinatario:</span>{" "}
                       {order.shipping?.name || order.buyerName || "No indicado"}
@@ -6012,10 +6167,11 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     </p>
                   </div>
 
-                  <div className="flex justify-end">
+                  <div className="flex">
                     <Button
                       type="button"
                       variant="outline"
+                      className="min-h-11 w-full sm:w-auto"
                       size="sm"
                       onClick={() => downloadOrderInvoice(order)}
                     >
@@ -6057,11 +6213,11 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     </p>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
                       <Label>{t.shippingStatus}</Label>
                       <select
-                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                        className="min-h-12 w-full rounded-lg border border-input bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         value={form.status || currentStatus}
                         disabled={!paid || saving}
                         onChange={(e) => setSellerOrderForms((old) => ({
@@ -6083,6 +6239,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     <div className="space-y-1">
                       <Label>Transportista</Label>
                       <Input
+                        className="min-h-12 text-base focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         maxLength={50}
                         placeholder="Ej. transportista local"
                         value={form.trackingCarrier ?? order.trackingCarrier ?? ''}
@@ -6096,6 +6253,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     <div className="space-y-1 sm:col-span-2">
                       <Label>{t.trackingNumber}</Label>
                       <Input
+                        className="min-h-12 text-base focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         maxLength={100}
                         placeholder="Código o referencia del envío"
                         value={form.trackingNumber ?? order.trackingNumber ?? ''}
@@ -6109,7 +6267,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     <div className="space-y-1 sm:col-span-2">
                       <Label>{t.buyerNotes}</Label>
                       <textarea
-                        className="w-full min-h-20 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        className="min-h-24 w-full rounded-lg border border-input bg-background px-3 py-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         maxLength={1000}
                         placeholder="Información sobre la preparación o entrega"
                         value={form.notes ?? ''}
@@ -6123,6 +6281,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     <div className="space-y-1 sm:col-span-2">
                       <Label>{t.deliveryPhotos}</Label>
                       <Input
+                        className="min-h-12 cursor-pointer py-2 text-sm focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1 file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-semibold"
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
                         multiple
@@ -6150,8 +6309,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                           }
                         }}
                       />
-                      <p className="text-xs text-muted-foreground">
-                        Las fotos seleccionadas se subirán al guardar. Fotos ya registradas: {photos.length}/12.
+                      <p className="rounded-lg bg-muted/50 p-3 text-sm leading-relaxed text-muted-foreground">
+                        Puedes seleccionar hasta 4 fotos por actualización. Se subirán al guardar.
+                        Fotos registradas: <span className="font-semibold text-foreground">{photos.length}/12</span>.
                       </p>
                       {(form.deliveryPhotos || []).length > 0 && (
                         <p className="text-xs">{form.deliveryPhotos.length} foto(s) nuevas seleccionadas.</p>
@@ -6160,13 +6320,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                   </div>
 
                   {message && (
-                    <p className={`text-sm ${message.type === 'error' ? 'text-destructive' : 'text-green-600'}`}>
+                    <p role="status" aria-live="polite" className={`rounded-lg border p-3 text-sm font-medium ${message.type === 'error' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-green-600/30 bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-300'}`}>
                       {message.text}
                     </p>
                   )}
 
                   <Button
-                    className="bg-[#00A86B] hover:bg-[#008F5B] text-white"
+                    className="min-h-12 w-full bg-[#00A86B] px-5 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-[#008F5B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                     disabled={!paid || saving}
                     onClick={async () => {
                       setSellerOrderSaving((old) => ({ ...old, [order.id]: true }));
@@ -6217,6 +6377,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                         <Button
                           type="button"
                           variant="outline"
+                          className="min-h-12 w-full border-green-700 px-4 py-3 font-semibold text-green-800 transition-colors hover:bg-green-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 dark:text-green-300 dark:hover:bg-green-950/30 sm:w-auto"
                           disabled={!paid || saving || !order.publicInvoiceId}
                           onClick={async () => {
                             setSellerOrderSaving((old) => ({ ...old, [order.id]: true }));
@@ -6271,8 +6432,8 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                   )}
 
                   {history.length > 0 && (
-                    <details>
-                      <summary className="cursor-pointer text-sm font-semibold">{t.shippingHistory}</summary>
+                    <details className="rounded-lg border border-border/80 p-3">
+                      <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700">{t.shippingHistory}</summary>
                       <div className="mt-2 space-y-2">
                         {history.map((entry, index) => (
                           <div key={`${entry.at || index}-${index}`} className="border-l-2 pl-3 py-1 text-sm">

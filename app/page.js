@@ -755,15 +755,64 @@ const CURRENCY_INFO = {
 };
 const ALL_CURRENCIES = Object.keys(CURRENCY_INFO);
 
+const CurrencyIcon = ({ currency, className = 'h-5 w-5' }) => {
+  const code = String(currency || 'CUP').toUpperCase();
+  const logo = code === 'USDT'
+    ? '/coins/usdt.svg'
+    : code === 'USDC'
+      ? '/coins/usdc.svg'
+      : null;
+
+  if (logo) {
+    return (
+      <img
+        src={logo}
+        alt={`${code} logo`}
+        className={`${className} inline-block shrink-0 object-contain align-middle`}
+        loading="lazy"
+      />
+    );
+  }
+
+  const info = CURRENCY_INFO[code] || CURRENCY_INFO.CUP;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center text-base leading-none align-middle"
+      aria-hidden="true"
+    >
+      {info.flag}
+    </span>
+  );
+};
+
+const PriceWithCurrencyIcon = ({ value, currency = 'CUP', className = '' }) => {
+  const code = String(currency || 'CUP').toUpperCase();
+  const info = CURRENCY_INFO[code] || CURRENCY_INFO.CUP;
+  const numericValue = Number(value);
+  const formatted = new Intl.NumberFormat(info.locale, {
+    minimumFractionDigits: info.fractionDigits,
+    maximumFractionDigits: info.fractionDigits,
+  }).format(Number.isFinite(numericValue) ? numericValue : 0);
+
+  return (
+    <span className={`inline-flex items-center gap-1 ${className}`}>
+      <span>{formatted}</span>
+      <CurrencyIcon currency={code} />
+      <span>{info.label}</span>
+    </span>
+  );
+};
+
 const formatPrice = (n, currency = 'CUP') => {
   const num = Number(n || 0);
-  const info = CURRENCY_INFO[currency] || CURRENCY_INFO.CUP;
-  const code = info.label;
+  const code = String(currency || 'CUP').toUpperCase();
+  const info = CURRENCY_INFO[code] || CURRENCY_INFO.CUP;
   const formatted = new Intl.NumberFormat(info.locale, {
     minimumFractionDigits: info.fractionDigits,
     maximumFractionDigits: info.fractionDigits,
   }).format(num);
-  return `${formatted} ${code}`;
+
+  return `${formatted} ${info.label}`;
 };
 
 // === Cloudinary thumbnail helper ===
@@ -2404,7 +2453,7 @@ const App = () => {
                   const key = `${network.currency}:${network.network}`;
                   return (
                     <SelectItem key={key} value={key}>
-                      {network.label || `${network.currency} (${network.network})`}
+                      <CurrencyIcon currency={network.currency} /> {network.label || `${network.currency} (${network.network})`}
                     </SelectItem>
                   );
                 })}
@@ -3590,7 +3639,7 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
       </div>
 
       <CardContent className="p-3">
-        <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none">{formatPrice(p.price, p.currency)}</div>
+        <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none"><PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
         {['USD', 'USDT', 'USDC'].includes(String(p.currency || '').toUpperCase()) && Number(p.price) > 0 && Number(usdRate) > 0 && (
           <div className="text-xs font-semibold text-muted-foreground mt-1">
             {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number(p.price) * Number(usdRate))} CUP
@@ -3683,7 +3732,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
             {product.stock > 0 ? <Badge className="bg-green-500 text-white">{t.inStock}</Badge> : <Badge variant="destructive">{t.outOfStock}</Badge>}
           </div>
           <h1 className="text-3xl md:text-4xl font-extrabold">{product.name}</h1>
-          <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3">{formatPrice(product.price, product.currency)}</div>
+          <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3"><PriceWithCurrencyIcon value={product.price} currency={product.currency} className="text-4xl md:text-5xl font-extrabold text-[#00A86B]" /></div>
 
           <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-muted-foreground">
             {product.location && <span className="flex items-center gap-1"><MapPin className="h-4 w-4" /> {product.location}</span>}
@@ -5383,7 +5432,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="font-semibold truncate">{p.name}</div>
-            <div className="text-sm text-[#00A86B] font-bold">{formatPrice(p.price, p.currency)}</div>
+            <div className="text-sm text-[#00A86B] font-bold"><PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
             <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-1 mt-1">
               <Badge variant="outline" className="text-[10px]">{p.category}</Badge>
               <span>Stock: <b className={!p.stock || p.stock <= 0 ? 'text-orange-600' : ''}>{p.stock ?? 0}</b></span>
@@ -5991,7 +6040,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       </div>
                     ))}
                     <div className="font-semibold pt-1">
-                      Total: {formatPrice(Number(order.total || order.totalCUP || 0), order.currency || 'CUP')}
+                      Total: <PriceWithCurrencyIcon value={Number(order.total || order.totalCUP || 0)} currency={order.currency || 'CUP'} />
                     </div>
                   </div>
 
@@ -6645,7 +6694,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                 </div>
                 <CardContent className="p-3">
                   <div className="font-semibold truncate">{p.name}</div>
-                  <div className="text-xs text-muted-foreground truncate">{p.business?.name} · {formatPrice(p.price, p.currency)}</div>
+                  <div className="text-xs text-muted-foreground truncate">{p.business?.name} · <PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
                   <Button size="sm" variant="outline" onClick={() => onDeleteProduct(p.id)} className="mt-2 w-full text-destructive border-destructive/40">
                     <Trash2 className="h-3 w-3 mr-1" /> Eliminar
                   </Button>
@@ -6971,7 +7020,7 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
               <SelectContent>
                 {ALL_CURRENCIES.map((code) => (
                   <SelectItem key={code} value={code}>
-                    {CURRENCY_INFO[code].flag} {code}
+                    <CurrencyIcon currency={code} /> {code}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -7282,7 +7331,7 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
                 <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Todas</SelectItem>
-                  {ALL_CURRENCIES.map((code) => (<SelectItem key={code} value={code}>{CURRENCY_INFO[code].flag} {code}</SelectItem>))}
+                  {ALL_CURRENCIES.map((code) => (<SelectItem key={code} value={code}><CurrencyIcon currency={code} /> {code}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>

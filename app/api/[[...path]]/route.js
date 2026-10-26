@@ -2164,7 +2164,8 @@ async function route(request, method, path) {
       { projection: {
         _id: 0, publicInvoiceId: 1, businessName: 1, items: 1,
         subtotal: 1, total: 1, currency: 1, createdAt: 1,
-        paymentStatus: 1, status: 1, cryptoInvoiceId: 1
+        paymentStatus: 1, status: 1, cryptoInvoiceId: 1,
+        paymentMethod: 1, localPaymentAmountCUP: 1
       }}
     );
     if (!order) return json({ error: 'Factura no encontrada' }, 404);
@@ -2198,6 +2199,12 @@ async function route(request, method, path) {
       items,
       total: Number(order.total ?? order.subtotal ?? 0) || 0,
       currency: String(order.currency || 'CUP').slice(0, 12),
+      paymentMethod: String(order.paymentMethod || '').toLowerCase(),
+      localPaymentAmountCUP:
+        Number.isFinite(Number(order.localPaymentAmountCUP)) &&
+        Number(order.localPaymentAmountCUP) > 0
+          ? Number(order.localPaymentAmountCUP)
+          : null,
       createdAt: order.createdAt || null,
       paymentStatus: String(order.paymentStatus || order.status || 'unknown'),
       crypto: cryptoStatus
@@ -4883,6 +4890,35 @@ function sanitizeBuyerOrder(order) {
     y -= 8;
     drawLine('Total: ' + (Number(order.total ?? order.subtotal ?? 0) || 0).toFixed(2) +
       ' ' + String(order.currency || 'CUP'), { size: 14, bold: true, gap: 25 });
+
+    const invoicePaymentMethod = String(order.paymentMethod || '').toLowerCase();
+    if (['transfermovil', 'enzona'].includes(invoicePaymentMethod)) {
+      const savedLocalAmount = Number(order.localPaymentAmountCUP);
+      const localAmount =
+        Number.isFinite(savedLocalAmount) && savedLocalAmount > 0
+          ? savedLocalAmount
+          : invoiceCurrency === 'CUP' &&
+            Number.isFinite(Number(order.total)) &&
+            Number(order.total) > 0
+            ? Number(order.total)
+            : null;
+
+      if (localAmount !== null) {
+        const paymentLabel = invoicePaymentMethod === 'transfermovil'
+          ? 'TRANSFERMÓVIL'
+          : 'ENZONA';
+        drawLine(
+          'IMPORTE A TRANSFERIR POR ' + paymentLabel + ': ' +
+          localAmount.toFixed(2) + ' CUP',
+          { size: 13, bold: true, gap: 25 }
+        );
+      } else {
+        drawLine(
+          'IMPORTE A TRANSFERIR EN CUP: NO DISPONIBLE. Confirmar con soporte antes de pagar.',
+          { size: 10, bold: true, gap: 25 }
+        );
+      }
+    }
 
     const paymentStatus = String(order.paymentStatus || order.status || 'unknown');
     const statusLabels = {

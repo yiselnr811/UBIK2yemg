@@ -3094,7 +3094,27 @@ function PublicInvoiceScanner({ token, user, business, onLoginNeeded }) {
                     )}</ul>
                   : <p>Sin detalles de productos disponibles.</p>}
               </div>
-              <p><b>Total:</b> {invoice.total ?? '—'} {invoice.currency || '—'}</p>
+              <p><b>Total original:</b> {invoice.total ?? '—'} {invoice.currency || '—'}</p>
+              {['transfermovil', 'enzona'].includes(
+                String(invoice.paymentMethod || '').toLowerCase()
+              ) && (
+                Number.isFinite(Number(invoice.localPaymentAmountCUP)) &&
+                Number(invoice.localPaymentAmountCUP) > 0 ? (
+                  <p className="font-bold text-green-800">
+                    Importe a transferir: {formatMoney(Number(invoice.localPaymentAmountCUP), 'CUP')}
+                  </p>
+                ) : String(invoice.currency || 'CUP').toUpperCase() === 'CUP' &&
+                  Number.isFinite(Number(invoice.total)) &&
+                  Number(invoice.total) > 0 ? (
+                  <p className="font-bold text-green-800">
+                    Importe a transferir: {formatMoney(Number(invoice.total), 'CUP')}
+                  </p>
+                ) : (
+                  <p className="font-semibold text-red-700">
+                    Importe CUP no disponible. Confirma con soporte antes de pagar.
+                  </p>
+                )
+              )}
               <p><b>Estado del pago:</b> {invoice.paymentStatus || 'No disponible'}</p>
               <p className="text-xs text-gray-700">
                 La validez de la factura no demuestra por sí sola que el pago esté confirmado.
@@ -4542,7 +4562,6 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     </p>
 
                     {['transfermovil', 'enzona'].includes(order.paymentMethod) &&
-                     String(order.currency || '').toUpperCase() === 'CUP' &&
                      order.paymentStatus === 'pending_payment' && (
                       <div className="mt-3 rounded-lg border p-3 space-y-3">
                         <h4 className="font-semibold">Referencia de transferencia</h4>
@@ -4664,6 +4683,30 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     <div className="text-xl font-bold">
                       {formatMoney(order.total, order.currency || 'USD')}
                     </div>
+                    {['transfermovil', 'enzona'].includes(
+                      String(order.paymentMethod || '').toLowerCase()
+                    ) && (() => {
+                      const savedAmount = Number(order.localPaymentAmountCUP);
+                      const currency = String(order.currency || 'CUP').toUpperCase();
+                      const localAmount =
+                        Number.isFinite(savedAmount) && savedAmount > 0
+                          ? savedAmount
+                          : currency === 'CUP' &&
+                            Number.isFinite(Number(order.total)) &&
+                            Number(order.total) > 0
+                            ? Number(order.total)
+                            : null;
+
+                      return localAmount != null ? (
+                        <div className="mt-1 text-sm font-semibold text-green-700">
+                          Importe a transferir: {formatMoney(localAmount, 'CUP')}
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-sm font-semibold text-red-600">
+                          Importe CUP no disponible. Confirma el importe con soporte antes de pagar.
+                        </div>
+                      );
+                    })()}
                     <div className="text-sm text-muted-foreground">
                       {order.businessName || 'Comercio'}
                     </div>
@@ -7253,7 +7296,7 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
   );
 };
 
-const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack, usdRate: currentUsdRate }) => {
+const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }) => {
   const method = order?.paymentMethod;
   const details = order?.paymentDetails || {};
 
@@ -7263,7 +7306,8 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack, 
   const orderCurrency = String(order?.currency || 'CUP').toUpperCase();
   const originalSubtotal = Number(order?.subtotal);
   const deliveryFeeCUP = Number(order?.deliveryFeeCUP ?? 0);
-  const conversionRate = Number(order?.deliveryFeeUsdRate ?? currentUsdRate);
+  // No usar la tasa actual para reconstruir importes de pedidos antiguos.
+  const conversionRate = Number(order?.deliveryFeeUsdRate);
 
   const derivedLocalAmountCUP = orderCurrency === 'CUP'
     ? (Number.isFinite(Number(order?.total)) && Number(order.total) > 0

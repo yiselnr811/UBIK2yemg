@@ -2272,7 +2272,7 @@ async function route(request, method, path) {
   if (path[0] === 'auth') {
     if (path[1] === 'register' && method === 'POST') {
       const body = await request.json();
-      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook, businessType, country } = body || {};
+      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook, businessType, country, province, municipality, address } = body || {};
       const type = accountType === 'buyer' ? 'buyer' : 'seller';
       if (!email || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
       if (type === 'seller' && (!businessName || !whatsapp)) {
@@ -2308,6 +2308,9 @@ async function route(request, method, path) {
           facebook: facebook || '',
           businessType: businessType || 'tienda',
           country: country || 'Cuba',
+          province: typeof province === 'string' ? province.trim() : '',
+          municipality: typeof municipality === 'string' ? municipality.trim() : '',
+          address: typeof address === 'string' ? address.trim() : '',
           verified: false,
           createdAt: now,
         };
@@ -2911,26 +2914,47 @@ async function route(request, method, path) {
       if (excludeFeatured) filter.featured = { $ne: true };
       if (businessId) filter.businessId = businessId;
       // Filter by business name OR by business type / country (regex on businesses, then narrow by businessId)
-      if (businessName || businessType || country) {
+      if (businessName || businessType || country || province || municipality) {
         const bizFilter = {};
-        if (businessName) bizFilter.name = { $regex: escapeRe(businessName), $options: 'i' };
+        const bizAnd = [];
+        if (businessName) bizFilter.name = { $regex: escapeRe(businessName.trim()), $options: 'i' };
         if (businessType) bizFilter.businessType = businessType;
-        if (country) bizFilter.country = { $regex: escapeRe(country), $options: 'i' };
+        if (country) bizFilter.country = { $regex: escapeRe(country.trim()), $options: 'i' };
+
+        if (province) {
+          const re = { $regex: escapeRe(province.trim()), $options: 'i' };
+          bizAnd.push({ $or: [{ province: re }, { location: re }, { address: re }] });
+        }
+        if (municipality) {
+          const re = { $regex: escapeRe(municipality.trim()), $options: 'i' };
+          bizAnd.push({ $or: [{ municipality: re }, { location: re }, { address: re }] });
+        }
+        if (bizAnd.length) bizFilter.$and = bizAnd;
+
         const matchingBiz = await db.collection('businesses')
           .find(bizFilter, { projection: { id: 1 } })
           .limit(500)
           .toArray();
-        const ids = matchingBiz.map((b) => b.id);
+        const ids = matchingBiz.map((b) => b.id).filter(Boolean);
+
         if (ids.length === 0) {
           return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 30);
         }
-        filter.businessId = filter.businessId
-          ? (ids.includes(filter.businessId) ? filter.businessId : '__no_match__')
-          : { $in: ids };
+
+        const businessMatch = { businessId: { $in: ids } };
+        if (filter.businessId) {
+          if (!ids.includes(filter.businessId)) {
+            return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 30);
+          }
+        } else {
+          filter.businessId = businessMatch.businessId;
+        }
+
+        // La provincia y el municipio se verifican en el negocio asociado.
+        // No exigir que también estén duplicados en cada producto.
       }
       if (location) filter.location = { $regex: escapeRe(location), $options: 'i' };
-      if (province) filter.$and.push({ $or: [{ province: { $regex: escapeRe(province), $options: 'i' } }, { location: { $regex: escapeRe(province), $options: 'i' } }] });
-      if (municipality) filter.$and.push({ $or: [{ municipality: { $regex: escapeRe(municipality), $options: 'i' } }, { location: { $regex: escapeRe(municipality), $options: 'i' } }] });
+
       if (physicalOnly) filter.showPublicContact = false;
       if (priceMin || priceMax) {
         filter.price = {};

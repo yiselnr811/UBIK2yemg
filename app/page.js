@@ -1185,7 +1185,7 @@ const App = () => {
   const refreshHome = useCallback(() => {
     setLoading(true);
     setPage(1);
-    const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
+    const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.country || filters.province || filters.municipality || filters.businessName || filters.businessType;
     // Show ALL products (incl. featured) in main grid so destacados también aparecen en "Recientes".
     // Featured section sigue cargando aparte para el carrusel arriba.
     const mainQ = buildQuery({ page: '1' });
@@ -3258,7 +3258,7 @@ function PublicInvoiceScanner({ token, user, business, onLoginNeeded }) {
 const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onSearch, onPublish, onRegister, isLogged, token, user, business, onLoginNeeded, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites, onAddToCart, usdRate }) => {
   const [showFeaturedProducts, setShowFeaturedProducts] = React.useState(true);
   const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
-  const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
+  const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.province || filters.municipality || filters.businessName || filters.featuredOnly;
 
   // Smooth scroll helper
   const scrollToExplore = () => {

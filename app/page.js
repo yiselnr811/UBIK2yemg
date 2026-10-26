@@ -2268,13 +2268,40 @@ const App = () => {
                   const feeCUP = deliveryMethod === 'delivery'
                     ? Number(checkoutBusiness?.deliveryFeeCUP ?? 0)
                     : 0;
+                  const isLocalPayment = ['transfermovil', 'enzona'].includes(
+                    String(checkoutPaymentMethod || '').toLowerCase()
+                  );
+                  const supportedCurrencies = ['USD', 'USDT', 'USDC'];
+                  const localSubtotalCUP = currency === 'CUP'
+                    ? subtotal
+                    : supportedCurrencies.includes(currency)
+                      ? roundMoney(subtotal * rate)
+                      : null;
+                  const localTotalCUP = localSubtotalCUP !== null &&
+                    Number.isFinite(feeCUP) && feeCUP >= 0
+                      ? roundMoney(localSubtotalCUP + feeCUP)
+                      : null;
+
                   const fee = currency === 'CUP' ? roundMoney(feeCUP)
-                    : ['USD', 'USDT', 'USDC'].includes(currency) ? roundMoney(feeCUP / rate) : null;
+                    : supportedCurrencies.includes(currency) ? roundMoney(feeCUP / rate) : null;
+
                   return (
                     <div className="mb-3 space-y-1 rounded-lg border bg-muted/40 p-3 text-sm" aria-live="polite">
-                      <p>Subtotal: <strong>{subtotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</strong></p>
-                      <p>{deliveryMethod === 'delivery' ? 'Tarifa de entrega' : 'Entrega'}: <strong>{fee === null ? 'Conversión no disponible' : `${fee.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</strong></p>
-                      <p className="font-bold">Total estimado: {fee === null ? 'No disponible' : `${roundMoney(subtotal + fee).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</p>
+                      {isLocalPayment ? (
+                        <>
+                          <p>Precio original: <strong>{subtotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</strong></p>
+                          <p>Tasa de cambio: <strong>{rate.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP por USD</strong></p>
+                          <p>Subtotal convertido: <strong>{localSubtotalCUP === null ? 'Conversión no disponible' : `${localSubtotalCUP.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`}</strong></p>
+                          <p>Entrega: <strong>{feeCUP.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP</strong></p>
+                          <p className="font-bold text-green-800">Importe estimado a transferir: {localTotalCUP === null ? 'No disponible' : `${localTotalCUP.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p>Subtotal: <strong>{subtotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</strong></p>
+                          <p>{deliveryMethod === 'delivery' ? 'Tarifa de entrega' : 'Entrega'}: <strong>{fee === null ? 'Conversión no disponible' : `${fee.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</strong></p>
+                          <p className="font-bold">Total estimado: {fee === null ? 'No disponible' : `${roundMoney(subtotal + fee).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</p>
+                        </>
+                      )}
                       <p className="text-xs text-muted-foreground">El servidor calcula y confirma el total definitivo.</p>
                     </div>
                   );

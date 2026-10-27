@@ -1095,7 +1095,7 @@ const App = () => {
 
   // Admin
   const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [], transfermovilEvents: [] });
-  const [adminTab, setAdminTab] = useState('payments');
+  const [adminTab, setAdminTab] = useState('overview');
   const [adminSettings, setAdminSettings] = useState(null);
 
   const t = useMemo(() => TRANSLATIONS[lang] || TRANSLATIONS.es, [lang]);
@@ -2160,7 +2160,7 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className={`min-h-screen bg-background flex flex-col ${user && view !== 'checkout' ? 'pb-24 md:pb-0' : ''}`}>
       {/* ====== HEADER ====== */}
       <Header
         t={t} lang={lang} setLang={setLang} dark={dark} setDark={setDark}
@@ -2320,8 +2320,130 @@ const App = () => {
             getOrderStatusLabel={getOrderStatusLabel}
           />
         )}
-      </main>
+      {user && view !== 'checkout' && (
+        <nav className="ubik-bottom-nav" aria-label="Accesos rápidos">
+          {(user.role === 'admin'
+            ? [
+                { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
+                { label: 'Resumen', icon: LayoutDashboard, active: view === 'admin' && adminTab === 'overview', action: () => { setView('admin'); setAdminTab('overview'); } },
+                { label: 'Pedidos', icon: ShoppingBag, active: view === 'admin' && adminTab === 'orders', action: () => { setAdminTab('orders'); setView('admin'); } },
+                { label: 'Usuarios', icon: ShieldCheck, active: view === 'admin' && adminTab === 'users', action: () => { setAdminTab('users'); setView('admin'); } },
+                {
+                  label: 'Más',
+                  icon: Menu,
+                  active: view === 'admin' && ['payments', 'crypto-invoices', 'transfermovil', 'reports', 'products', 'settings'].includes(adminTab),
+                  menu: [
+                    { label: 'Pagos locales', value: 'payments' },
+                    { label: 'Facturas cripto', value: 'crypto-invoices' },
+                    { label: 'Transfermóvil', value: 'transfermovil' },
+                    { label: 'Reportes', value: 'reports' },
+                    { label: 'Productos', value: 'products' },
+                    { label: 'Configuración', value: 'settings' },
+                  ],
+                },
+              ]
+            : business
+              ? [
+                  { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
+                  { label: 'Mi panel', icon: LayoutDashboard, active: view === 'dashboard', action: () => setView('dashboard') },
+                  { label: 'Publicar', icon: Plus, active: false, action: () => { setView('dashboard'); setTimeout(openProductCreate, 150); } },
+                  { label: 'Pedidos', icon: ShoppingBag, active: false, action: () => { setView('dashboard'); setTimeout(() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250); } },
+                  {
+                    label: 'Más',
+                    icon: Menu,
+                    active: view === 'dashboard' || view === 'business',
+                    menu: [
+                      { label: 'Mi tienda', target: 'business' },
+                      { label: 'Datos del negocio y ubicación', target: 'sellerBusinessProfile' },
+                      { label: 'Inventario y productos', target: 'sellerInventory' },
+                      { label: 'Entregas a domicilio', target: 'sellerDeliverySettings' },
+                      { label: 'Transfermóvil y EnZona', target: 'sellerLocalPayments' },
+                      { label: 'Billeteras de criptomonedas', target: 'sellerCryptoWallets' },
+                      { label: 'Personalizar panel', target: 'sellerPanelPreferences' },
+                    ],
+                  },
+                ]
+              : [
+                  { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
+                  { label: 'Buscar', icon: Search, active: false, action: () => { setView('home'); setTimeout(() => document.querySelector('input[placeholder*="Buscar"], input[placeholder*="buscar"]')?.focus(), 150); } },
+                  { label: 'Carrito', icon: ShoppingBag, active: view === 'cart', action: () => setView('cart') },
+                  { label: 'Pedidos', icon: CreditCard, active: view === 'buyer-orders', action: () => setView('buyer-orders') },
+                  { label: 'Mi cuenta', icon: LayoutDashboard, active: view === 'dashboard', action: () => setView('dashboard') },
+                ]
+          ).map((item) => {
+            const Icon = item.icon;
+            if (item.menu) {
+              return (
+                <DropdownMenu key={item.label}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={`ubik-bottom-nav__item${item.active ? ' is-active' : ''}`}
+                      aria-label={user.role === 'admin' ? 'Más secciones administrativas' : 'Más opciones del negocio'}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span>{item.label}</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="top" className="w-64">
+                    <DropdownMenuLabel>
+                      {user.role === 'admin' ? 'Administración' : 'Mi negocio'}
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {item.menu.map((entry) => (
+                      <DropdownMenuItem
+                        key={entry.value || entry.target}
+                        onSelect={() => {
+                          if (user.role === 'admin') {
+                            setView('admin');
+                            setAdminTab(entry.value);
+                            return;
+                          }
 
+                          if (entry.target === 'business') {
+                            const id = business?._id || business?.id;
+                            if (id) openBusiness(id);
+                            else setView('dashboard');
+                            return;
+                          }
+
+                          setView('dashboard');
+                          window.setTimeout(() => {
+                            const targetElement = document.getElementById(entry.target) ||
+                              (entry.target === 'sellerInventory' ? document.getElementById('sellerPanelPreferences') : null);
+                            targetElement?.scrollIntoView({
+                              behavior: 'smooth',
+                              block: 'start',
+                            });
+                          }, 250);
+                        }}
+                      >
+                        {entry.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              );
+            }
+
+            return (
+              <button
+                key={item.label}
+                type="button"
+                onClick={item.action}
+                className={`ubik-bottom-nav__item${item.active ? ' is-active' : ''}`}
+                aria-label={item.label}
+                aria-current={item.active ? 'page' : undefined}
+              >
+                <Icon aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
+      </main>
       {/* Publicidad A-ADS solo en vistas públicas; nunca durante el pago ni en administración */}
       {['home', 'product', 'business', 'favorites'].includes(view) && (
         <AadsFloatingAd />
@@ -5869,7 +5991,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       )}
 
 
-<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+<div id="sellerBusinessProfile" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
   <h2 className="mb-3 text-lg font-bold tracking-tight">Mi negocio: descripción y ubicación</h2>
   <div className="grid grid-cols-1 gap-3">
     <label className="block text-sm font-medium">
@@ -5894,7 +6016,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       />
     </label>
     {business?.deliveryEnabled === true ? (
-      <div className="rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+      <div id="sellerDeliverySettings" className="scroll-mt-24 rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
         <label className="block text-sm font-semibold">
           Tarifa de entrega a domicilio (CUP)
           <input
@@ -5922,7 +6044,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         </button>
       </div>
     ) : (
-      <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+      <div id="sellerDeliverySettings" className="scroll-mt-24 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
         <strong>Entrega a domicilio no habilitada.</strong>
         <p className="mt-1">
           Solicita al administrador que autorice las entregas para tu negocio. Cuando estén habilitadas, podrás configurar aquí el costo en CUP.
@@ -5943,7 +6065,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </div>
 </div>
 
-<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+<div id="sellerLocalPayments" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
   <h2 id="sellerPaymentSettings" className="mb-2 scroll-mt-6 text-lg font-bold tracking-tight">Configurar pagos por Transfermóvil y EnZona</h2>
   <p className="mb-4 text-sm text-gray-600">
     Introduce los datos de tu negocio que verá el comprador. Comprueba que sean correctos antes de habilitar cada método.
@@ -6088,7 +6210,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </div>
 </div>
 
-<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+<div id="sellerPanelPreferences" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
   <h2 className="mb-2 text-lg font-bold tracking-tight">Personalizar panel del vendedor</h2>
   <p className="mb-4 text-sm text-muted-foreground">Elige qué secciones quieres ver mientras administras tu negocio.</p>
   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -6123,7 +6245,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 </div>
 
 {showWallets && (
-<div className="mb-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+<div id="sellerCryptoWallets" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
   <h2 className="mb-2 text-lg font-bold tracking-tight">Billeteras para recibir pagos</h2>
   <p className="mb-4 text-sm text-gray-600">
     Configura las direcciones de destino de tu negocio. Deja vacío un campo para borrar esa dirección.
@@ -6169,7 +6291,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 {showInventory && (
 <>
 {/* Stats — 4 cards instead of 3 */}
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+      <div id="sellerInventory" className="mb-6 scroll-mt-24 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Card><CardContent className="p-4">
           <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{t.totalProducts}</div>
           <div className="text-2xl font-bold mt-1">{stats.total}</div>
@@ -6689,7 +6811,8 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
         </div>
       )}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="flex h-auto flex-wrap gap-1">
+          <TabsTrigger value="overview">Resumen</TabsTrigger>
           <TabsTrigger value="payments">Pagos {pending.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pending.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="crypto-invoices">Crypto Invoices {cryptoPending > 0 && <Badge className="ml-2 bg-blue-500 text-white border-0">{cryptoPending}</Badge>}</TabsTrigger>
           <TabsTrigger value="transfermovil">
@@ -6701,6 +6824,38 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
           <TabsTrigger value="products">Productos</TabsTrigger>
           <TabsTrigger value="settings">Configuración</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {[
+              { label: 'Productos', value: stats?.products ?? products.length, tab: 'products', icon: Store },
+              { label: 'Negocios', value: stats?.businesses ?? '—', tab: 'users', icon: LayoutDashboard },
+              { label: 'Usuarios', value: stats?.users ?? users.length, tab: 'users', icon: ShieldCheck },
+              { label: 'Pagos pendientes', value: pending.length, tab: 'payments', icon: CreditCard },
+              { label: 'Facturas cripto pendientes', value: cryptoPending, tab: 'crypto-invoices', icon: Wallet },
+              { label: 'Transfermóvil por revisar', value: transfermovilPending, tab: 'transfermovil', icon: CheckCircle },
+              { label: 'Pedidos', value: (data.orders || []).length, tab: 'orders', icon: ShoppingBag },
+              { label: 'Reportes pendientes', value: pendingReports.length, tab: 'reports', icon: AlertCircle },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => setTab(item.tab)}
+                  className="min-h-24 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    {item.label}
+                  </span>
+                  <span className="mt-2 block text-2xl font-bold">{item.value}</span>
+                  <span className="mt-1 block text-xs text-primary">Abrir sección →</span>
+                </button>
+              );
+            })}
+          </div>
+        </TabsContent>
 
         <TabsContent value="payments" className="mt-4 space-y-3">
           {payments.length === 0 ? <p className="text-muted-foreground text-center py-12">No hay pagos.</p> : payments.map((p) => (

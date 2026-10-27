@@ -199,3 +199,76 @@
     display: none !important;
   }
 }
+
+
+/* Menú inferior accesible de UBIK2 YEMG */
+.ubik-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .ubik-bottom-nav {
+    position: fixed;
+    z-index: 40;
+    inset: auto 0 0;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 2px;
+    padding: 6px 5px calc(6px + env(safe-area-inset-bottom));
+    background: hsl(var(--card));
+    border-top: 1px solid hsl(var(--border));
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.08);
+  }
+
+  .ubik-bottom-nav__item {
+    display: flex;
+    min-width: 0;
+    min-height: 52px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 5px 1px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: hsl(var(--muted-foreground));
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .ubik-bottom-nav__item svg {
+    width: 21px;
+    height: 21px;
+    flex-shrink: 0;
+  }
+
+  .ubik-bottom-nav__item span {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+
+  .ubik-bottom-nav__item.is-active {
+    background: hsl(var(--primary) / 0.10);
+    color: hsl(var(--primary));
+  }
+
+  .ubik-bottom-nav__item:focus-visible {
+    outline: 3px solid hsl(var(--ring));
+    outline-offset: -2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ubik-bottom-nav *,
+    .ubik-bottom-nav *::before,
+    .ubik-bottom-nav *::after {
+      scroll-behavior: auto !important;
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+}

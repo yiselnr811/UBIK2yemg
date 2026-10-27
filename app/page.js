@@ -5247,7 +5247,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                   </h4>
                   {Array.isArray(order.items) && order.items.length > 0 ? (
                     <ul className="space-y-2">
-                      {order.items.map((item, index) => (
+                      {(Array.isArray(order.items) ? order.items.filter(Boolean) : []).map((item, index) => (
                         <li
                           key={item.productId || item.id || index}
                           className="flex flex-col gap-1 rounded-lg bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
@@ -6807,15 +6807,16 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel }) => {
   const [editBiz, setEditBiz] = useState(null);
   const [showBusinessEditControls, setShowBusinessEditControls] = useState(false);
-  const payments = Array.isArray(data?.payments) ? data.payments : [];
-  const users = Array.isArray(data?.users) ? data.users : [];
-  const products = Array.isArray(data?.products) ? data.products : [];
+  const payments = Array.isArray(data?.payments) ? data.payments.filter(Boolean) : [];
+  const users = Array.isArray(data?.users) ? data.users.filter(Boolean) : [];
+  const products = Array.isArray(data?.products) ? data.products.filter(Boolean) : [];
+  const orders = Array.isArray(data?.orders) ? data.orders.filter(Boolean) : [];
   const stats = data?.stats ?? null;
-  const reports = Array.isArray(data?.reports) ? data.reports : [];
+  const reports = Array.isArray(data?.reports) ? data.reports.filter(Boolean) : [];
   const pending = payments.filter((p) => p?.status === 'pending');
   const pendingReports = reports.filter((r) => r?.status === 'pending');
-  const cryptoInvoices = data.cryptoInvoices || [];
-  const transfermovilEvents = Array.isArray(data?.transfermovilEvents) ? data.transfermovilEvents : [];
+  const cryptoInvoices = Array.isArray(data?.cryptoInvoices) ? data.cryptoInvoices.filter(Boolean) : [];
+  const transfermovilEvents = Array.isArray(data?.transfermovilEvents) ? data.transfermovilEvents.filter(Boolean) : [];
   const transfermovilPending = transfermovilEvents.filter((event) =>
     ['pending_review', 'matching_reference', 'paid_reconciliation_error'].includes(event?.status)
   ).length;
@@ -6856,7 +6857,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
           <TabsTrigger value="transfermovil">
             Transfermóvil {transfermovilPending > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{transfermovilPending}</Badge>}
           </TabsTrigger>
-          <TabsTrigger value="orders">Pedidos ({(data.orders || []).length})</TabsTrigger>
+          <TabsTrigger value="orders">Pedidos ({orders.length})</TabsTrigger>
           <TabsTrigger value="reports">Reportes {pendingReports.length > 0 && <Badge className="ml-2 bg-red-500 text-white border-0">{pendingReports.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="users">Usuarios</TabsTrigger>
           <TabsTrigger value="products">Productos</TabsTrigger>
@@ -6872,7 +6873,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
               { label: 'Pagos pendientes', value: pending.length, tab: 'payments', icon: CreditCard },
               { label: 'Facturas cripto pendientes', value: cryptoPending, tab: 'crypto-invoices', icon: Wallet },
               { label: 'Transfermóvil por revisar', value: transfermovilPending, tab: 'transfermovil', icon: CheckCircle },
-              { label: 'Pedidos', value: (data.orders || []).length, tab: 'orders', icon: ShoppingBag },
+              { label: 'Pedidos', value: orders.length, tab: 'orders', icon: ShoppingBag },
               { label: 'Reportes pendientes', value: pendingReports.length, tab: 'reports', icon: AlertCircle },
             ].map((item) => {
               const Icon = item.icon;
@@ -7056,9 +7057,9 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
         </TabsContent>
 
         <TabsContent value="orders" className="mt-4 space-y-3">
-          {(data.orders || []).length === 0 ? (
+          {orders.length === 0 ? (
             <p className="text-muted-foreground text-center py-12">Todavía no hay pedidos.</p>
-          ) : (data.orders || []).map((order) => (
+          ) : orders.map((order) => (
             <Card key={order.id}>
               <CardContent className="p-4 space-y-3">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -7072,7 +7073,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                     <p className="text-sm">Teléfono: {order.shipping?.phone || '—'}</p>
                   </div>
                   <div className="space-y-2 md:text-right">
-                    <Badge>{getOrderStatusLabel(order.status || 'pending_payment')}</Badge>
+                    <Badge>{typeof getOrderStatusLabel === 'function' ? getOrderStatusLabel(order.status || 'pending_payment') : (order.status || 'Pendiente')}</Badge>
                     <p className="font-bold text-lg">
                       {order.currency || 'USD'} {Number(order.total ?? order.subtotal ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
@@ -7088,11 +7089,11 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
 
                 <div>
                   <h4 className="font-semibold mb-2">Productos comprados</h4>
-                  {(order.items || []).length === 0 ? (
+                  {(Array.isArray(order.items) ? order.items.filter(Boolean) : []).length === 0 ? (
                     <p className="text-sm text-muted-foreground">El pedido no contiene artículos visibles.</p>
                   ) : (
                     <div className="space-y-2">
-                      {order.items.map((item, index) => (
+                      {(Array.isArray(order.items) ? order.items.filter(Boolean) : []).map((item, index) => (
                         <div key={item.productId || index} className="flex justify-between gap-3 text-sm border-b pb-2">
                           <span>{item.productName || 'Producto'} × {Number(item.quantity || 0)}</span>
                           <span className="font-medium">

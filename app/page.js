@@ -2365,7 +2365,16 @@ const App = () => {
                 ]
               : [
                   { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
-                  { label: 'Buscar', icon: Search, active: false, action: () => { setView('home'); setTimeout(() => document.querySelector('input[placeholder*="Buscar"], input[placeholder*="buscar"]')?.focus(), 150); } },
+                  { label: 'Buscar', icon: Search, active: false, action: () => {
+                    setView('home');
+                    window.setTimeout(() => {
+                      const visibleSearch = Array.from(
+                        document.querySelectorAll('header input[role="combobox"]')
+                      ).find((input) => input.getClientRects().length > 0);
+                      visibleSearch?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      visibleSearch?.focus();
+                    }, 200);
+                  } },
                   { label: 'Carrito', icon: ShoppingBag, active: view === 'cart', action: () => setView('cart') },
                   { label: 'Pedidos', icon: CreditCard, active: view === 'buyer-orders', action: () => setView('buyer-orders') },
                   { label: 'Mi cuenta', icon: LayoutDashboard, active: view === 'dashboard', action: () => setView('dashboard') },
@@ -2401,7 +2410,7 @@ const App = () => {
                           }
 
                           if (entry.target === 'business') {
-                            const id = business?._id || business?.id;
+                            const id = business?.id;
                             if (id) openBusiness(id);
                             else setView('dashboard');
                             return;
@@ -2971,14 +2980,12 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
           aria-controls={suggestionId}
           aria-activedescendant={show && activeIndex >= 0 && activeIndex < suggestions.length ? `${suggestionId}-option-${activeIndex}` : undefined}
           onKeyDown={handleSearchKeyDown}
-          className={compact ? 'pl-9 h-9' : 'pl-9 pr-20 h-10 bg-muted/40'}
+          className={compact ? 'pl-9 pr-16 h-9' : 'pl-9 pr-20 h-10 bg-muted/40'}
           autoComplete="off"
         />
-        {!compact && (
-          <Button type="submit" size="sm" aria-label="Buscar" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
-            Buscar
-          </Button>
-        )}
+        <Button type="submit" size="sm" aria-label="Buscar" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
+          Buscar
+        </Button>
       </form>
       {show && (
         <div

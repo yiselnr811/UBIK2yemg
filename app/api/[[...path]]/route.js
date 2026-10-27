@@ -2928,13 +2928,35 @@ async function route(request, method, path) {
       filter.$and = [{ $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] }];
       // Escape regex special chars so users can search with parens, dots, dashes, etc.
       const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (q) {
+      if (q.trim()) {
         const safeQ = escapeRe(q.trim());
-        filter.$or = [
+
+        const matchingBusinesses = await db.collection('businesses')
+          .find(
+            { name: { $regex: safeQ, $options: 'i' } },
+            { projection: { id: 1 } }
+          )
+          .limit(500)
+          .toArray();
+
+        const matchingBusinessIds = matchingBusinesses
+          .map((business) => business.id)
+          .filter(Boolean);
+
+        const searchConditions = [
           { name: { $regex: safeQ, $options: 'i' } },
           { description: { $regex: safeQ, $options: 'i' } },
           { category: { $regex: safeQ, $options: 'i' } },
         ];
+
+        if (matchingBusinessIds.length) {
+          searchConditions.push({
+            businessId: { $in: matchingBusinessIds },
+          });
+        }
+
+        // Mantener el filtro de stock y combinar correctamente la búsqueda.
+        filter.$and.push({ $or: searchConditions });
       }
       if (category) filter.category = category;
       if (subcategory) filter.subcategory = subcategory;

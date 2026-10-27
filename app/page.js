@@ -2179,6 +2179,7 @@ const App = () => {
         dataSaver={dataSaver} setDataSaver={setDataSaver}
         suggestions={suggestions} suggestOpen={suggestOpen} setSuggestOpen={setSuggestOpen}
         suggestLoading={suggestLoading} onSuggestionClick={onSuggestionClick}
+        usdRate={settings?.usdRate}
       />
 
       {/* ====== MAIN ====== */}
@@ -2929,7 +2930,7 @@ const Logo = ({ size = 'md', withText = false, onDark = false }) => {
   );
 };
 
-const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, setOpen, loading, onPick, compact = false }) => {
+const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, setOpen, loading, onPick, usdRate, compact = false }) => {
   const [focused, setFocused] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const suggestionId = useId();
@@ -3020,8 +3021,17 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
                 <span className="truncate">{s.label}</span>
               </span>
               {s.type === 'product' && s.price != null && (
-                <span className="text-xs font-bold text-[#1565C0] flex-shrink-0">
-                  {s.currency === 'USDC' ? '💎' : '🇨🇺'} {Number(s.price || 0).toLocaleString('es-ES')}
+                <span className="flex flex-col items-end gap-0.5 flex-shrink-0 max-w-[45%]">
+                  <span className="text-xs font-bold text-[#1565C0] whitespace-nowrap">
+                    <PriceWithCurrencyIcon value={s.price} currency={s.currency || 'CUP'} />
+                  </span>
+                  {['USD', 'USDT', 'USDC'].includes(String(s.currency || '').toUpperCase()) &&
+                    Number(s.price) > 0 && Number(usdRate) > 0 && (
+                    <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+                      ≈ {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 })
+                        .format(Number(s.price) * Number(usdRate))} CUP
+                    </span>
+                  )}
                 </span>
               )}
             </button>
@@ -3035,7 +3045,7 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
   );
 };
 
-const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, cartCount = 0, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
+const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, cartCount = 0, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, usdRate }) => {
   const isBuyer = user && !business;
   return (
   <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
@@ -3055,6 +3065,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
           setOpen={setSuggestOpen}
           loading={suggestLoading}
           onPick={onSuggestionClick}
+          usdRate={usdRate}
         />
       </div>
 

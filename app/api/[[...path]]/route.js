@@ -213,12 +213,41 @@ const productSchema = z.object({
   location: z.string().max(200).optional(),
   currency: z.enum(['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC']).default('CUP'),
   showPublicContact: z.boolean().optional(),
+  allowedPaymentMethods: z.array(z.enum(['crypto', 'transfermovil', 'enzona'])).max(3).optional(),
   province: z.string().max(100).optional(),
   municipality: z.string().max(100).optional(),
   address: z.string().max(300).optional(),
   openingHours: z.string().max(50).optional(),
   closingHours: z.string().max(50).optional(),
 });
+
+const PAYMENT_METHODS = ['crypto', 'transfermovil', 'enzona'];
+
+const getAvailableBusinessPaymentMethods = (business) => {
+  if (!business) return [];
+  const methods = [];
+
+  if (business.cryptoEnabled === true) methods.push('crypto');
+
+  const tmReady = business.transfermovilEnabled === true
+    && [
+      business.transfermovilNumber,
+      business.transfermovilName,
+      business.transfermovilContactPhone,
+      business.transfermovilVerificationPhone,
+    ].every((value) => typeof value === 'string' && value.trim());
+  if (tmReady) methods.push('transfermovil');
+
+  const enzonaReady = business.enzonaEnabled === true
+    && [
+      business.enzonaRecipient,
+      business.enzonaCardNumber,
+      business.enzonaPhone,
+    ].every((value) => typeof value === 'string' && value.trim());
+  if (enzonaReady) methods.push('enzona');
+
+  return methods;
+};
 
 const businessSchema = z.object({
   name: z.string().min(1).max(100),
@@ -2980,7 +3009,12 @@ async function route(request, method, path) {
         : [];
       const bizMap = Object.fromEntries(businesses.map((b) => {
         // Nunca exponer datos internos de verificación en respuestas públicas.
-        const { transfermovilAccount, transfermovilVerificationPhone, ...publicBiz } = b;
+        const { transfermovilAccount, transfermovilVerificationPhone, ...publicBizFields } = b;
+        // Publicar los métodos disponibles sin revelar datos privados de verificación.
+        const publicBiz = {
+          ...publicBizFields,
+          availablePaymentMethods: getAvailableBusinessPaymentMethods(b),
+        };
         let safe = publicBiz;
         // Respetar la privacidad de los contactos públicos del negocio.
         if (publicBiz.showContactsPublicly === false) {
@@ -3015,7 +3049,12 @@ async function route(request, method, path) {
       if (!product) return json({ error: 'Producto no encontrado' }, 404);
       const business = await db.collection('businesses').findOne({ id: product.businessId });
       // Nunca exponer datos internos de verificación en respuestas públicas.
-      const { transfermovilAccount, transfermovilVerificationPhone, ...publicBusiness } = business || {};
+      const { transfermovilAccount, transfermovilVerificationPhone, ...publicBusinessFields } = business || {};
+      const publicBusiness = business ? {
+        ...publicBusinessFields,
+        // Solo se publican los nombres de métodos disponibles.
+        availablePaymentMethods: getAvailableBusinessPaymentMethods(business),
+      } : null;
       // Per-product privacy: optionally hide business contacts for THIS product
       const productHidesContacts = product.showPublicContact === false;
       let safeBiz = business ? publicBusiness : null;
@@ -3045,7 +3084,7 @@ async function route(request, method, path) {
         return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
       }
       const { name, price, description, category, subcategory, stock, image, available, featured, location, currency,
-        showPublicContact, province, municipality, address, openingHours, closingHours } = parsed.data;
+        allowedPaymentMethods, showPublicContact, province, municipality, address, openingHours, closingHours } = parsed.data;
 
       const count = await db.collection('products').countDocuments({ businessId: user.businessId });
       const isPremium = user.plan === 'premium';
@@ -3053,6 +3092,24 @@ async function route(request, method, path) {
         return json({ error: 'Límite del plan Básico (10 productos) alcanzado. Actualiza a Premium.' }, 403);
       }
       const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId });
+      const availablePaymentMethods = getAvailableBusinessPaymentMethods(businessForLoc);
+      const selectedPaymentMethods = allowedPaymentMethods === undefined
+        ? availablePaymentMethods
+        : [...new Set(allowedPaymentMethods)];
+
+      const unavailableMethods = selectedPaymentMethods.filter(
+        (method) => !availablePaymentMethods.includes(method)
+      );
+      if (unavailableMethods.length) {
+        return json({
+          error: 'El negocio no tiene habilitados todos los métodos de pago seleccionados.',
+          unavailableMethods,
+        }, 400);
+      }
+      if (availablePaymentMethods.length > 0 && selectedPaymentMethods.length === 0) {
+        return json({ error: 'Selecciona al menos un método de pago para este producto.' }, 400);
+      }
+
 
       // Per-product privacy validation: if hiding contacts, require physical info (product OR business)
       if (showPublicContact === false) {
@@ -3094,6 +3151,7 @@ async function route(request, method, path) {
         featured: isPremium ? !!featured : false,
         // Per-product privacy
         showPublicContact: showPublicContact !== false,
+        allowedPaymentMethods: selectedPaymentMethods,
         province: province || '',
         municipality: municipality || '',
         address: address || '',
@@ -3118,6 +3176,31 @@ async function route(request, method, path) {
         return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
       }
       const update = parsed.data;
+
+      if (Array.isArray(update.allowedPaymentMethods)) {
+        const businessForPayments = await db.collection('businesses').findOne({
+          id: product.businessId,
+        });
+        const availablePaymentMethods = getAvailableBusinessPaymentMethods(businessForPayments);
+        const selectedPaymentMethods = [...new Set(update.allowedPaymentMethods)];
+        const unavailableMethods = selectedPaymentMethods.filter(
+          (method) => !availablePaymentMethods.includes(method)
+        );
+
+        if (unavailableMethods.length) {
+          return json({
+            error: 'El negocio no tiene habilitados todos los métodos de pago seleccionados.',
+            unavailableMethods,
+          }, 400);
+        }
+
+        if (availablePaymentMethods.length > 0 && selectedPaymentMethods.length === 0) {
+          return json({ error: 'Selecciona al menos un método de pago para este producto.' }, 400);
+        }
+
+        update.allowedPaymentMethods = selectedPaymentMethods;
+      }
+
       if (update.price != null) update.price = Number(update.price);
       if (update.stock != null) update.stock = Number(update.stock);
       if (update.currency) update.currency = ['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC'].includes(update.currency) ? update.currency : 'CUP';
@@ -3283,6 +3366,28 @@ return json({ payments: out });
     const businessId = businessIds[0];
     const business = await db.collection('businesses').findOne({ id: businessId });
     const paymentMethod = parsed.data.paymentMethod || 'crypto';
+    const availableBusinessPaymentMethods = getAvailableBusinessPaymentMethods(business);
+
+    for (const item of parsed.data.items) {
+      const product = productMap[item.productId];
+      if (!product) {
+        return json({ error: 'Uno de los productos del pedido ya no está disponible.' }, 400);
+      }
+
+      // Productos antiguos sin lista propia heredan los métodos del negocio.
+      const allowedMethods = Array.isArray(product.allowedPaymentMethods)
+        ? product.allowedPaymentMethods
+        : availableBusinessPaymentMethods;
+
+      if (!allowedMethods.includes(paymentMethod)) {
+        return json({
+          error: `El producto "${product.name}" no admite el método de pago seleccionado.`,
+          productId: product.id,
+          paymentMethod,
+        }, 403);
+      }
+    }
+
     if (paymentMethod === 'crypto' && business?.cryptoEnabled !== true) {
       return json({ error: 'Este negocio no tiene habilitados los pagos en criptomonedas.' }, 403);
     }

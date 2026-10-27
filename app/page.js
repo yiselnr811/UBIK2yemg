@@ -228,6 +228,20 @@ const TRANSLATIONS = {
     total: 'Total',
     sellerLoadingError: 'No se pudieron cargar los pedidos.',
     trackingNumberLabel: 'Número de seguimiento',
+      trackingSection: 'Seguimiento del envío',
+      statusLabel: 'Estado',
+      carrierLabel: 'Transportista',
+      trackingLabel: 'Seguimiento',
+      newOrderStatusPrompt: 'Nuevo estado de preparación/entrega:',
+      invalidStatusMessage: 'Estado no válido. Usa uno de los estados indicados.',
+      noCarrier: 'No indicado',
+      trackingPending: 'Pendiente',
+      shippingHistoryTitle: 'Historial del envío',
+      deliveryPhotosTitle: 'Fotos de entrega',
+      deliveryPhotoAlt: 'Foto de entrega',
+      updateLabel: 'Actualización',
+      carrierNotSpecified: 'Transportista no indicado',
+      numberPending: 'Número pendiente',
 
       preparingOrder: 'Preparando pedido',
       shipped: 'Enviado',
@@ -396,6 +410,20 @@ const TRANSLATIONS = {
     total: 'Total',
     sellerLoadingError: "Couldn't load orders.",
     trackingNumberLabel: 'Tracking number',
+      trackingSection: 'Shipment tracking',
+      statusLabel: 'Status',
+      carrierLabel: 'Carrier',
+      trackingLabel: 'Tracking',
+      newOrderStatusPrompt: 'New preparation/delivery status:',
+      invalidStatusMessage: 'Invalid status. Use one of the listed statuses.',
+      noCarrier: 'Not specified',
+      trackingPending: 'Pending',
+      shippingHistoryTitle: 'Shipment history',
+      deliveryPhotosTitle: 'Delivery photos',
+      deliveryPhotoAlt: 'Delivery photo',
+      updateLabel: 'Update',
+      carrierNotSpecified: 'Carrier not specified',
+      numberPending: 'Number pending',
 
       preparingOrder: 'Preparing order',
       shipped: 'Shipped',
@@ -564,6 +592,20 @@ const TRANSLATIONS = {
     total: 'Totale',
     sellerLoadingError: 'Impossibile caricare gli ordini.',
     trackingNumberLabel: 'Numero di tracciamento',
+      trackingSection: 'Tracciamento della spedizione',
+      statusLabel: 'Stato',
+      carrierLabel: 'Corriere',
+      trackingLabel: 'Tracciamento',
+      newOrderStatusPrompt: 'Nuovo stato di preparazione/consegna:',
+      invalidStatusMessage: 'Stato non valido. Usa uno degli stati indicati.',
+      noCarrier: 'Non indicato',
+      trackingPending: 'In attesa',
+      shippingHistoryTitle: 'Cronologia della spedizione',
+      deliveryPhotosTitle: 'Foto della consegna',
+      deliveryPhotoAlt: 'Foto della consegna',
+      updateLabel: 'Aggiornamento',
+      carrierNotSpecified: 'Corriere non indicato',
+      numberPending: 'Numero in attesa',
 
       preparingOrder: "Preparazione dell'ordine",
       shipped: 'Spedito',
@@ -732,6 +774,20 @@ const TRANSLATIONS = {
     total: 'Итого',
     sellerLoadingError: 'Не удалось загрузить заказы.',
     trackingNumberLabel: 'Номер отслеживания',
+      trackingSection: 'Отслеживание доставки',
+      statusLabel: 'Статус',
+      carrierLabel: 'Перевозчик',
+      trackingLabel: 'Отслеживание',
+      newOrderStatusPrompt: 'Новый статус подготовки/доставки:',
+      invalidStatusMessage: 'Недопустимый статус. Выберите один из указанных статусов.',
+      noCarrier: 'Не указан',
+      trackingPending: 'Ожидается',
+      shippingHistoryTitle: 'История доставки',
+      deliveryPhotosTitle: 'Фото доставки',
+      deliveryPhotoAlt: 'Фото доставки',
+      updateLabel: 'Обновление',
+      carrierNotSpecified: 'Перевозчик не указан',
+      numberPending: 'Номер ожидается',
 
       preparingOrder: 'Заказ готовится',
       shipped: 'Отправлен',
@@ -1002,6 +1058,7 @@ const App = () => {
     name: '', price: '', description: '', category: 'electronica', subcategory: '', stock: 1, image: '',
     available: true, featured: false, location: '', currency: 'CUP',
     showPublicContact: true, province: '', municipality: '', address: '', openingHours: '', closingHours: '',
+    allowedPaymentMethods: [],
   };
   const [productForm, setProductForm] = useState(emptyProduct);
   const [legalOpen, setLegalOpen] = useState(null); // 'privacy' | 'terms' | 'contact'
@@ -1042,6 +1099,70 @@ const App = () => {
   const [adminSettings, setAdminSettings] = useState(null);
 
   const t = useMemo(() => TRANSLATIONS[lang] || TRANSLATIONS.es, [lang]);
+
+  const getOrderStatusLabel = (status) => {
+    const labels = {
+      es: {
+        pending_payment: 'Pago pendiente',
+        paid: 'Pagado',
+        auto_approved: 'Pago aprobado',
+        processing: 'Preparando pedido',
+        shipped: 'Enviado',
+        delivered: 'Entregado',
+        payment_failed: 'Pago fallido',
+        cancelled: 'Cancelado',
+        canceled: 'Cancelado',
+        refunded: 'Reembolsado',
+        confirmed_pending_release: 'Pago confirmado, pendiente de liberación',
+        blocked_payment_verification: 'Verificación del pago bloqueada',
+      },
+      en: {
+        pending_payment: 'Payment pending',
+        paid: 'Paid',
+        auto_approved: 'Payment approved',
+        processing: 'Preparing order',
+        shipped: 'Shipped',
+        delivered: 'Delivered',
+        payment_failed: 'Payment failed',
+        cancelled: 'Cancelled',
+        canceled: 'Cancelled',
+        refunded: 'Refunded',
+        confirmed_pending_release: 'Payment confirmed, awaiting release',
+        blocked_payment_verification: 'Payment verification blocked',
+      },
+      it: {
+        pending_payment: 'Pagamento in attesa',
+        paid: 'Pagato',
+        auto_approved: 'Pagamento approvato',
+        processing: 'Preparazione dell’ordine',
+        shipped: 'Spedito',
+        delivered: 'Consegnato',
+        payment_failed: 'Pagamento non riuscito',
+        cancelled: 'Annullato',
+        canceled: 'Annullato',
+        refunded: 'Rimborsato',
+        confirmed_pending_release: 'Pagamento confermato, in attesa di rilascio',
+        blocked_payment_verification: 'Verifica del pagamento bloccata',
+      },
+      ru: {
+        pending_payment: 'Ожидается оплата',
+        paid: 'Оплачено',
+        auto_approved: 'Платёж подтверждён',
+        processing: 'Заказ готовится',
+        shipped: 'Отправлен',
+        delivered: 'Доставлен',
+        payment_failed: 'Ошибка оплаты',
+        cancelled: 'Отменён',
+        canceled: 'Отменён',
+        refunded: 'Возвращён',
+        confirmed_pending_release: 'Оплата подтверждена, ожидается разблокировка',
+        blocked_payment_verification: 'Проверка платежа заблокирована',
+      },
+    };
+
+    return labels[lang]?.[status] || status || '—';
+  };
+
 
   // === Boot ===
   useEffect(() => {
@@ -1463,7 +1584,7 @@ const App = () => {
 
   const openProductCreate = () => {
     setEditingProduct(null);
-    setProductForm({ ...emptyProduct, location: business?.location || '' });
+    setProductForm({ ...emptyProduct, location: business?.location || '', allowedPaymentMethods: getAvailableBusinessPaymentMethods(business) });
     setProductOpen(true);
   };
   const openProductEdit = (p) => {
@@ -1475,6 +1596,7 @@ const App = () => {
       showPublicContact: p.showPublicContact !== false, // default true for legacy products
       province: p.province || '', municipality: p.municipality || '', address: p.address || '',
       openingHours: p.openingHours || '', closingHours: p.closingHours || '',
+      allowedPaymentMethods: Array.isArray(p.allowedPaymentMethods) ? p.allowedPaymentMethods : getAvailableBusinessPaymentMethods(business),
     });
     setProductOpen(true);
   };
@@ -1898,18 +2020,18 @@ const App = () => {
       ? order.shippingStatus
       : 'processing';
     const status = prompt(
-      'Nuevo estado de preparación/entrega:\n' + allowed.join(', '),
+      t.newOrderStatusPrompt + '\n' + allowed.join(', '),
       currentShippingStatus
     );
     if (status === null) return;
     if (!allowed.includes(status.trim())) {
-      toast.error('Estado no válido. Usa uno de los estados indicados.');
+      toast.error(t.invalidStatusMessage);
       return;
     }
 
-    const trackingNumber = prompt('Número de seguimiento (deja vacío si no aplica):', order.trackingNumber || '');
+    const trackingNumber = prompt(t.trackingNumber + ':', order.trackingNumber || '');
     if (trackingNumber === null) return;
-    const trackingCarrier = prompt('Transportista:', order.trackingCarrier || '');
+    const trackingCarrier = prompt(t.carrierLabel + ':', order.trackingCarrier || '');
     if (trackingCarrier === null) return;
     const adminNotes = prompt('Notas administrativas:', order.adminNotes || '');
     if (adminNotes === null) return;
@@ -3663,6 +3785,48 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
   );
 };
 
+// Métodos de pago disponibles según la configuración del negocio.
+const getAvailableBusinessPaymentMethods = (business) => {
+  if (!business) return [];
+
+  // La API pública entrega la lista calculada con la configuración privada completa.
+  if (Array.isArray(business.availablePaymentMethods)) {
+    return business.availablePaymentMethods.filter(
+      (method) => ['crypto', 'transfermovil', 'enzona'].includes(method)
+    );
+  }
+
+  const methods = [];
+
+  if (business.cryptoEnabled === true) methods.push('crypto');
+
+  const tmReady = business.transfermovilEnabled === true && [
+    business.transfermovilNumber,
+    business.transfermovilName,
+    business.transfermovilContactPhone,
+    business.transfermovilVerificationPhone,
+  ].every((value) => typeof value === 'string' && value.trim());
+
+  if (tmReady) methods.push('transfermovil');
+
+  const enzonaReady = business.enzonaEnabled === true && [
+    business.enzonaRecipient,
+    business.enzonaCardNumber,
+    business.enzonaPhone,
+  ].every((value) => typeof value === 'string' && value.trim());
+
+  if (enzonaReady) methods.push('enzona');
+
+  return methods;
+};
+
+const getProductPaymentMethods = (product) => {
+  if (Array.isArray(product?.allowedPaymentMethods)) {
+    return product.allowedPaymentMethods;
+  }
+  return getAvailableBusinessPaymentMethods(product?.business);
+};
+
 // ============ PRODUCT CARD ============
 const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, onAddToCart, usdRate }) => {
   const contactsHidden = p.contactsHidden === true || p.showPublicContact === false || p.business?.contactsHidden === true;
@@ -3716,6 +3880,11 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
           </div>
         )}
         <div className="text-sm font-medium mt-1.5 line-clamp-2 leading-tight min-h-[2.5rem]">{p.name}</div>
+        {p.business?.name && (
+          <div className="text-xs font-semibold text-[#1565C0] mt-1 truncate" title={p.business.name}>
+            {p.business.name}
+          </div>
+        )}
         <div className="flex items-center justify-between mt-1 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-0.5 truncate">
             <MapPin className="h-3 w-3 flex-shrink-0" />
@@ -3898,7 +4067,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
               </Button>
             )}
 
-            {product.stock > 0 && (
+            {product.stock > 0 && getProductPaymentMethods(product).includes('crypto') && (
               <Button
                 onClick={() => startCryptoCheckout(product)}
                 disabled={checkoutSubmitting}
@@ -3910,7 +4079,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                 <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
               </Button>
             )}
-            {product.stock > 0 && (
+            {product.stock > 0 && getProductPaymentMethods(product).includes('transfermovil') && (
               <Button
                 onClick={() => startCryptoCheckout(product, 'transfermovil')}
                 disabled={checkoutSubmitting}
@@ -3922,7 +4091,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                 Pagar con Transfermóvil
               </Button>
             )}
-            {product.stock > 0 && (
+            {product.stock > 0 && getProductPaymentMethods(product).includes('enzona') && (
               <Button
                 onClick={() => startCryptoCheckout(product, 'enzona')}
                 disabled={checkoutSubmitting}
@@ -4212,6 +4381,10 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
   const currencyOf = (product) => String(product?.currency || 'CUP').toUpperCase();
   const currencies = [...new Set(items.map(({ product }) => currencyOf(product)))];
   const mixedCurrencies = currencies.length > 1;
+  const availableCartPaymentMethods = ['crypto', 'transfermovil', 'enzona'].filter(
+    (method) => items.length > 0 &&
+      items.every(({ product }) => getProductPaymentMethods(product).includes(method))
+  );
   const total = items.reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
   const locale = lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES';
   const money = (value) => Number(value).toLocaleString(locale, { maximumFractionDigits: 2 });
@@ -4291,18 +4464,24 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
             )}
           </div>
           <div className="flex w-full flex-col gap-3">
+            {availableCartPaymentMethods.includes('crypto') && (
             <Button size="lg" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'crypto')} className="brand-gradient text-white font-bold">
               {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}
               {t.payCartCrypto}
             </Button>
+            )}
+            {availableCartPaymentMethods.includes('transfermovil') && (
             <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'transfermovil')} className="border-2 border-[#00A86B] text-[#008653] font-bold">
               <CreditCard className="h-4 w-4 mr-2"/>
               Pagar con Transfermóvil
             </Button>
+            )}
+            {availableCartPaymentMethods.includes('enzona') && (
             <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'enzona')} className="border-2 border-[#2563EB] text-[#1D4ED8] font-bold">
               <CreditCard className="h-4 w-4 mr-2"/>
               Pagar con EnZona
             </Button>
+            )}
           </div>
         </CardContent></Card>
       </>}
@@ -4716,11 +4895,11 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     <div className="mt-3 flex flex-wrap gap-2">
                       <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
                         <span className="font-medium">{t.orderStatus}:</span>
-                        <strong className="break-words">{order.status || order.shippingStatus || 'Pendiente'}</strong>
+                        <strong className="break-words">{getOrderStatusLabel(order.status || order.shippingStatus || 'pending_payment')}</strong>
                       </div>
                       <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-950 dark:border-green-900 dark:bg-green-950/40 dark:text-green-100">
                         <span className="font-medium">Estado del pago:</span>
-                        <strong className="break-words">{order.paymentStatus || 'Pendiente'}</strong>
+                        <strong className="break-words">{getOrderStatusLabel(order.paymentStatus || 'pending_payment')}</strong>
                       </div>
                     </div>
 
@@ -4933,7 +5112,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 
                 {order.trackingNumber && (
                   <p className="text-sm">
-                    Seguimiento: {order.trackingNumber}
+                    {t.trackingLabel}: {order.trackingNumber}
                     {order.trackingCarrier ? ` · ${order.trackingCarrier}` : ''}
                   </p>
                 )}
@@ -4943,43 +5122,35 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                   (Array.isArray(order.statusHistory) && order.statusHistory.length > 0) ||
                   (Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0)) && (
                   <div className="rounded-xl border border-blue-200/80 bg-blue-50/40 p-4 space-y-4 dark:border-blue-900 dark:bg-blue-950/20">
-                    <h3 className="text-base font-bold tracking-tight">Seguimiento del envío</h3>
+                    <h3 className="text-base font-bold tracking-tight">{t.trackingSection}</h3>
                     {order.shippingStatus && (
                       <p className="flex flex-wrap items-center gap-2 rounded-lg border bg-background p-3 text-sm">
-                        <span className="font-medium text-muted-foreground">Estado:</span>
+                        <span className="font-medium text-muted-foreground">{t.statusLabel}:</span>
                         <strong className="rounded-full bg-blue-100 px-3 py-1 text-sm font-semibold text-blue-900 dark:bg-blue-900/60 dark:text-blue-100">
-                          {{
-                            processing: t.preparingOrder,
-                            shipped: t.shipped,
-                            delivered: t.delivered
-                          }[order.shippingStatus] || order.shippingStatus}
+                          {getOrderStatusLabel(order.shippingStatus)}
                         </strong>
                       </p>
                     )}
                     {(order.trackingNumber || order.trackingCarrier) && (
                       <div className="rounded-lg border bg-background p-3 space-y-2 text-sm">
                         <p className="break-words">
-                          <span className="font-medium text-muted-foreground">Transportista:</span>{' '}
-                          <span className="font-semibold">{order.trackingCarrier || 'No indicado'}</span>
+                          <span className="font-medium text-muted-foreground">{t.carrierLabel}:</span>{' '}
+                          <span className="font-semibold">{order.trackingCarrier || t.noCarrier}</span>
                         </p>
                         <p className="break-words">
-                          <span className="font-medium text-muted-foreground">Seguimiento:</span>{' '}
-                          <span className="font-mono font-semibold">{order.trackingNumber || 'Pendiente'}</span>
+                          <span className="font-medium text-muted-foreground">{t.trackingLabel}:</span>{' '}
+                          <span className="font-mono font-semibold">{order.trackingNumber || t.trackingPending}</span>
                         </p>
                       </div>
                     )}
                     {Array.isArray(order.statusHistory) && order.statusHistory.length > 0 && (
                       <div className="space-y-2">
-                        <h4 className="text-sm font-semibold tracking-tight">Historial del envío</h4>
+                        <h4 className="text-sm font-semibold tracking-tight">{t.shippingHistoryTitle}</h4>
                         {[...order.statusHistory].reverse().map((entry, index) => (
                           <div key={entry.id || `${entry.at || entry.createdAt || 'evento'}-${index}`}
                                className="rounded-r-lg border-l-4 border-blue-300 bg-background p-3 space-y-2 dark:border-blue-800">
                             <p className="text-sm font-medium">
-                              {{
-                                processing: t.preparingOrder,
-                                shipped: t.shipped,
-                                delivered: t.delivered
-                              }[entry.status] || entry.status || 'Actualización'}
+                              {getOrderStatusLabel(entry.status || 'processing')}
                             </p>
                             {(entry.at || entry.createdAt) && (
                               <p className="text-xs text-muted-foreground">
@@ -4987,10 +5158,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                               </p>
                             )}
                             {entry.trackingCarrier && (
-                              <p className="text-sm">Transportista: {entry.trackingCarrier}</p>
+                              <p className="text-sm">{t.carrierLabel}: {entry.trackingCarrier}</p>
                             )}
                             {entry.trackingNumber && (
-                              <p className="text-sm">Seguimiento: {entry.trackingNumber}</p>
+                              <p className="text-sm">{t.trackingLabel}: {entry.trackingNumber}</p>
                             )}
                             {entry.notes && <p className="text-sm">{entry.notes}</p>}
                           </div>
@@ -4999,13 +5170,13 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     )}
                     {Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0 && (
                       <div className="space-y-2">
-                        <h4 className="text-sm font-semibold tracking-tight">Fotos de entrega</h4>
+                        <h4 className="text-sm font-semibold tracking-tight">{t.deliveryPhotosTitle}</h4>
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                           {order.deliveryPhotos.map((photo, index) => (
                             <a key={`${photo}-${index}`} href={photo}
                                target="_blank" rel="noopener noreferrer"
                                className="block min-h-11 overflow-hidden rounded-xl border bg-background transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
-                              <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                              <img src={photo} alt={`${t.deliveryPhotoAlt} ${index + 1}`}
                                    loading="lazy"
                                    className="h-32 w-full object-cover sm:h-36" />
                             </a>
@@ -6202,7 +6373,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
                   {order.trackingNumber && (
                     <p className="text-sm">
-                      Seguimiento actual: <b>{order.trackingCarrier || 'Transportista no indicado'}</b>
+                      Seguimiento actual: <b>{order.trackingCarrier || t.carrierNotSpecified}</b>
                       {' · '}{order.trackingNumber}
                     </p>
                   )}
@@ -6423,7 +6594,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                         {photos.map((photo, index) => (
                           <a key={`${photo}-${index}`} href={photo} target="_blank" rel="noreferrer">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                            <img src={photo} alt={`${t.deliveryPhotoAlt} ${index + 1}`}
                               className="w-full h-24 object-cover rounded-md border" loading="lazy" />
                           </a>
                         ))}
@@ -6438,7 +6609,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                         {history.map((entry, index) => (
                           <div key={`${entry.at || index}-${index}`} className="border-l-2 pl-3 py-1 text-sm">
                             <div className="font-medium">
-                              {entry.status || 'Actualización'}
+                              {getOrderStatusLabel(entry.status || 'processing')}
                               {entry.at ? ` · ${new Date(entry.at).toLocaleString()}` : ''}
                             </div>
                             {entry.notes && <p className="text-muted-foreground">{entry.notes}</p>}
@@ -6694,7 +6865,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                     <p className="text-sm">Teléfono: {order.shipping?.phone || '—'}</p>
                   </div>
                   <div className="space-y-2 md:text-right">
-                    <Badge>{order.status || 'pending_payment'}</Badge>
+                    <Badge>{getOrderStatusLabel(order.status || 'pending_payment')}</Badge>
                     <p className="font-bold text-lg">
                       {order.currency || 'USD'} {Number(order.total ?? order.subtotal ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
@@ -6728,7 +6899,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
 
                 {(order.trackingNumber || order.trackingCarrier) && (
                   <p className="text-sm">
-                    Seguimiento: {order.trackingCarrier || 'Transportista no indicado'} · {order.trackingNumber || 'Número pendiente'}
+                    {t.trackingLabel}: {order.trackingCarrier || t.carrierNotSpecified} · {order.trackingNumber || t.numberPending}
                   </p>
                 )}
                 {order.adminNotes && <p className="text-sm text-muted-foreground">Notas: {order.adminNotes}</p>}
@@ -7214,6 +7385,47 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
             </div>
           );
         })()}
+        <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+          <div>
+            <Label className="text-sm font-semibold">Métodos de pago para este producto</Label>
+            <p className="text-xs text-muted-foreground mt-1">
+              Selecciona entre los métodos habilitados y configurados en tu negocio.
+            </p>
+          </div>
+          {getAvailableBusinessPaymentMethods(business).length === 0 ? (
+            <p className="text-sm text-amber-700">
+              No hay métodos de pago configurados en este negocio.
+            </p>
+          ) : (
+            getAvailableBusinessPaymentMethods(business).map((method) => {
+              const labels = {
+                crypto: 'Criptomonedas (USDT/USDC)',
+                transfermovil: 'Transfermóvil',
+                enzona: 'EnZona',
+              };
+              const selected = Array.isArray(form.allowedPaymentMethods)
+                ? form.allowedPaymentMethods
+                : getAvailableBusinessPaymentMethods(business);
+
+              return (
+                <label key={method} className="flex items-center gap-3 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-[#1565C0]"
+                    checked={selected.includes(method)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...selected.filter((item) => item !== method), method]
+                        : selected.filter((item) => item !== method);
+                      setForm({ ...form, allowedPaymentMethods: next });
+                    }}
+                  />
+                  <span>{labels[method]}</span>
+                </label>
+              );
+            })
+          )}
+        </div>
         <div><Label>Ubicación</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
         <div>
           <Label>Imagen del producto</Label>

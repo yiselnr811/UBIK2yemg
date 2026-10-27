@@ -3190,6 +3190,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
         setOpen={setSuggestOpen}
         loading={suggestLoading}
         onPick={onSuggestionClick}
+        usdRate={usdRate}
       />
     </div>
   </header>
@@ -3664,6 +3665,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
                   setOpen={setSuggestOpen}
                   loading={suggestLoading}
                   onPick={onSuggestionClick}
+                  usdRate={usdRate}
                 />
               </div>
             </div>

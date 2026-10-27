@@ -2312,6 +2312,7 @@ const App = () => {
 
         {view === 'admin' && user?.role === 'admin' && (
           <AdminDashboard
+            t={t}
             data={adminData} settings={adminSettings} setSettings={setAdminSettings}
             onApprove={approvePayment} onReject={rejectPayment} onUpdateOrder={adminUpdateOrder}
             onUpdateUser={adminUpdateUser} onDeleteUser={adminDeleteUser}
@@ -6804,7 +6805,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel }) => {
+const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel }) => {
   const [editBiz, setEditBiz] = useState(null);
   const [showBusinessEditControls, setShowBusinessEditControls] = useState(false);
   const payments = Array.isArray(data?.payments) ? data.payments.filter(Boolean) : [];

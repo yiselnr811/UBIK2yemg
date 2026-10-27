@@ -1693,7 +1693,12 @@ const App = () => {
   };
 
   const addToCart = (product) => {
-    if (!product?.id || !product.stock || product.stock <= 0) return toast.error('Producto sin stock');
+    if (!product?.id || !product.stock || product.stock <= 0) {
+      return toast.error('Producto sin stock');
+    }
+    if (getProductPaymentMethods(product).length === 0) {
+      return toast.error('Este producto no tiene métodos de pago configurados.');
+    }
     setCart((current) => {
       const currentBusiness = current[0]?.product?.businessId;
       if (currentBusiness && product.businessId && currentBusiness !== product.businessId) {
@@ -2277,6 +2282,7 @@ const App = () => {
             onPlan={() => setPlanOpen(true)}
             onShareBusiness={() => shareBusiness(business)}
             compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo} t={t} lang={lang}
+            getOrderStatusLabel={getOrderStatusLabel}
           />
         )}
         {view === 'dashboard' && user && !business && (
@@ -2311,6 +2317,7 @@ const App = () => {
             setRejectCryptoInvoiceId={setRejectCryptoInvoiceId}
             rejectCryptoReason={rejectCryptoReason}
             setRejectCryptoReason={setRejectCryptoReason}
+            getOrderStatusLabel={getOrderStatusLabel}
           />
         )}
       </main>
@@ -3821,10 +3828,15 @@ const getAvailableBusinessPaymentMethods = (business) => {
 };
 
 const getProductPaymentMethods = (product) => {
-  if (Array.isArray(product?.allowedPaymentMethods)) {
-    return product.allowedPaymentMethods;
-  }
-  return getAvailableBusinessPaymentMethods(product?.business);
+  const businessMethods = getAvailableBusinessPaymentMethods(product?.business);
+  const productMethods = Array.isArray(product?.allowedPaymentMethods)
+    ? product.allowedPaymentMethods
+    : businessMethods;
+
+  // Solo permitir métodos configurados y habilitados actualmente en el negocio.
+  return [...new Set(productMethods)].filter(
+    (method) => businessMethods.includes(method)
+  );
 };
 
 // ============ PRODUCT CARD ============
@@ -3894,15 +3906,17 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
             <Clock className="h-3 w-3" /> {timeAgo(p.createdAt)}
           </span>
         </div>
-        <button
-          type="button"
-          disabled={!(Number(p.stock) > 0)}
-          onClick={(e) => { e.stopPropagation(); onAddToCart?.(p); }}
-          className="mt-3 w-full h-9 rounded-lg bg-[#1565C0] hover:bg-[#0d4fa3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition"
-        >
-          <ShoppingBag className="h-4 w-4" />
-          {Number(p.stock) > 0 ? 'Añadir al carrito' : 'Sin stock'}
-        </button>
+        {getProductPaymentMethods(p).length > 0 && (
+          <button
+            type="button"
+            disabled={!(Number(p.stock) > 0)}
+            onClick={(e) => { e.stopPropagation(); onAddToCart?.(p); }}
+            className="mt-3 w-full h-9 rounded-lg bg-[#1565C0] hover:bg-[#0d4fa3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition"
+          >
+            <ShoppingBag className="h-4 w-4" />
+            {Number(p.stock) > 0 ? 'Añadir al carrito' : 'Sin stock'}
+          </button>
+        )}
         <div className="flex gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
           {waLink && (
             <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp" aria-label={`Contactar por WhatsApp sobre ${p.name}`}>
@@ -4061,7 +4075,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
             )}
 
             {/* Las opciones de compra no dependen de los canales de contacto. */}
-            {product.stock > 0 && (
+            {product.stock > 0 && getProductPaymentMethods(product).length > 0 && (
               <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-4 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
                 <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
               </Button>
@@ -5079,7 +5093,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                           className="flex flex-col gap-1 rounded-lg bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
                         >
                           <span className="text-sm font-medium break-words">
-                            {item.name || item.title || 'Producto'}
+                            {item.productName || item.name || item.title || 'Producto'}
                           </span>
                           <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
                             <span>Cantidad: {item.quantity ?? 1}</span>
@@ -5409,7 +5423,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es' }) => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel }) => {
   const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
@@ -6630,7 +6644,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason }) => {
+const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel }) => {
   const [editBiz, setEditBiz] = useState(null);
   const [showBusinessEditControls, setShowBusinessEditControls] = useState(false);
   const payments = Array.isArray(data?.payments) ? data.payments : [];

@@ -1466,7 +1466,17 @@ const App = () => {
   const shareProduct = async (p) => {
     // SEO-friendly URL — server-rendered with OpenGraph metadata so WhatsApp/FB preview shows the product image+price.
     const url = `${window.location.origin}/product/${p.id}`;
-    const text = `${p.name} — ${formatPrice(p.price, p.currency)}`;
+    const currency = String(p.currency || 'CUP').toUpperCase();
+    const rate = Number(settings?.usdRate);
+    const hasCupApproximation =
+      ['USD', 'USDT', 'USDC'].includes(currency) &&
+      Number(p.price) > 0 &&
+      Number.isFinite(rate) &&
+      rate > 0;
+    const cupApproximation = hasCupApproximation
+      ? ` — ≈ ${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number(p.price) * rate)} CUP`
+      : '';
+    const text = `${p.name} — ${formatPrice(p.price, p.currency)}${cupApproximation}`;
     if (navigator.share) {
       try { await navigator.share({ title: p.name, text, url }); return; } catch {}
     }
@@ -2227,6 +2237,7 @@ const App = () => {
             startCryptoCheckout={startCryptoCheckout}
             onAddToCart={addToCart}
             checkoutSubmitting={checkoutSubmitting}
+            usdRate={settings?.usdRate}
           />
         )}
 
@@ -4097,7 +4108,7 @@ const ProductGridSkeleton = () => (
 );
 
 // ============ PRODUCT DETAIL ============
-const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded, startCryptoCheckout, onAddToCart, checkoutSubmitting }) => {
+const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded, startCryptoCheckout, onAddToCart, checkoutSubmitting, usdRate }) => {
   if (!product) {
     return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   }
@@ -4128,6 +4139,13 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
           </div>
           <h1 className="text-3xl md:text-4xl font-extrabold">{product.name}</h1>
           <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3"><PriceWithCurrencyIcon value={product.price} currency={product.currency} className="text-4xl md:text-5xl font-extrabold text-[#00A86B]" /></div>
+          {['USD', 'USDT', 'USDC'].includes(String(product.currency || '').toUpperCase()) &&
+            Number(product.price) > 0 && Number(usdRate) > 0 && (
+            <p className="mt-1 text-base font-semibold text-muted-foreground" aria-label="Precio aproximado en pesos cubanos">
+              ≈ {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 })
+                .format(Number(product.price) * Number(usdRate))} CUP
+            </p>
+          )}
 
           <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-muted-foreground">
             {product.location && <span className="flex items-center gap-1"><MapPin className="h-4 w-4" /> {product.location}</span>}

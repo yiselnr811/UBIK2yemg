@@ -2280,10 +2280,10 @@ const App = () => {
           />
         )}
         {view === 'dashboard' && user && !business && (
-          <BuyerDashboard t={t} lang={lang} user={user} token={token} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard t={t} lang={lang} user={user} token={token} getOrderStatusLabel={getOrderStatusLabel} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'buyer-orders' && user && (
-          <BuyerDashboard t={t} lang={lang} user={user} token={token} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard t={t} lang={lang} user={user} token={token} getOrderStatusLabel={getOrderStatusLabel} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'dashboard' && !user && (
           <div className="container mx-auto py-32 text-center">
@@ -4490,7 +4490,7 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
 };
 
 // ============ BUYER DASHBOARD ============
-const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount, t, lang = 'es' }) => {
+const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount, t, lang = 'es', getOrderStatusLabel }) => {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState('');

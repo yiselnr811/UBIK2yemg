@@ -916,7 +916,8 @@ const buildContactLinks = (p) => {
   // Telegram: t.me/<username> — Telegram doesn't support prefilled text via deep link reliably,
   // so we open the chat directly. Username can be "@user" or "user".
   const tgUser = tgRaw.replace(/^@/, '').replace(/^https?:\/\/(t\.me|telegram\.me)\//i, '');
-  const tgLink = tgUser ? `https://t.me/${tgUser}` : '';
+  // Telegram puede ignorar el texto prellenado según el cliente; WhatsApp permanece intacto.
+  const tgLink = tgUser ? `https://t.me/${tgUser}?text=${encoded}` : '';
   // SMS: spec is sms:NUMBER?body=... (iOS uses `&body=`, Android `?body=`; ?body works on both).
   const phoneLink = phone ? `tel:${phone}` : '';
   const smsLink = sms ? `sms:${sms}?body=${encoded}` : '';
@@ -2112,12 +2113,17 @@ const App = () => {
     catch (e) { toast.error(e.message); loadAdmin(); }
   };
   const adminUpdateBusiness = async (id, patch) => {
-    setAdminData((d) => ({
-      ...d,
-      users: (d.users || []).map((u) => u.business?.id === id ? { ...u, business: { ...u.business, ...patch } } : u),
-    }));
-    try { await api(`/admin/businesses/${id}`, { method: 'PUT', token, body: patch }); toast.success('Negocio actualizado'); loadAdmin(); refreshHome(); }
-    catch (e) { toast.error(e.message); loadAdmin(); }
+    try {
+      await api(`/admin/businesses/${id}`, { method: 'PUT', token, body: patch });
+      toast.success('Negocio actualizado');
+      await loadAdmin();
+      refreshHome();
+      return true;
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo guardar el negocio.');
+      await loadAdmin();
+      return false;
+    }
   };
   const adminDeleteBusiness = async (id, name) => {
     if (!confirm(`Eliminar el negocio "${name}" y todos sus productos? El usuario se convertirá en comprador.`)) return;
@@ -7223,7 +7229,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
               </CardContent>
             </Card>
           ))}
-          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={(id, patch) => { onUpdateBusiness(id, patch); setEditBiz(null); }} compressLogo={compressLogo} businessTypes={businessTypes} />
+          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={async (id, patch) => { const saved = await onUpdateBusiness(id, patch); if (saved) setEditBiz(null); return saved; }} compressLogo={compressLogo} businessTypes={businessTypes} />
         </TabsContent>
 
         <TabsContent value="products" className="mt-4">
@@ -7249,6 +7255,13 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
           {settings && (
             <Card>
               <CardContent className="p-6 space-y-3 max-w-2xl">
+                <div className="rounded-md border border-border p-3 space-y-2">
+                  <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
+                    <input type="checkbox" checked={settings.sellerSalesEnabled !== false} onChange={(e) => setSettings({ ...settings, sellerSalesEnabled: e.target.checked })} />
+                    Permitir ventas en el marketplace
+                  </label>
+                  <p className="text-xs text-muted-foreground">Si se desactiva, se bloquean el catálogo público y la creación de pedidos. La autorización individual de cada negocio se configura en Editar negocio.</p>
+                </div>
                 <div>
                   <Label>Wallet USDC</Label>
                   <Input value={settings.usdcWallet || ''} onChange={(e) => setSettings({ ...settings, usdcWallet: e.target.value })} className="font-mono" />
@@ -8477,6 +8490,7 @@ const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
 
 const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes = [] }) => {
   const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (biz) {
       // Pre-load existing values, defaulting new fields safely so admin can edit without losing data
@@ -8498,7 +8512,8 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
     !form.openingHours && 'horario apertura',
     !form.closingHours && 'horario cierre',
   ].filter(Boolean) : [];
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     if (!Number.isInteger(Number(form.commissionRateBps)) || Number(form.commissionRateBps) < 0 || Number(form.commissionRateBps) > 3000) {
       toast.error('La comisión debe estar entre 0 % y 30 %.');
       return;
@@ -8507,7 +8522,14 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
       toast.error(`Si ocultas los contactos debes agregar dirección física y horarios. Faltan: ${missing.join(', ')}.`);
       return;
     }
-    onSave(biz.id, form);
+    setSaving(true);
+    try {
+      await onSave(biz.id, form);
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo guardar el negocio.');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <Dialog open={!!biz} onOpenChange={(v) => !v && onClose()}>
@@ -8533,6 +8555,13 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             <div><Label>País</Label><Input value={form.country || ''} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="Cuba" /></div>
           </div>
           <div><Label>Descripción</Label><Textarea value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
+              <input type="checkbox" checked={form.sellingApproved === true} onChange={(e) => setForm({ ...form, sellingApproved: e.target.checked })} />
+              Autorizar este negocio para vender
+            </label>
+            <p className="text-xs text-muted-foreground">Si está desactivado, el negocio no puede publicar productos ni recibir pedidos, aunque haya configurado métodos de pago.</p>
+          </div>
 
           {/* === Privacy toggle === */}
           <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
@@ -8558,9 +8587,9 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             )}
           </div>
 
-          {/* === Contact channels (hidden if showContactsPublicly === false) === */}
-          {!hidingContacts && (
-            <>
+          {/* El administrador siempre puede consultar y editar los contactos. */}
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <p className="text-xs text-muted-foreground">Estos datos permanecen visibles para administración aunque los contactos estén ocultos a los compradores.</p>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label>WhatsApp</Label><Input value={form.whatsapp || ''} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} placeholder="+5355..." /></div>
                 <div><Label>Telegram</Label><Input value={form.telegram || ''} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
@@ -8573,8 +8602,7 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
                 <div><Label>Instagram</Label><Input value={form.instagram || ''} onChange={(e) => setForm({ ...form, instagram: e.target.value })} /></div>
                 <div><Label>Facebook</Label><Input value={form.facebook || ''} onChange={(e) => setForm({ ...form, facebook: e.target.value })} /></div>
               </div>
-            </>
-          )}
+          </div>
 
           {/* === Physical location (mandatory when hiding contacts) === */}
           <div className="grid grid-cols-2 gap-2">
@@ -8629,6 +8657,10 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
                 onChange={(e) => setForm({ ...form, transfermovilName: e.target.value })}
                 placeholder="Nombre del titular"
               />
+            </div>
+            <div>
+              <Label>Cuenta Transfermóvil (si corresponde)</Label>
+              <Input value={form.transfermovilAccount || ""} maxLength={100} onChange={(e) => setForm({ ...form, transfermovilAccount: e.target.value })} placeholder="Cuenta receptora" />
             </div>
             <div>
               <Label>Móvil de contacto</Label>
@@ -8723,11 +8755,15 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             </p>
           </div>
 
+          <div>
+            <Label>Tarifa de entrega (CUP)</Label>
+            <Input type="number" min="0" max="1000000" step="1" value={form.deliveryFeeCUP ?? 0} onChange={(e) => setForm({ ...form, deliveryFeeCUP: e.target.value === "" ? "" : Number(e.target.value) })} />
+          </div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={!!form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
             <ShieldCheck className="h-4 w-4 text-[#1565C0]" /> Marcar como verificado
           </label>
-          <Button onClick={handleSave} className="w-full brand-gradient text-white">Guardar cambios</Button>
+          <Button onClick={handleSave} disabled={saving} className="w-full brand-gradient text-white">{saving ? 'Guardando…' : 'Guardar cambios'}</Button>
         </div>
       </DialogContent>
     </Dialog>

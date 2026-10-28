@@ -284,6 +284,7 @@ const settingsSchema = z.object({
   premiumPriceUSD: z.number().min(0).optional(),
   premiumPriceCUP: z.number().min(0).optional(),
   plansEnabled: z.boolean().optional(),
+  sellerSalesEnabled: z.boolean().optional(),
   contactPhone: z.string().max(30).optional(),
   contactEmail: z.string().email().optional(),
   usdRate: z.number().min(0.01).max(10000).optional(), // CUP per USD
@@ -1182,6 +1183,7 @@ async function getSettings(db) {
       transfermovilNumber: '+5355000000',
       transfermovilName: 'UBIK2 YEMG',
       premiumPriceUSD: 9.99,
+      sellerSalesEnabled: true,
       contactPhone: '+5359195051',
       contactEmail: 'UBIK2YEMG@gmail.com',
       usdRate: 120, // CUP per USD for crypto payment conversion
@@ -2340,6 +2342,7 @@ async function route(request, method, path) {
           province: typeof province === 'string' ? province.trim() : '',
           municipality: typeof municipality === 'string' ? municipality.trim() : '',
           address: typeof address === 'string' ? address.trim() : '',
+          sellingApproved: false,
           verified: false,
           createdAt: now,
         };
@@ -2414,6 +2417,7 @@ async function route(request, method, path) {
         whatsapp, telegram: telegram || '', sms: sms || whatsapp || '',
         location: location || '', instagram: instagram || '', facebook: facebook || '',
         businessType: businessType || 'tienda', country: country || 'Cuba',
+        sellingApproved: false,
         verified: false, createdAt: now,
       };
       await db.collection('businesses').insertOne(business);
@@ -2922,10 +2926,29 @@ async function route(request, method, path) {
       const limit = Math.min(60, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10)));
       const skip = (page - 1) * limit;
 
+      // Las ventas globales y la aprobación administrativa controlan
+      // qué negocios pueden aparecer en el catálogo público.
+      const marketplaceSettings = await getSettings(db);
+      if (marketplaceSettings.sellerSalesEnabled === false) {
+        return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 5);
+      }
+
+      const approvedBusinesses = await db.collection('businesses')
+        .find({ sellingApproved: true }, { projection: { id: 1 } })
+        .toArray();
+      const approvedBusinessIds = approvedBusinesses.map((b) => b.id).filter(Boolean);
+
+      if (!approvedBusinessIds.length) {
+        return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 5);
+      }
+
       const filter = { available: true };
       // Smart stock: hide products with stock === 0 from public marketplace
       // (sellers still see them in their dashboard via /my/products)
-      filter.$and = [{ $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] }];
+      filter.$and = [
+        { $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] },
+        { businessId: { $in: approvedBusinessIds } },
+      ];
       // Escape regex special chars so users can search with parens, dots, dashes, etc.
       const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       if (q.trim()) {
@@ -3069,7 +3092,12 @@ async function route(request, method, path) {
     if (path[1] && method === 'GET') {
       const product = await db.collection('products').findOne({ id: path[1] });
       if (!product) return json({ error: 'Producto no encontrado' }, 404);
+
+      const marketplaceSettings = await getSettings(db);
       const business = await db.collection('businesses').findOne({ id: product.businessId });
+      if (marketplaceSettings.sellerSalesEnabled === false || business?.sellingApproved !== true) {
+        return json({ error: 'Este producto no está disponible actualmente.' }, 404);
+      }
       // Nunca exponer datos internos de verificación en respuestas públicas.
       const { transfermovilAccount, transfermovilVerificationPhone, ...publicBusinessFields } = business || {};
       const publicBusiness = business ? {
@@ -3108,12 +3136,21 @@ async function route(request, method, path) {
       const { name, price, description, category, subcategory, stock, image, available, featured, location, currency,
         allowedPaymentMethods, showPublicContact, province, municipality, address, openingHours, closingHours } = parsed.data;
 
+      const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId });
+      const marketplaceSettings = await getSettings(db);
+
+      if (marketplaceSettings.sellerSalesEnabled === false) {
+        return json({ error: 'Las ventas están desactivadas temporalmente por administración.' }, 403);
+      }
+      if (!businessForLoc || businessForLoc.sellingApproved !== true) {
+        return json({ error: 'Tu negocio necesita la autorización de administración para publicar productos.' }, 403);
+      }
+
       const count = await db.collection('products').countDocuments({ businessId: user.businessId });
       const isPremium = user.plan === 'premium';
       if (!isPremium && count >= 10) {
         return json({ error: 'Límite del plan Básico (10 productos) alcanzado. Actualiza a Premium.' }, 403);
       }
-      const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId });
       const availablePaymentMethods = getAvailableBusinessPaymentMethods(businessForLoc);
       const selectedPaymentMethods = allowedPaymentMethods === undefined
         ? availablePaymentMethods
@@ -3192,6 +3229,15 @@ async function route(request, method, path) {
       const product = await db.collection('products').findOne({ id: path[1] });
       if (!product) return json({ error: 'No encontrado' }, 404);
       if (product.businessId !== user.businessId && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
+
+      if (user.role !== 'admin') {
+        const marketplaceSettings = await getSettings(db);
+        const ownerBusiness = await db.collection('businesses').findOne({ id: product.businessId });
+        if (marketplaceSettings.sellerSalesEnabled === false || ownerBusiness?.sellingApproved !== true) {
+          return json({ error: 'Tu negocio no está autorizado para gestionar productos en este momento.' }, 403);
+        }
+      }
+
       const body = await request.json();
       const parsed = productSchema.partial().safeParse(body);
       if (!parsed.success) {
@@ -3387,6 +3433,15 @@ return json({ payments: out });
     }
     const businessId = businessIds[0];
     const business = await db.collection('businesses').findOne({ id: businessId });
+    const marketplaceSettings = await getSettings(db);
+
+    if (marketplaceSettings.sellerSalesEnabled === false) {
+      return json({ error: 'Las ventas están desactivadas temporalmente por administración.' }, 403);
+    }
+    if (!business || business.sellingApproved !== true) {
+      return json({ error: 'Este negocio todavía no está autorizado para recibir pedidos.' }, 403);
+    }
+
     const paymentMethod = parsed.data.paymentMethod || 'crypto';
     const availableBusinessPaymentMethods = getAvailableBusinessPaymentMethods(business);
 
@@ -5814,20 +5869,47 @@ function sanitizeBuyerOrder(order) {
 
       const allowed = [
         'name', 'logo', 'description', 'whatsapp', 'telegram', 'sms',
-        'location', 'instagram', 'facebook',
+        'location', 'instagram', 'facebook', 'messenger',
+        'businessType', 'country', 'province', 'municipality', 'address',
+        'openingHours', 'closingHours', 'showContactsPublicly', 'sellingApproved',
         'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName',
         'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
         'enzonaEnabled', 'enzonaRecipient', 'enzonaCardNumber', 'enzonaPhone',
-        'cryptoEnabled'
+        'cryptoEnabled', 'deliveryFeeCUP'
       ];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
 
       // Validar la configuración de pagos antes de guardar.
-      for (const key of ['transfermovilEnabled', 'enzonaEnabled', 'cryptoEnabled']) {
+      for (const key of [
+        'transfermovilEnabled', 'enzonaEnabled', 'cryptoEnabled',
+        'sellingApproved', 'showContactsPublicly'
+      ]) {
         if (key in body && typeof body[key] !== 'boolean') {
           return json({ error: `El campo ${key} debe ser verdadero o falso.` }, 400);
         }
+      }
+
+      const businessTextLimits = {
+        messenger: 300, businessType: 50, country: 80,
+        province: 100, municipality: 100, address: 300,
+        openingHours: 50, closingHours: 50
+      };
+
+      for (const [key, maxLength] of Object.entries(businessTextLimits)) {
+        if (!(key in body)) continue;
+        if (typeof body[key] !== 'string' || body[key].length > maxLength) {
+          return json({ error: `El campo ${key} no es válido o supera ${maxLength} caracteres.` }, 400);
+        }
+        update[key] = body[key].trim();
+      }
+
+      if ('deliveryFeeCUP' in body) {
+        const fee = Number(body.deliveryFeeCUP);
+        if (!Number.isFinite(fee) || fee < 0 || fee > 1000000) {
+          return json({ error: 'El costo de entrega debe estar entre 0 y 1 000 000 CUP.' }, 400);
+        }
+        update.deliveryFeeCUP = fee;
       }
 
       const paymentTextLimits = {

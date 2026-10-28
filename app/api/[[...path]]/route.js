@@ -2933,21 +2933,11 @@ async function route(request, method, path) {
         return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 5);
       }
 
-      const approvedBusinesses = await db.collection('businesses')
-        .find({ sellingApproved: true }, { projection: { id: 1 } })
-        .toArray();
-      const approvedBusinessIds = approvedBusinesses.map((b) => b.id).filter(Boolean);
-
-      if (!approvedBusinessIds.length) {
-        return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 5);
-      }
-
       const filter = { available: true };
       // Smart stock: hide products with stock === 0 from public marketplace
       // (sellers still see them in their dashboard via /my/products)
       filter.$and = [
         { $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] },
-        { businessId: { $in: approvedBusinessIds } },
       ];
       // Escape regex special chars so users can search with parens, dots, dashes, etc.
       const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -3056,9 +3046,16 @@ async function route(request, method, path) {
         // Nunca exponer datos internos de verificación en respuestas públicas.
         const { transfermovilAccount, transfermovilVerificationPhone, ...publicBizFields } = b;
         // Publicar los métodos disponibles sin revelar datos privados de verificación.
+        const canAcceptOrders =
+          marketplaceSettings.sellerSalesEnabled !== false &&
+          b.sellingApproved === true;
+
         const publicBiz = {
           ...publicBizFields,
-          availablePaymentMethods: getAvailableBusinessPaymentMethods(b),
+          canAcceptOrders,
+          availablePaymentMethods: canAcceptOrders
+            ? getAvailableBusinessPaymentMethods(b)
+            : [],
         };
         let safe = publicBiz;
         // Respetar la privacidad de los contactos públicos del negocio.
@@ -3095,15 +3092,19 @@ async function route(request, method, path) {
 
       const marketplaceSettings = await getSettings(db);
       const business = await db.collection('businesses').findOne({ id: product.businessId });
-      if (marketplaceSettings.sellerSalesEnabled === false || business?.sellingApproved !== true) {
-        return json({ error: 'Este producto no está disponible actualmente.' }, 404);
-      }
+      const canAcceptOrders =
+        marketplaceSettings.sellerSalesEnabled !== false &&
+        business?.sellingApproved === true;
+
       // Nunca exponer datos internos de verificación en respuestas públicas.
       const { transfermovilAccount, transfermovilVerificationPhone, ...publicBusinessFields } = business || {};
       const publicBusiness = business ? {
         ...publicBusinessFields,
-        // Solo se publican los nombres de métodos disponibles.
-        availablePaymentMethods: getAvailableBusinessPaymentMethods(business),
+        canAcceptOrders,
+        // Los negocios no autorizados no exponen métodos de pago.
+        availablePaymentMethods: canAcceptOrders
+          ? getAvailableBusinessPaymentMethods(business)
+          : [],
       } : null;
       // Per-product privacy: optionally hide business contacts for THIS product
       const productHidesContacts = product.showPublicContact === false;
@@ -3120,6 +3121,7 @@ async function route(request, method, path) {
         product: {
           ...product,
           contactsHidden: productHidesContacts || (business && business.showContactsPublicly === false),
+          canAcceptOrders,
           business: safeBiz,
         },
       });

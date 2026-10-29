@@ -737,6 +737,64 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
   }
 }
 
+// Notificar la entrega al comprador y al destinatario registrado.
+// Si ambas direcciones coinciden, enviar un solo correo.
+async function sendOrderDeliveredNotifications(order) {
+  const recipients = new Map();
+
+  const buyerEmail = String(order?.buyerEmail || '').trim();
+  const shippingEmail = String(order?.shipping?.email || '').trim();
+
+  if (buyerEmail) {
+    recipients.set(buyerEmail.toLowerCase(), {
+      email: buyerEmail,
+      name: '',
+    });
+  }
+
+  if (shippingEmail) {
+    const key = shippingEmail.toLowerCase();
+    if (!recipients.has(key)) {
+      recipients.set(key, {
+        email: shippingEmail,
+        name: order?.shipping?.name || '',
+      });
+    }
+  }
+
+  if (recipients.size === 0) {
+    console.warn('[Email] Pedido entregado sin correos de destinatarios:', order?.id);
+    return;
+  }
+
+  const results = await Promise.all(
+    [...recipients.values()].map(async (recipient) => {
+      try {
+        return await sendOrderDeliveredEmail(
+          recipient.email,
+          recipient.name,
+          order
+        );
+      } catch (error) {
+        console.error(
+          '[Email] Error notificando entrega:',
+          order?.id,
+          error?.message || error
+        );
+        return { error };
+      }
+    })
+  );
+
+  const failed = results.filter((result) => result?.error || result?.skipped).length;
+  if (failed) {
+    console.error(
+      '[Email] Resultado de notificaciones de entrega:',
+      { orderId: order?.id, attempted: results.length, failed }
+    );
+  }
+}
+
 // 5. Payment Failed (webhook detects failed/expired)
 async function sendPaymentFailedEmail(toEmail, name, order, reason) {
   if (!resend) {
@@ -4016,6 +4074,12 @@ return json({ payments: out });
       return json({ error: 'No se pudo recuperar el pedido actualizado.' }, 500);
     }
 
+    if (status === 'delivered' && currentShippingStatus !== 'delivered') {
+      sendOrderDeliveredNotifications(updated).catch((error) =>
+        console.error('[Email] Error notificando entrega del vendedor:', error?.message || error)
+      );
+    }
+
     return json({ order: updated });
   }
 
@@ -4155,6 +4219,12 @@ return json({ payments: out });
 
     if (!updated?.sellerDeliveryConfirmation?.confirmedAt) {
       return json({ error: 'No se pudo verificar la confirmación guardada.' }, 500);
+    }
+
+    if (result.matchedCount === 1) {
+      sendOrderDeliveredNotifications(updated).catch((error) =>
+        console.error('[Email] Error notificando entrega por QR:', error?.message || error)
+      );
     }
 
     return json({
@@ -4934,7 +5004,14 @@ function sanitizeBuyerOrder(order) {
         carrier: updated.trackingCarrier,
       }).catch((e) => console.error('[Email] failed to send shipped:', e?.message || e));
     } else if (status === 'delivered') {
-      sendOrderDeliveredEmail(updated.buyerEmail, '', updated).catch((e) => console.error('[Email] failed to send delivered:', e?.message || e));
+      const wasAlreadyDelivered =
+        order.shippingStatus === 'delivered' || order.status === 'delivered';
+
+      if (!wasAlreadyDelivered) {
+        sendOrderDeliveredNotifications(updated).catch((e) =>
+          console.error('[Email] failed to send delivered:', e?.message || e)
+        );
+      }
     } else if (status === 'cancelled' || status === 'payment_failed') {
       sendPaymentFailedEmail(updated.buyerEmail, '', updated, adminNotes).catch((e) => console.error('[Email] failed to send failed:', e?.message || e));
     }

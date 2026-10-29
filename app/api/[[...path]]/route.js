@@ -1248,28 +1248,27 @@ async function route(request, method, path) {
       return json({ error: 'Falta el texto del SMS o excede el límite.' }, 400);
     }
 
-    // Reconocer los formatos SMS conocidos sin confirmar pedidos todavía.
+    // Aceptar exclusivamente los dos formatos SMS autorizados.
     const text = smsText.trim();
     let parsed = null;
     let match = text.match(
-      /transferencia\s+a\s+la\s+cuenta\s+([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})/i
+      /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})$/i
     );
 
     if (match) {
-      const senderMatch = text.match(/titular\s+del\s+tel[eé]fono\s+(\d+)/i);
-      const dateMatch = text.match(/Fecha\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
       parsed = {
         provider: 'transfermovil',
-        receiverAccount: match[1],
-        amountText: match[2],
-        transactionReference: match[3],
-        senderPhone: senderMatch?.[1] || null,
-        transactionDate: dateMatch?.[1] || null,
+        receiverAccount: match[2],
+        amountText: match[3],
+        transactionReference: match[4],
+        senderPhone: match[1],
+        transactionDate: null,
       };
     } else {
       match = text.match(
-        /ENZONA[\s\S]*?Importe\s*:\s*([\d.,]+)\s+CUP\s+No\.?\s*:\s*([A-Z0-9_-]{4,100})/i
+        /^ENZONA\s+transferencia recibida\s+Importe:\s*([\d.,]+)\s+CUP\s+No\.:\s*([A-Z0-9_-]{4,100})$/i
       );
+
       if (match) {
         parsed = {
           provider: 'enzona',
@@ -1296,6 +1295,11 @@ async function route(request, method, path) {
       } else {
         parsed = null;
       }
+    }
+
+    // No almacenar SMS que no coincidan exactamente con un formato autorizado.
+    if (!parsed || amount === null) {
+      return json({ error: 'Formato de SMS no admitido.' }, 422);
     }
 
     // Un hash del cuerpo permite reconocer reintentos idénticos.

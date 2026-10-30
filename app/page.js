@@ -1169,7 +1169,7 @@ const App = () => {
   });
 
   // Admin
-  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [], transfermovilEvents: [] });
+  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [], transfermovilEvents: [], carriers: [] });
   const [adminTab, setAdminTab] = useState('overview');
   const [adminSettings, setAdminSettings] = useState(null);
 
@@ -2153,7 +2153,7 @@ const App = () => {
     adminLoadingRef.current = true;
     setAdminLoading(true);
     try {
-      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes, transfermovilEventsRes] = await Promise.all([
+      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes, transfermovilEventsRes, carriersRes] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
         api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
@@ -2163,6 +2163,7 @@ const App = () => {
         api('/admin/crypto-invoices', { token }).catch(() => ({ invoices: [] })),
         api('/admin/orders', { token }).catch(() => ({ orders: [] })),
         api('/admin/transfermovil-events', { token }).catch(() => ({ events: [] })),
+        api('/admin/carriers', { token }).catch(() => ({ carriers: [] })),
       ]);
       setAdminData({
         payments: pays.payments || [], users: usrs.users || [],
@@ -2170,6 +2171,7 @@ const App = () => {
         cryptoInvoices: cryptoInvoices.invoices || [],
         orders: ordersRes.orders || [],
         transfermovilEvents: transfermovilEventsRes.events || [],
+        carriers: carriersRes.carriers || [],
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
@@ -2186,6 +2188,24 @@ const App = () => {
 
   const approvePayment = async (id) => { try { await api(`/admin/payments/${id}/approve`, { method: 'POST', token }); toast.success('Aprobado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const rejectPayment = async (id) => { const r = prompt('Motivo') || ''; try { await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason: r } }); toast.success('Rechazado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
+
+  const adminReviewCarrier = async (id, status, reviewNotes = '') => {
+    try {
+      await api(`/admin/carriers/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        token,
+        body: { status, reviewNotes },
+      });
+      toast.success(
+        status === 'approved' ? 'Transportista aprobado'
+          : status === 'rejected' ? 'Solicitud rechazada'
+          : 'Transportista suspendido'
+      );
+      await loadAdmin();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
 
   const adminUpdateOrder = async (order) => {
     const allowed = ['processing', 'shipped', 'delivered'];
@@ -2492,6 +2512,7 @@ const App = () => {
             data={adminData} settings={adminSettings} setSettings={setAdminSettings}
             onApprove={approvePayment} onReject={rejectPayment} onUpdateOrder={adminUpdateOrder}
             onUpdateUser={adminUpdateUser} onDeleteUser={adminDeleteUser}
+            onReviewCarrier={adminReviewCarrier}
             onUpdateBusiness={adminUpdateBusiness} onDeleteBusiness={adminDeleteBusiness}
             onDeleteProduct={adminDeleteProduct}
             onResolveReport={adminResolveReport}
@@ -2520,7 +2541,7 @@ const App = () => {
                 {
                   label: 'Más',
                   icon: Menu,
-                  active: view === 'admin' && ['payments', 'crypto-invoices', 'transfermovil', 'reports', 'products', 'settings'].includes(adminTab),
+                  active: view === 'admin' && ['payments', 'crypto-invoices', 'transfermovil', 'reports', 'products', 'settings', 'carriers'].includes(adminTab),
                   menu: [
                     { label: 'Pagos locales', value: 'payments' },
                     { label: 'Facturas cripto', value: 'crypto-invoices' },
@@ -2528,6 +2549,7 @@ const App = () => {
                     { label: 'Reportes', value: 'reports' },
                     { label: 'Productos', value: 'products' },
                     { label: 'Configuración', value: 'settings' },
+                    { label: 'Transportistas', value: 'carriers' },
                   ],
                 },
               ]
@@ -6981,7 +7003,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel }) => {
+const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel, onReviewCarrier }) => {
   const [editBiz, setEditBiz] = useState(null);
   const [showBusinessEditControls, setShowBusinessEditControls] = useState(false);
   const payments = Array.isArray(data?.payments) ? data.payments.filter(Boolean) : [];
@@ -6994,6 +7016,8 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
   const pendingReports = reports.filter((r) => r?.status === 'pending');
   const cryptoInvoices = Array.isArray(data?.cryptoInvoices) ? data.cryptoInvoices.filter(Boolean) : [];
   const transfermovilEvents = Array.isArray(data?.transfermovilEvents) ? data.transfermovilEvents.filter(Boolean) : [];
+  const carriers = Array.isArray(data?.carriers) ? data.carriers.filter(Boolean) : [];
+  const pendingCarriers = carriers.filter((c) => c.status === 'pending');
   const transfermovilPending = transfermovilEvents.filter((event) =>
     ['pending_review', 'matching_reference', 'paid_reconciliation_error'].includes(event?.status)
   ).length;
@@ -7039,6 +7063,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
           <TabsTrigger value="users">Usuarios</TabsTrigger>
           <TabsTrigger value="products">Productos</TabsTrigger>
           <TabsTrigger value="settings">Configuración</TabsTrigger>
+          <TabsTrigger value="carriers">Transportistas {pendingCarriers.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pendingCarriers.length}</Badge>}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-4 space-y-4">
@@ -7419,6 +7444,90 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
               </Card>
             ))}
           </div>
+        </TabsContent>
+
+        <TabsContent value="carriers" className="mt-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-bold">Solicitudes de transportistas</h2>
+              <p className="text-sm text-muted-foreground">
+                {pendingCarriers.length} pendientes · {carriers.length} registros en total
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={onRefresh}>Actualizar</Button>
+          </div>
+
+          {carriers.length === 0 ? (
+            <Card><CardContent className="p-6 text-center text-muted-foreground">
+              No hay solicitudes de transportistas.
+            </CardContent></Card>
+          ) : carriers.map((c) => (
+            <Card key={c.id} className="overflow-hidden">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold">{c.fullName || 'Sin nombre'}</div>
+                  <Badge variant={c.status === 'approved' ? 'default' : c.status === 'rejected' || c.status === 'suspended' ? 'destructive' : 'secondary'}>
+                    {({
+                      pending: 'Pendiente',
+                      approved: 'Aprobado',
+                      active: 'Activo',
+                      rejected: 'Rechazado',
+                      suspended: 'Suspendido',
+                    })[c.status] || c.status || 'Sin estado'}
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-muted-foreground">Correo:</span> {c.userEmail || '—'}</div>
+                  <div><span className="text-muted-foreground">Teléfono:</span> {c.phone || '—'}</div>
+                  <div><span className="text-muted-foreground">Vehículo:</span> {c.vehicleType || '—'}</div>
+                  <div><span className="text-muted-foreground">Matrícula:</span> {c.vehiclePlate || '—'}</div>
+                  <div><span className="text-muted-foreground">Provincia:</span> {c.province || '—'}</div>
+                  <div><span className="text-muted-foreground">Modalidad:</span> {c.transportMode || '—'}</div>
+                </div>
+
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Municipios:</span>{' '}
+                  {Array.isArray(c.municipalities) ? c.municipalities.join(', ') : '—'}
+                </div>
+
+                {c.experience && <p className="text-sm"><span className="text-muted-foreground">Experiencia:</span> {c.experience}</p>}
+                {c.availability && <p className="text-sm"><span className="text-muted-foreground">Disponibilidad:</span> {c.availability}</p>}
+                {c.reviewNotes && <p className="text-sm text-muted-foreground">Observaciones administrativas: {c.reviewNotes}</p>}
+
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
+                  {c.status === 'pending' && (
+                    <>
+                      <Button size="sm" onClick={() => onReviewCarrier?.(c.id, 'approved', '')}>
+                        <Check className="h-4 w-4 mr-1" /> Aprobar
+                      </Button>
+                      <Button size="sm" variant="outline" className="text-destructive" onClick={() => {
+                        const reason = window.prompt('Motivo del rechazo:');
+                        if (reason !== null) onReviewCarrier?.(c.id, 'rejected', reason.trim());
+                      }}>
+                        <XCircle className="h-4 w-4 mr-1" /> Rechazar
+                      </Button>
+                    </>
+                  )}
+
+                  {(c.status === 'suspended' || c.status === 'rejected') && (
+                    <Button size="sm" onClick={() => onReviewCarrier?.(c.id, 'approved', '')}>
+                      <Check className="h-4 w-4 mr-1" /> Aprobar / Reactivar
+                    </Button>
+                  )}
+
+                  {c.status === 'approved' && (
+                    <Button size="sm" variant="outline" className="text-destructive" onClick={() => {
+                      const reason = window.prompt('Motivo de la suspensión:');
+                      if (reason !== null) onReviewCarrier?.(c.id, 'suspended', reason.trim());
+                    }}>
+                      <AlertCircle className="h-4 w-4 mr-1" /> Suspender
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </TabsContent>
 
         <TabsContent value="settings" className="mt-4">

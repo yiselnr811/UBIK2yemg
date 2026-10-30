@@ -326,6 +326,25 @@ const sellerOrderUpdateSchema = z.object({
   ).max(4).optional(),
 });
 
+
+// ===== CARRIER APPLICATION SCHEMA =====
+const carrierApplicationSchema = z.object({
+  fullName: z.string().trim().min(3).max(100),
+  phone: z.string().trim().min(8).max(20),
+  vehicleType: z.enum(['motorcycle', 'car', 'van', 'truck', 'bicycle', 'other']),
+  vehiclePlate: z.string().trim().max(30).optional().default(''),
+  province: z.string().trim().min(2).max(80),
+  municipalities: z.array(z.string().trim().min(2).max(80)).min(1).max(30),
+  transportMode: z.enum(['local', 'provincial', 'interprovincial']),
+  experience: z.string().trim().max(1000).optional().default(''),
+  availability: z.string().trim().max(300).optional().default(''),
+});
+
+const carrierReviewSchema = z.object({
+  status: z.enum(['approved', 'rejected', 'suspended']),
+  reviewNotes: z.string().trim().max(1000).optional().default(''),
+});
+
 // ===== CRYPTO INVOICE SCHEMAS =====
 const createOrderCryptoSchema = createOrderSchema.extend({
   shippingPhone: z.string().min(1).max(20),
@@ -6233,6 +6252,165 @@ function sanitizeBuyerOrder(order) {
     if (error) return error;
     await db.collection('reviews').deleteOne({ id: path[2] });
     return json({ ok: true });
+  }
+
+
+  // ===== CARRIER APPLICATIONS =====
+
+  // GET /api/carriers/me - Estado de la solicitud del usuario autenticado
+  if (path[0] === 'carriers' && path[1] === 'me' && method === 'GET' && path.length === 2) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne(
+      { userId: user.id },
+      { projection: { _id: 0, userId: 0 } }
+    );
+
+    return json({ carrier });
+  }
+
+  // POST /api/carriers/apply - Solicitud de inscripción
+  if (path[0] === 'carriers' && path[1] === 'apply' && method === 'POST' && path.length === 2) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'Solicitud inválida' }, 400);
+    }
+
+    const parsed = carrierApplicationSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({
+        error: 'Revisa los datos del formulario',
+        details: parsed.error.flatten().fieldErrors,
+      }, 400);
+    }
+
+    const carriers = db.collection('carriers');
+    const existing = await carriers.findOne({ userId: user.id });
+
+    if (existing && existing.status !== 'rejected') {
+      return json({
+        error: existing.status === 'pending'
+          ? 'Tu solicitud está pendiente de revisión.'
+          : 'Ya tienes una inscripción registrada. Consulta su estado.',
+        carrier: {
+          status: existing.status || 'unknown',
+          reviewNotes: existing.reviewNotes || '',
+        },
+      }, 409);
+    }
+
+    const now = new Date().toISOString();
+    const application = {
+      ...parsed.data,
+      userId: user.id,
+      userEmail: user.email || '',
+      status: 'pending',
+      reviewNotes: '',
+      submittedAt: now,
+      updatedAt: now,
+    };
+
+    if (existing) {
+      const retryResult = await carriers.updateOne(
+        { userId: user.id, status: 'rejected' },
+        { $set: application, $unset: { reviewedAt: '', reviewedBy: '' } }
+      );
+
+      if (retryResult.matchedCount !== 1) {
+        return json({
+          error: 'El estado de tu solicitud cambió. Actualiza la página y vuelve a consultar.',
+        }, 409);
+      }
+    } else {
+      await carriers.insertOne({
+        id: uuidv4(),
+        ...application,
+      });
+    }
+
+    return json({
+      ok: true,
+      message: 'Solicitud enviada. La administración debe revisarla antes de autorizarte.',
+      status: 'pending',
+    }, 201);
+  }
+
+  // GET /api/admin/carriers - Lista de solicitudes para administración
+  if (path[0] === 'admin' && path[1] === 'carriers' && method === 'GET' && path.length === 2) {
+    const { error } = await requireAdmin(request);
+    if (error) return error;
+
+    const params = new URL(request.url).searchParams;
+    const requestedStatus = params.get('status');
+    const allowedStatuses = ['pending', 'approved', 'active', 'rejected', 'suspended'];
+    const filter = {};
+
+    if (requestedStatus && allowedStatuses.includes(requestedStatus)) {
+      filter.status = requestedStatus;
+    }
+
+    const carriers = await db.collection('carriers')
+      .find(filter, { projection: { _id: 0, userId: 0 } })
+      .sort({ submittedAt: -1 })
+      .limit(100)
+      .toArray();
+
+    return json({ carriers });
+  }
+
+  // PUT /api/admin/carriers/:id - Revisión administrativa
+  if (path[0] === 'admin' && path[1] === 'carriers' && path[2] && method === 'PUT' && path.length === 3) {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'Solicitud inválida' }, 400);
+    }
+
+    const parsed = carrierReviewSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({
+        error: 'Datos de revisión inválidos',
+        details: parsed.error.flatten().fieldErrors,
+      }, 400);
+    }
+
+    const carriers = db.collection('carriers');
+    const carrier = await carriers.findOne({ id: path[2] });
+
+    if (!carrier) {
+      return json({ error: 'Solicitud de transportista no encontrada' }, 404);
+    }
+
+    const now = new Date().toISOString();
+
+    await carriers.updateOne(
+      { id: path[2] },
+      {
+        $set: {
+          status: parsed.data.status,
+          reviewNotes: parsed.data.reviewNotes,
+          reviewedAt: now,
+          reviewedBy: user.id,
+          updatedAt: now,
+        },
+      }
+    );
+
+    return json({
+      ok: true,
+      message: 'Revisión guardada',
+      status: parsed.data.status,
+    });
   }
 
   return json({ error: 'Ruta no encontrada' }, 404);

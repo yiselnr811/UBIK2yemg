@@ -60,6 +60,65 @@ import {
 import { toast } from 'sonner';
 import AadsFloatingAd from '@/components/AadsFloatingAd';
 
+const OFFLINE_CATALOG_DB = 'ubik2-offline-catalog';
+const OFFLINE_CATALOG_STORE = 'catalog';
+
+function openOfflineCatalogDB() {
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('IndexedDB no disponible'));
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(OFFLINE_CATALOG_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(OFFLINE_CATALOG_STORE)) {
+        db.createObjectStore(OFFLINE_CATALOG_STORE, { keyPath: 'key' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('No se pudo abrir el catálogo local'));
+  });
+}
+
+async function readOfflineCatalog() {
+  let db;
+  try {
+    db = await openOfflineCatalogDB();
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(OFFLINE_CATALOG_STORE, 'readonly')
+        .objectStore(OFFLINE_CATALOG_STORE).get('home');
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return null;
+  } finally {
+    if (db) db.close();
+  }
+}
+
+async function writeOfflineCatalog(data) {
+  let db;
+  try {
+    db = await openOfflineCatalogDB();
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(OFFLINE_CATALOG_STORE, 'readwrite');
+      transaction.objectStore(OFFLINE_CATALOG_STORE).put({
+        key: 'home',
+        savedAt: Date.now(),
+        ...data
+      });
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    return true;
+  } catch (error) {
+    console.warn('No se pudo guardar el catálogo sin conexión:', error);
+    return false;
+  } finally {
+    if (db) db.close();
+  }
+}
+
 const API = '/api';
 const LOGO = '/logo.svg';
 
@@ -1006,6 +1065,21 @@ const App = () => {
   const [business, setBusiness] = useState(null);
 
   const [products, setProducts] = useState([]);
+  const [isOnline, setIsOnline] = useState(true);
+  const [offlineCatalogSavedAt, setOfflineCatalogSavedAt] = useState(null);
+  const [usingOfflineCatalog, setUsingOfflineCatalog] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateConnection = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', updateConnection);
+    window.addEventListener('offline', updateConnection);
+    updateConnection();
+    return () => {
+      window.removeEventListener('online', updateConnection);
+      window.removeEventListener('offline', updateConnection);
+    };
+  }, []);
   const [featured, setFeatured] = useState([]);
   const [categories, setCategories] = useState([]);
   const [businessTypes, setBusinessTypes] = useState([]);
@@ -1307,40 +1381,100 @@ const App = () => {
   const refreshHome = useCallback(() => {
     setLoading(true);
     setPage(1);
-    const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.country || filters.province || filters.municipality || filters.businessName || filters.businessType;
-    // Show ALL products (incl. featured) in main grid so destacados también aparecen en "Recientes".
-    // Featured section sigue cargando aparte para el carrusel arriba.
+    const hasFiltersOrQuery = !!(
+      query || category || filters.location || filters.priceMin || filters.priceMax ||
+      filters.since || filters.country || filters.province || filters.municipality ||
+      filters.businessName || filters.businessType || filters.subcategory ||
+      filters.currency || filters.physicalOnly || filters.featuredOnly || filters.availableOnly === false
+    );
     const mainQ = buildQuery({ page: '1' });
     const featQ = dataSaver ? '/products?featured=true&lite=true&limit=8' : '/products?featured=true&limit=12';
+
     Promise.all([
       api(`/products?${mainQ}`),
       hasFiltersOrQuery ? Promise.resolve({ products: [], hasMore: false }) : api(featQ),
       hasFiltersOrQuery ? Promise.resolve({ businesses: [] }) : api('/businesses?limit=12'),
     ])
       .then(([all, feat, biz]) => {
-        setProducts(all.products || []);
+        const nextProducts = all.products || [];
+        const nextFeatured = feat.products || [];
+        const nextBusinesses = biz.businesses || [];
+        setProducts(nextProducts);
         setHasMore(!!all.hasMore);
-        setFeatured(feat.products || []);
-        setTopBusinesses(biz.businesses || []);
+        setFeatured(nextFeatured);
+        setTopBusinesses(nextBusinesses);
+        setUsingOfflineCatalog(false);
+        setOfflineCatalogSavedAt(Date.now());
+
+        // Guardamos únicamente el catálogo general, nunca resultados filtrados.
+        if (!hasFiltersOrQuery) {
+          void writeOfflineCatalog({
+            products: nextProducts,
+            featured: nextFeatured,
+            topBusinesses: nextBusinesses,
+            hasMore: !!all.hasMore
+          });
+        }
       })
-      .catch((e) => toast.error(e.message))
+      .catch(async (error) => {
+        if (!hasFiltersOrQuery) {
+          const saved = await readOfflineCatalog();
+          if (saved && Array.isArray(saved.products)) {
+            setProducts(saved.products);
+            setFeatured(Array.isArray(saved.featured) ? saved.featured : []);
+            setTopBusinesses(Array.isArray(saved.topBusinesses) ? saved.topBusinesses : []);
+            setHasMore(false);
+            setPage(1);
+            setUsingOfflineCatalog(true);
+            setOfflineCatalogSavedAt(saved.savedAt || null);
+            return;
+          }
+        }
+        toast.error(
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? 'Sin conexión y todavía no hay un catálogo guardado en este dispositivo.'
+            : (error?.message || 'No se pudo cargar el catálogo.')
+        );
+      })
       .finally(() => setLoading(false));
   }, [buildQuery, query, category, filters, dataSaver]);
 
   const loadMore = useCallback(() => {
-    if (loadingMore || !hasMore) return;
+    if (loadingMore || !hasMore || !isOnline) return;
     setLoadingMore(true);
     const next = page + 1;
     const mainQ = buildQuery({ page: String(next) });
     api(`/products?${mainQ}`)
       .then((d) => {
-        setProducts((prev) => [...prev, ...(d.products || [])]);
+        const updatedProducts = [...products, ...(d.products || [])];
+        setProducts(updatedProducts);
         setHasMore(!!d.hasMore);
         setPage(next);
+
+        const hasActiveFilters = !!(
+          query || category || filters.location || filters.priceMin ||
+          filters.priceMax || filters.since || filters.country ||
+          filters.province || filters.municipality || filters.businessName ||
+          filters.businessType || filters.subcategory || filters.currency ||
+          filters.physicalOnly || filters.featuredOnly ||
+          filters.availableOnly === false
+        );
+
+        if (!hasActiveFilters) {
+          void writeOfflineCatalog({
+            products: updatedProducts,
+            featured,
+            topBusinesses,
+            hasMore: !!d.hasMore
+          });
+        }
       })
       .catch((e) => toast.error(e.message))
       .finally(() => setLoadingMore(false));
-  }, [loadingMore, hasMore, page, buildQuery]);
+  }, [
+    loadingMore, hasMore, page, buildQuery, products, featured,
+    topBusinesses, query, category, filters, isOnline
+  ]);
 
   // === Autocomplete (debounced) ===
   useEffect(() => {
@@ -1399,6 +1533,15 @@ const App = () => {
 
   useEffect(() => {
     if (view === 'home') refreshHome();
+  }, [view, refreshHome]);
+
+  // Al recuperar Internet, actualizar automáticamente el catálogo principal.
+  useEffect(() => {
+    const handleOnline = () => {
+      if (view === 'home') refreshHome();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
   }, [view, refreshHome]);
 
   // === Auth ===
@@ -2200,6 +2343,19 @@ const App = () => {
 
       {/* ====== MAIN ====== */}
       <main className="flex-1">
+        {(!isOnline || usingOfflineCatalog) && (
+          <div role="status" aria-live="polite" className="mx-auto w-full max-w-7xl px-4 py-3">
+            <div className="rounded-lg border border-amber-400/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+              <strong>{!isOnline ? 'Estás sin conexión.' : 'No se pudo actualizar el catálogo.'}</strong>
+              {' '}Mostramos productos guardados en este dispositivo. Los precios, el stock y la disponibilidad pueden haber cambiado.
+              {offlineCatalogSavedAt && (
+                <div className="mt-1 text-xs opacity-80">
+                  Última actualización guardada: {new Date(offlineCatalogSavedAt).toLocaleString('es-CU')}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {view === 'home' && (
           <Home
             t={t} stats={stats} categories={categories}

@@ -3359,6 +3359,11 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
                   <Store className="h-4 w-4 mr-2" /> Hazte vendedor
                 </DropdownMenuItem>
               )}
+              {isBuyer && (
+                <DropdownMenuItem onClick={() => { window.location.href = '/transportista'; }}>
+                  <MapPin className="h-4 w-4 mr-2" /> Solicitar ser transportista
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setView('buyer-orders')}>
                 <ShoppingBag className="h-4 w-4 mr-2" /> Mis compras y facturas
               </DropdownMenuItem>
@@ -5228,6 +5233,33 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
           </CardContent>
         </Card>
       </div>
+
+      <Card
+        role="button"
+        tabIndex={0}
+        aria-label="Solicitar ser transportista"
+        onClick={() => { window.location.href = '/transportista'; }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            window.location.href = '/transportista';
+          }
+        }}
+        className="mt-6 cursor-pointer border-[#00A86B]/30 hover:border-[#00A86B] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A86B]"
+      >
+        <CardContent className="p-5 flex items-center gap-4">
+          <div className="rounded-full bg-[#00A86B]/10 p-3">
+            <MapPin className="h-7 w-7 text-[#00A86B]" />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-bold text-lg">¿Quieres ser transportista?</h2>
+            <p className="text-sm text-muted-foreground">
+              Solicita tu incorporación para ofrecer servicios de transporte en UBIK2YEMG.
+            </p>
+          </div>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </CardContent>
+      </Card>
 
       <div className="mt-8">
         <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-2">{t.myOrdersInvoices}</h2>

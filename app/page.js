@@ -1396,9 +1396,18 @@ const App = () => {
       hasFiltersOrQuery ? Promise.resolve({ businesses: [] }) : api('/businesses?limit=12'),
     ])
       .then(([all, feat, biz]) => {
-        const nextProducts = all.products || [];
-        const nextFeatured = feat.products || [];
-        const nextBusinesses = biz.businesses || [];
+        // No sustituir el catálogo local con respuestas incompletas.
+        if (
+          !all || !Array.isArray(all.products) ||
+          !feat || !Array.isArray(feat.products) ||
+          !biz || !Array.isArray(biz.businesses)
+        ) {
+          throw new Error('La API devolvió un catálogo incompleto. Se conservarán los datos anteriores.');
+        }
+
+        const nextProducts = all.products;
+        const nextFeatured = feat.products;
+        const nextBusinesses = biz.businesses;
         setProducts(nextProducts);
         setHasMore(!!all.hasMore);
         setFeatured(nextFeatured);
@@ -1446,7 +1455,12 @@ const App = () => {
     const mainQ = buildQuery({ page: String(next) });
     api(`/products?${mainQ}`)
       .then((d) => {
-        const updatedProducts = [...products, ...(d.products || [])];
+        // No avanzar la paginación con una respuesta incompleta.
+        if (!d || !Array.isArray(d.products)) {
+          throw new Error('La API devolvió una página incompleta. Se conservarán los productos anteriores.');
+        }
+
+        const updatedProducts = [...products, ...d.products];
         setProducts(updatedProducts);
         setHasMore(!!d.hasMore);
         setPage(next);

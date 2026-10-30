@@ -54,21 +54,57 @@ self.addEventListener('fetch', (event) => {
   const isCloudinary = url.hostname === 'res.cloudinary.com';
   const isUnsplash = url.hostname === 'images.unsplash.com';
 
-  // === Cloudinary / Unsplash images: cache-first ===
+  // === Cloudinary / Unsplash: mostrar caché y actualizar en segundo plano ===
   if (isCloudinary || isUnsplash) {
+    const cachePromise = caches.open(IMG_CACHE);
+    const cachedPromise = cachePromise.then((cache) => cache.match(req));
+
+    // Evita descargas repetidas: renovar imágenes como máximo cada 7 días.
+    const IMAGE_REFRESH_MS = 7 * 24 * 60 * 60 * 1000;
+
+    const refreshPromise = cachePromise.then(async (cache) => {
+      const cached = await cache.match(req);
+      const cachedAt = cached
+        ? Number(cached.headers.get('x-ubik-image-cached-at') || 0)
+        : 0;
+
+      if (cached && cachedAt && Date.now() - cachedAt < IMAGE_REFRESH_MS) {
+        return cached;
+      }
+
+      const resp = await fetch(req, { mode: 'cors', credentials: 'omit' });
+
+      if (resp && resp.status === 200) {
+        const headers = new Headers(resp.headers);
+        headers.set('x-ubik-image-cached-at', String(Date.now()));
+
+        const body = await resp.clone().blob();
+        const storedResponse = new Response(body, {
+          status: resp.status,
+          statusText: resp.statusText,
+          headers
+        });
+
+        await cache.put(req, storedResponse);
+        await trimCache(IMG_CACHE, MAX_IMG_ENTRIES);
+      }
+
+      return resp;
+    });
+
+    // Mantiene vivo el Service Worker mientras se actualiza la imagen.
+    event.waitUntil(refreshPromise.then(() => undefined).catch(() => undefined));
+
     event.respondWith(
-      caches.open(IMG_CACHE).then(async (cache) => {
-        const cached = await cache.match(req);
+      cachedPromise.then(async (cached) => {
+        // La imagen guardada aparece inmediatamente, aunque esté pendiente
+        // la actualización de fondo.
         if (cached) return cached;
+
         try {
-          const resp = await fetch(req, { mode: 'cors', credentials: 'omit' });
-          if (resp && resp.status === 200) {
-            cache.put(req, resp.clone());
-            trimCache(IMG_CACHE, MAX_IMG_ENTRIES);
-          }
-          return resp;
+          return await refreshPromise;
         } catch {
-          return cached || Response.error();
+          return Response.error();
         }
       })
     );

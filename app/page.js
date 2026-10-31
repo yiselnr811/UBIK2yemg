@@ -59,6 +59,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import AadsFloatingAd from '@/components/AadsFloatingAd';
+import { CUBA_PROVINCES, getCubanMunicipalities } from '@/lib/cuba-locations';
 
 const OFFLINE_CATALOG_DB = 'ubik2-offline-catalog';
 const OFFLINE_CATALOG_STORE = 'catalog';
@@ -1166,6 +1167,7 @@ const App = () => {
   const canUseHomeDelivery = user?.plan === 'premium' && checkoutBusiness?.deliveryEnabled === true;
   const [cryptoRecipientData, setCryptoRecipientData] = useState({
     recipientId: '', name: '', address: '', email: '', phone: '',
+    province: '', municipality: '',
   });
 
   // Admin
@@ -1976,6 +1978,8 @@ const App = () => {
       address: cryptoRecipientData.address.trim(),
       email: cryptoRecipientData.email.trim(),
       phone: cryptoRecipientData.phone.trim(),
+      province: cryptoRecipientData.province.trim(),
+      municipality: cryptoRecipientData.municipality.trim(),
     };
 
     if ([recipient.recipientId, recipient.name, recipient.email, recipient.phone].some((value) => !value)) {
@@ -1984,6 +1988,11 @@ const App = () => {
     }
     if (deliveryMethod === 'delivery' && !recipient.address) {
       toast.error('Introduce la dirección de entrega');
+      return;
+    }
+    if (deliveryMethod === 'delivery' &&
+        (!recipient.province || !recipient.municipality)) {
+      toast.error('Selecciona la provincia y el municipio de entrega');
       return;
     }
     if (deliveryMethod === 'delivery' && !canUseHomeDelivery) {
@@ -2026,6 +2035,10 @@ const App = () => {
           shippingAddress: deliveryMethod === 'delivery'
             ? recipient.address
             : `Recogida en el negocio: ${checkoutBusiness?.name || 'negocio'}`,
+          ...(deliveryMethod === 'delivery' ? {
+            shippingProvince: recipient.province,
+            shippingMunicipality: recipient.municipality,
+          } : {}),
           deliveryMethod,
           shippingEmail: recipient.email,
           shippingNotes: checkoutPaymentMethod === 'crypto'
@@ -2859,13 +2872,53 @@ const App = () => {
                   disabled={checkoutSubmitting} required placeholder="Nombre completo" />
               </div>
               {deliveryMethod === 'delivery' ? (
+                <>
+                <div className="space-y-1">
+                  <Label>Provincia de entrega</Label>
+                  <Select
+                    value={cryptoRecipientData.province}
+                    onValueChange={(province) => setCryptoRecipientData((prev) => ({
+                      ...prev, province, municipality: '',
+                    }))}
+                    disabled={checkoutSubmitting}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona la provincia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CUBA_PROVINCES.map((province) => (
+                        <SelectItem key={province} value={province}>{province}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Municipio de entrega</Label>
+                  <Select
+                    value={cryptoRecipientData.municipality}
+                    onValueChange={(municipality) => setCryptoRecipientData((prev) => ({
+                      ...prev, municipality,
+                    }))}
+                    disabled={checkoutSubmitting || !cryptoRecipientData.province}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona el municipio" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getCubanMunicipalities(cryptoRecipientData.province).map((municipality) => (
+                        <SelectItem key={municipality} value={municipality}>{municipality}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="space-y-1">
                   <Label htmlFor="crypto-recipient-address">Dirección de entrega</Label>
                   <Input id="crypto-recipient-address" autoComplete="street-address" maxLength={500}
                     value={cryptoRecipientData.address}
                     onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, address: e.target.value }))}
-                    disabled={checkoutSubmitting} required placeholder="Calle, número, ciudad y país" />
+                    disabled={checkoutSubmitting} required placeholder="Calle, número, reparto y referencia" />
                 </div>
+                </>
               ) : (
                 <p className="rounded-md bg-muted p-3 text-sm">
                   Recogerás el pedido en el negocio. No necesitas introducir una dirección de entrega.

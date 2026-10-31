@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { parseUnits, formatUnits, isAddress } from 'viem';
 
 import { verifyCryptoInvoice, verifyPendingInvoices, isValidTronAddress } from '@/lib/crypto-verify';
+import { isValidCubanLocation } from '@/lib/cuba-locations';
 import { checkPrivyConnection } from '@/lib/privy-server';
 
 // Defensive: an undefined MONGO_URL makes the Mongo driver throw the cryptic
@@ -302,6 +303,8 @@ const createOrderSchema = z.object({
   shippingName: z.string().min(1).max(100),
   shippingPhone: z.string().min(8).max(20),
   shippingAddress: z.string().min(5).max(500),
+  shippingProvince: z.string().trim().min(2).max(80).optional(),
+  shippingMunicipality: z.string().trim().min(2).max(80).optional(),
   deliveryMethod: z.enum(['pickup', 'delivery']).optional(),
   shippingRecipientId: z.string().max(50).optional(),
   shippingEmail: z.string().email().max(254).optional(),
@@ -329,16 +332,48 @@ const sellerOrderUpdateSchema = z.object({
 
 // ===== CARRIER APPLICATION SCHEMA =====
 const carrierApplicationSchema = z.object({
+  identityNumber: z.string().trim().regex(/^\d{11}$/, 'El carnet debe tener 11 dígitos'),
   fullName: z.string().trim().min(3).max(100),
   phone: z.string().trim().min(8).max(20),
+
+  // Domicilio particular: información privada.
+  addressProvince: z.string().trim().min(2).max(80),
+  addressMunicipality: z.string().trim().min(2).max(80),
+  addressLocality: z.string().trim().min(2).max(100),
+  addressStreet: z.string().trim().min(3).max(150),
+  addressReference: z.string().trim().max(200).optional().default(''),
+
   vehicleType: z.enum(['motorcycle', 'car', 'van', 'truck', 'bicycle', 'other']),
   vehiclePlate: z.string().trim().max(30).optional().default(''),
+
+  // Zona donde desea prestar servicios.
   province: z.string().trim().min(2).max(80),
   municipalities: z.array(z.string().trim().min(2).max(80)).min(1).max(30),
+  coverageAreas: z.array(z.object({
+    province: z.string().trim().min(2).max(80),
+    municipalities: z.array(
+      z.string().trim().min(2).max(80)
+    ).min(1).max(30),
+  })).min(1).max(16).optional(),
   transportMode: z.enum(['local', 'provincial', 'interprovincial']),
   experience: z.string().trim().max(1000).optional().default(''),
   availability: z.string().trim().max(300).optional().default(''),
 });
+
+async function generateCarrierApplicationNumber(db) {
+  const year = new Date().getUTCFullYear();
+  const counter = await db.collection('counters').findOneAndUpdate(
+    { _id: `carrier_applications_${year}` },
+    { $inc: { sequence: 1 } },
+    { upsert: true, returnDocument: 'after' }
+  );
+
+  if (!counter || !Number.isSafeInteger(counter.sequence) || counter.sequence < 1) {
+    throw new Error('No se pudo generar el número de solicitud del transportista.');
+  }
+
+  return `TR-CUB-${year}-${String(counter.sequence).padStart(5, '0')}`;
+}
 
 const carrierReviewSchema = z.object({
   status: z.enum(['approved', 'rejected', 'suspended']),
@@ -3455,7 +3490,7 @@ return json({ payments: out });
     if (!parsed.success) {
       return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
     }
-    const { items, shippingName, shippingPhone, shippingAddress, shippingRecipientId, shippingEmail, shippingNotes, idempotencyKey } = parsed.data;
+    const { items, shippingName, shippingPhone, shippingAddress, shippingProvince, shippingMunicipality, shippingRecipientId, shippingEmail, shippingNotes, idempotencyKey } = parsed.data;
     const deliveryMethod = parsed.data.deliveryMethod || 'pickup';
 
     // Idempotency: if key provided and order exists, return existing
@@ -3606,6 +3641,16 @@ return json({ payments: out });
       }, 403);
     }
 
+    if (deliveryMethod === 'delivery') {
+      if (!shippingProvince || !shippingMunicipality) {
+        return json({ error: 'Selecciona la provincia y el municipio de entrega.' }, 400);
+      }
+
+      if (!isValidCubanLocation(shippingProvince, shippingMunicipality)) {
+        return json({ error: 'La combinación de provincia y municipio no es válida.' }, 400);
+      }
+    }
+
     const finalShippingAddress = deliveryMethod === 'pickup'
       ? `Recogida en el negocio: ${String(business?.name || 'negocio')}`.slice(0, 500)
       : shippingAddress;
@@ -3706,6 +3751,8 @@ return json({ payments: out });
         email: shippingEmail || '',
         phone: shippingPhone,
         address: finalShippingAddress,
+        province: deliveryMethod === 'delivery' ? shippingProvince : '',
+        municipality: deliveryMethod === 'delivery' ? shippingMunicipality : '',
         notes: shippingNotes || '',
       },
       paymentStatus: 'pending_payment',
@@ -3906,7 +3953,166 @@ return json({ payments: out });
     return json({ order: sanitizeBuyerOrder(order), invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
   }
 
-  // Seller order management: only the verified owner of the business.
+
+  // POST /api/seller/orders/:id/carrier-request
+  // Solicitud de transporte sin modificar el flujo de pagos ni confirmaciones.
+  if (
+    path[0] === 'seller' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'carrier-request' &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    const orders = db.collection('orders');
+    const order = await orders.findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu comercio.' }, 404);
+    }
+
+    const effectivePaymentStatus =
+      order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+
+    if (effectivePaymentStatus !== 'paid') {
+      return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
+    }
+
+    const deliveryMethod =
+      order.deliveryMethod || order.shipping?.deliveryMethod || 'pickup';
+
+    if (deliveryMethod !== 'delivery') {
+      return json({ error: 'El transporte solo se puede solicitar para pedidos con entrega a domicilio.' }, 409);
+    }
+
+    if (order.shippingStatus === 'delivered' || order.status === 'delivered') {
+      return json({ error: 'El pedido ya figura como entregado.' }, 409);
+    }
+
+    const originProvince = String(business.province || '').trim();
+    const originMunicipality = String(business.municipality || '').trim();
+    const originAddress = String(business.address || '').trim();
+
+    const destinationProvince = String(order.shipping?.province || '').trim();
+    const destinationMunicipality = String(order.shipping?.municipality || '').trim();
+
+    if (
+      !isValidCubanLocation(originProvince, originMunicipality)
+    ) {
+      return json({
+        error: 'La ubicación del comercio no está completa o no es válida. Actualiza la provincia y el municipio en los datos de tu negocio.',
+      }, 409);
+    }
+
+    if (!originAddress) {
+      return json({
+        error: 'Debes completar la dirección de recogida en los datos de tu negocio.',
+      }, 409);
+    }
+
+    if (!isValidCubanLocation(destinationProvince, destinationMunicipality)) {
+      return json({
+        error: 'El pedido no tiene una provincia y municipio de destino válidos.',
+      }, 409);
+    }
+
+    const routeType =
+      originProvince !== destinationProvince
+        ? 'interprovincial'
+        : originMunicipality !== destinationMunicipality
+          ? 'provincial'
+          : 'local';
+
+    const now = new Date().toISOString();
+
+    const carrierService = {
+      status: 'requested',
+      requestedAt: now,
+      requestedBy: user.id,
+      origin: {
+        province: originProvince,
+        municipality: originMunicipality,
+        address: originAddress,
+      },
+      destination: {
+        province: destinationProvince,
+        municipality: destinationMunicipality,
+      },
+      routeType,
+      declinedCarrierIds: [],
+    };
+
+    const updateResult = await orders.updateOne(
+      {
+        id: order.id,
+        businessId: business.id,
+        $and: [
+          {
+            $or: [
+              { paymentStatus: 'paid' },
+              { status: 'paid', paymentStatus: { $exists: false } },
+              { status: 'paid', paymentStatus: null },
+              { status: 'paid', paymentStatus: '' },
+            ],
+          },
+          {
+            $or: [
+              { deliveryMethod: 'delivery' },
+              { 'shipping.deliveryMethod': 'delivery' },
+            ],
+          },
+          {
+            'carrierService.status': { $in: [null, 'cancelled'] },
+          },
+        ],
+      },
+      {
+        $set: {
+          carrierService,
+          updatedAt: now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'carrier_requested',
+            at: now,
+            by: user.id,
+          },
+        },
+      }
+    );
+
+    if (updateResult.modifiedCount !== 1) {
+      return json({
+        error: 'No se pudo registrar la solicitud. El pedido pudo cambiar o ya tiene un servicio de transporte activo.',
+      }, 409);
+    }
+
+    return json({
+      ok: true,
+      carrierService,
+      message: 'Solicitud de transporte registrada correctamente.',
+    }, 201);
+  }
+
+// Seller order management: only the verified owner of the business.
   if (path[0] === 'seller' && path[1] === 'orders' &&
       (method === 'GET' || (method === 'PUT' && path[2]))) {
     const { user, error } = await requireUser(request);
@@ -3987,6 +4193,16 @@ return json({ payments: out });
           ? ['shipped', 'delivered']
           : [currentShippingStatus];
     }
+    if (
+      parsed.data.status === 'delivered' &&
+      order.carrierService?.carrierId &&
+      order.carrierService.status !== 'delivered'
+    ) {
+      return json({
+        error: 'El transportista asignado debe confirmar la entrega antes de que puedas marcar el pedido como entregado.',
+      }, 409);
+    }
+
     if (!allowedStatuses.includes(parsed.data.status)) {
       return json({
         error: effectiveDeliveryMethod === 'pickup'
@@ -4074,6 +4290,15 @@ return json({ payments: out });
           { status: 'paid', paymentStatus: null },
           { status: 'paid', paymentStatus: '' },
         ],
+        ...(status === 'delivered' ? {
+          $and: [{
+            $or: [
+              { 'carrierService.carrierId': { $exists: false } },
+              { 'carrierService.carrierId': null },
+              { 'carrierService.status': 'delivered' },
+            ],
+          }],
+        } : {}),
       },
       updateDoc
     );
@@ -4162,6 +4387,15 @@ return json({ payments: out });
       return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
     }
 
+    if (
+      order.carrierService?.carrierId &&
+      order.carrierService.status !== 'delivered'
+    ) {
+      return json({
+        error: 'El transportista asignado debe confirmar la entrega antes de la confirmación QR del vendedor.',
+      }, 409);
+    }
+
     if (order.sellerDeliveryConfirmation?.confirmedAt) {
       return json({
         order,
@@ -4196,6 +4430,13 @@ return json({ payments: out });
             $or: [
               { 'sellerDeliveryConfirmation.confirmedAt': { $exists: false } },
               { 'sellerDeliveryConfirmation.confirmedAt': null },
+            ],
+          },
+          {
+            $or: [
+              { 'carrierService.carrierId': { $exists: false } },
+              { 'carrierService.carrierId': null },
+              { 'carrierService.status': 'delivered' },
             ],
           },
         ],
@@ -4588,6 +4829,21 @@ return json({ payments: out });
 function sanitizeBuyerOrder(order) {
   if (!order || typeof order !== 'object') return order;
   const safe = { ...order };
+
+  // Nunca entregar datos internos del transportista al comprador.
+  if (safe.carrierService && typeof safe.carrierService === 'object') {
+    const service = safe.carrierService;
+    safe.carrierTracking = {
+      status: service.status || '',
+      routeType: service.routeType || '',
+      carrierName: service.carrierName || '',
+      acceptedAt: service.acceptedAt || null,
+      pickedUpAt: service.pickedUpAt || null,
+      deliveredAt: service.deliveredAt || null,
+    };
+  }
+  delete safe.carrierService;
+
   if (safe.paymentDetails && typeof safe.paymentDetails === 'object') {
     safe.paymentDetails = { ...safe.paymentDetails };
     delete safe.paymentDetails.recipientVerificationPhone;
@@ -4985,6 +5241,16 @@ function sanitizeBuyerOrder(order) {
       return json({ error: 'El pedido debe tener el pago confirmado antes de gestionar su preparación o entrega.' }, 409);
     }
 
+    if (
+      status === 'delivered' &&
+      order.carrierService?.carrierId &&
+      order.carrierService.status !== 'delivered'
+    ) {
+      return json({
+        error: 'El transportista asignado debe confirmar la entrega antes de que un administrador pueda marcarla como entregada.',
+      }, 409);
+    }
+
     const now = new Date().toISOString();
     const historyEntry = { status, at: now, by: user.id };
     if (adminNotes) historyEntry.notes = adminNotes;
@@ -5013,7 +5279,22 @@ function sanitizeBuyerOrder(order) {
     if (trackingNumber) update.$set.trackingNumber = trackingNumber;
     if (trackingCarrier) update.$set.trackingCarrier = trackingCarrier;
 
-    await db.collection('orders').updateOne({ id: path[2] }, update);
+    const updateFilter = { id: path[2] };
+    if (status === 'delivered') {
+      updateFilter.$or = [
+        { 'carrierService.carrierId': { $exists: false } },
+        { 'carrierService.carrierId': null },
+        { 'carrierService.status': 'delivered' },
+      ];
+    }
+
+    const updateResult = await db.collection('orders').updateOne(updateFilter, update);
+    if (updateResult.matchedCount !== 1) {
+      return json({
+        error: 'No se pudo actualizar el pedido. Comprueba el estado del transportista y vuelve a intentarlo.',
+      }, 409);
+    }
+
     const updated = await db.collection('orders').findOne({ id: path[2] });
 
     // Send transactional emails based on status change (async, don't block)
@@ -6267,7 +6548,494 @@ function sanitizeBuyerOrder(order) {
       { projection: { _id: 0, userId: 0 } }
     );
 
-    return json({ carrier });
+    const allowedProfileFields = [
+      'applicationNumber',
+      'status',
+      'reviewNotes',
+      'identityNumber',
+      'fullName',
+      'phone',
+      'addressProvince',
+      'addressMunicipality',
+      'addressLocality',
+      'addressStreet',
+      'addressReference',
+      'vehicleType',
+      'vehiclePlate',
+      'transportMode',
+      'experience',
+      'availability',
+      'coverageAreas',
+      'province',
+      'municipalities',
+    ];
+
+    const safeCarrier = carrier
+      ? Object.fromEntries(
+          allowedProfileFields
+            .filter(field => Object.prototype.hasOwnProperty.call(carrier, field))
+            .map(field => [field, carrier[field]])
+        )
+      : null;
+
+    return json({ carrier: safeCarrier });
+  }
+
+
+  // GET /api/carriers/services - Servicios disponibles y asignados.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'services' &&
+    method === 'GET' &&
+    path.length === 2
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'Necesitas tener autorización como transportista.' }, 403);
+    }
+
+    const areas = Array.isArray(carrier.coverageAreas) && carrier.coverageAreas.length
+      ? carrier.coverageAreas
+      : [{
+          province: carrier.province,
+          municipalities: carrier.municipalities || [],
+        }];
+
+    const covers = (province, municipality) =>
+      areas.some(area =>
+        area.province === province &&
+        Array.isArray(area.municipalities) &&
+        area.municipalities.includes(municipality)
+      );
+
+    const supportsRoute = routeType => {
+      if (routeType === 'local') return true;
+      if (routeType === 'provincial') {
+        return ['provincial', 'interprovincial'].includes(carrier.transportMode);
+      }
+      if (routeType === 'interprovincial') {
+        return carrier.transportMode === 'interprovincial';
+      }
+      return false;
+    };
+
+    const orders = db.collection('orders');
+
+    const requestedOrders = await orders.find({
+      'carrierService.status': 'requested',
+      'carrierService.carrierId': { $exists: false },
+      'carrierService.declinedCarrierIds': { $ne: carrier.id },
+      $and: [{
+        $or: [
+          { paymentStatus: 'paid' },
+          { status: 'paid', paymentStatus: { $exists: false } },
+          { status: 'paid', paymentStatus: null },
+          { status: 'paid', paymentStatus: '' },
+        ],
+      }],
+    }, {
+      projection: {
+        _id: 0,
+        id: 1,
+        businessId: 1,
+        businessName: 1,
+        items: 1,
+        totalCUP: 1,
+        total: 1,
+        createdAt: 1,
+        carrierService: 1,
+      },
+    }).sort({ 'carrierService.requestedAt': 1 }).limit(100).toArray();
+
+    const availableServices = requestedOrders
+      .filter(order => {
+        const service = order.carrierService;
+        if (!service?.origin || !service?.destination) return false;
+
+        return (
+          covers(service.origin.province, service.origin.municipality) &&
+          covers(service.destination.province, service.destination.municipality) &&
+          supportsRoute(service.routeType)
+        );
+      })
+      .map(order => ({
+        orderId: order.id,
+        businessId: order.businessId,
+        businessName: order.businessName || '',
+        items: (order.items || []).map(item => ({
+          name: item.name || item.productName || '',
+          quantity: item.quantity || 1,
+        })),
+        totalCUP: order.totalCUP ?? order.total ?? null,
+        requestedAt: order.carrierService.requestedAt,
+        routeType: order.carrierService.routeType,
+        origin: {
+          province: order.carrierService.origin.province,
+          municipality: order.carrierService.origin.municipality,
+        },
+        destination: {
+          province: order.carrierService.destination.province,
+          municipality: order.carrierService.destination.municipality,
+        },
+      }));
+
+    const assignedOrders = await orders.find({
+      'carrierService.carrierUserId': user.id,
+      'carrierService.status': { $in: ['accepted', 'picked_up', 'delivered'] },
+    }, {
+      projection: {
+        _id: 0,
+        id: 1,
+        items: 1,
+        totalCUP: 1,
+        total: 1,
+        createdAt: 1,
+        shipping: 1,
+        shippingName: 1,
+        shippingPhone: 1,
+        shippingAddress: 1,
+        shippingNotes: 1,
+        carrierService: 1,
+      },
+    }).sort({ 'carrierService.acceptedAt': -1 }).limit(100).toArray();
+
+    const assignedServices = assignedOrders.map(order => {
+      const service = order.carrierService || {};
+      const shipping = order.shipping || {};
+
+      return {
+        orderId: order.id,
+        status: service.status,
+        routeType: service.routeType,
+        acceptedAt: service.acceptedAt || null,
+        pickedUpAt: service.pickedUpAt || null,
+        deliveredAt: service.deliveredAt || null,
+        origin: {
+          province: service.origin?.province || '',
+          municipality: service.origin?.municipality || '',
+          address: service.origin?.address || '',
+        },
+        recipient: {
+          name: shipping.name || order.shippingName || '',
+          phone: shipping.phone || order.shippingPhone || '',
+          address: shipping.address || order.shippingAddress || '',
+          province: shipping.province || '',
+          municipality: shipping.municipality || '',
+          notes: order.shippingNotes || shipping.notes || '',
+        },
+        items: (order.items || []).map(item => ({
+          name: item.name || item.productName || '',
+          quantity: item.quantity || 1,
+        })),
+        totalCUP: order.totalCUP ?? order.total ?? null,
+        createdAt: order.createdAt || null,
+      };
+    });
+
+    return json({ availableServices, assignedServices });
+  }
+
+  // POST /api/carriers/orders/:id/respond - Aceptar o rechazar.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'respond' &&
+    path.length === 4 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'No tienes autorización como transportista.' }, 403);
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'Solicitud inválida.' }, 400);
+    }
+
+    if (!['accepted', 'rejected'].includes(body?.action)) {
+      return json({ error: 'Acción inválida.' }, 400);
+    }
+
+    const orders = db.collection('orders');
+    const now = new Date().toISOString();
+
+    // Revalidar el servicio y la cobertura en el servidor.
+    const candidate = await orders.findOne({
+      id: path[2],
+      'carrierService.status': 'requested',
+      'carrierService.carrierId': { $exists: false },
+      'carrierService.declinedCarrierIds': { $ne: carrier.id },
+    });
+
+    if (!candidate) {
+      return json({ error: 'El servicio ya no está disponible.' }, 409);
+    }
+
+    const effectivePaymentStatus =
+      candidate.paymentStatus ||
+      (candidate.status === 'paid' ? 'paid' : null);
+
+    const effectiveDeliveryMethod =
+      candidate.deliveryMethod ||
+      candidate.shipping?.deliveryMethod ||
+      'pickup';
+
+    if (effectivePaymentStatus !== 'paid' ||
+        effectiveDeliveryMethod !== 'delivery') {
+      return json({ error: 'El pedido no cumple los requisitos de transporte.' }, 409);
+    }
+
+    const areas = Array.isArray(carrier.coverageAreas) && carrier.coverageAreas.length
+      ? carrier.coverageAreas
+      : [{
+          province: carrier.province,
+          municipalities: carrier.municipalities || [],
+        }];
+
+    const covers = (province, municipality) =>
+      areas.some(area =>
+        area.province === province &&
+        Array.isArray(area.municipalities) &&
+        area.municipalities.includes(municipality)
+      );
+
+    const service = candidate.carrierService || {};
+    const origin = service.origin || {};
+    const destination = service.destination || {};
+
+    const supportsRoute =
+      service.routeType === 'local' ||
+      (service.routeType === 'provincial' &&
+        ['provincial', 'interprovincial'].includes(carrier.transportMode)) ||
+      (service.routeType === 'interprovincial' &&
+        carrier.transportMode === 'interprovincial');
+
+    if (
+      !covers(origin.province, origin.municipality) ||
+      !covers(destination.province, destination.municipality) ||
+      !supportsRoute
+    ) {
+      return json({ error: 'Este servicio está fuera de tu cobertura o modalidad autorizada.' }, 403);
+    }
+
+    const filter = {
+      id: path[2],
+      'carrierService.status': 'requested',
+      'carrierService.carrierId': { $exists: false },
+      'carrierService.declinedCarrierIds': { $ne: carrier.id },
+      $and: [
+        {
+          $or: [
+            { paymentStatus: 'paid' },
+            { status: 'paid', paymentStatus: { $exists: false } },
+            { status: 'paid', paymentStatus: null },
+            { status: 'paid', paymentStatus: '' },
+          ],
+        },
+        {
+          $or: [
+            { deliveryMethod: 'delivery' },
+            { 'shipping.deliveryMethod': 'delivery' },
+          ],
+        },
+      ],
+    };
+
+    if (body.action === 'rejected') {
+      const result = await orders.updateOne(filter, {
+        $addToSet: { 'carrierService.declinedCarrierIds': carrier.id },
+        $set: { updatedAt: now },
+      });
+
+      if (result.modifiedCount !== 1) {
+        return json({ error: 'El servicio ya no está disponible.' }, 409);
+      }
+
+      return json({ ok: true, status: 'rejected' });
+    }
+
+    const result = await orders.updateOne(filter, {
+      $set: {
+        'carrierService.status': 'accepted',
+        'carrierService.carrierId': carrier.id,
+        'carrierService.carrierUserId': user.id,
+        'carrierService.carrierName': carrier.fullName || '',
+        'carrierService.acceptedAt': now,
+        'carrierService.acceptedBy': user.id,
+        updatedAt: now,
+      },
+      $push: {
+        statusHistory: {
+          status: 'carrier_accepted',
+          at: now,
+          by: user.id,
+        },
+      },
+    });
+
+    if (result.modifiedCount !== 1) {
+      return json({
+        error: 'Otro transportista aceptó el servicio o el pedido dejó de estar disponible.',
+      }, 409);
+    }
+
+    return json({ ok: true, status: 'accepted' });
+  }
+
+  // POST /api/carriers/orders/:id/pickup - Confirmar recogida.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'pickup' &&
+    path.length === 4 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'No tienes autorización como transportista.' }, 403);
+    }
+
+    const now = new Date().toISOString();
+    const result = await db.collection('orders').updateOne({
+      id: path[2],
+      'carrierService.carrierId': carrier.id,
+      'carrierService.carrierUserId': user.id,
+      'carrierService.status': 'accepted',
+      $and: [
+        {
+          $or: [
+            { paymentStatus: 'paid' },
+            { status: 'paid', paymentStatus: { $exists: false } },
+            { status: 'paid', paymentStatus: null },
+            { status: 'paid', paymentStatus: '' },
+          ],
+        },
+        {
+          $or: [
+            { deliveryMethod: 'delivery' },
+            { 'shipping.deliveryMethod': 'delivery' },
+          ],
+        },
+      ],
+    }, {
+      $set: {
+        'carrierService.status': 'picked_up',
+        'carrierService.pickedUpAt': now,
+        shippingStatus: 'shipped',
+        updatedAt: now,
+      },
+      $push: {
+        statusHistory: {
+          status: 'carrier_picked_up',
+          at: now,
+          by: user.id,
+        },
+      },
+    });
+
+    if (result.modifiedCount !== 1) {
+      return json({ error: 'No se pudo confirmar la recogida. Comprueba el estado del servicio.' }, 409);
+    }
+
+    return json({ ok: true, status: 'picked_up', pickedUpAt: now });
+  }
+
+  // POST /api/carriers/orders/:id/deliver - Confirmar entrega.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'deliver' &&
+    path.length === 4 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'No tienes autorización como transportista.' }, 403);
+    }
+
+    const now = new Date().toISOString();
+    const result = await db.collection('orders').updateOne({
+      id: path[2],
+      'carrierService.carrierId': carrier.id,
+      'carrierService.carrierUserId': user.id,
+      'carrierService.status': 'picked_up',
+      $and: [
+        {
+          $or: [
+            { paymentStatus: 'paid' },
+            { status: 'paid', paymentStatus: { $exists: false } },
+            { status: 'paid', paymentStatus: null },
+            { status: 'paid', paymentStatus: '' },
+          ],
+        },
+        {
+          $or: [
+            { deliveryMethod: 'delivery' },
+            { 'shipping.deliveryMethod': 'delivery' },
+          ],
+        },
+      ],
+    }, {
+      $set: {
+        'carrierService.status': 'delivered',
+        'carrierService.deliveredAt': now,
+        shippingStatus: 'delivered',
+        status: 'delivered',
+        updatedAt: now,
+      },
+      $push: {
+        statusHistory: {
+          status: 'carrier_delivered',
+          at: now,
+          by: user.id,
+        },
+      },
+    });
+
+    if (result.modifiedCount !== 1) {
+      return json({ error: 'No se pudo confirmar la entrega. Comprueba el estado del servicio.' }, 409);
+    }
+
+    return json({
+      ok: true,
+      status: 'delivered',
+      deliveredAt: now,
+      message: 'Entrega registrada. El comprador aún debe confirmar la recepción.',
+    });
   }
 
   // POST /api/carriers/apply - Solicitud de inscripción
@@ -6290,6 +7058,29 @@ function sanitizeBuyerOrder(order) {
       }, 400);
     }
 
+    const coverageAreas = parsed.data.coverageAreas?.length
+      ? parsed.data.coverageAreas
+      : [{
+          province: parsed.data.province,
+          municipalities: parsed.data.municipalities,
+        }];
+
+    const seenProvinces = new Set();
+    for (const area of coverageAreas) {
+      if (!Array.isArray(area.municipalities) ||
+          !area.municipalities.length ||
+          seenProvinces.has(area.province) ||
+          area.municipalities.some(
+            municipality => !isValidCubanLocation(area.province, municipality)
+          ) ||
+          new Set(area.municipalities).size !== area.municipalities.length) {
+        return json({
+          error: 'La cobertura contiene provincias o municipios inválidos o repetidos.',
+        }, 400);
+      }
+      seenProvinces.add(area.province);
+    }
+
     const carriers = db.collection('carriers');
     const existing = await carriers.findOne({ userId: user.id });
 
@@ -6306,8 +7097,15 @@ function sanitizeBuyerOrder(order) {
     }
 
     const now = new Date().toISOString();
+    const applicationNumber = existing?.applicationNumber ||
+      await generateCarrierApplicationNumber(db);
+
     const application = {
       ...parsed.data,
+      coverageAreas,
+      province: coverageAreas[0].province,
+      municipalities: coverageAreas[0].municipalities,
+      applicationNumber,
       userId: user.id,
       userEmail: user.email || '',
       status: 'pending',
@@ -6338,6 +7136,7 @@ function sanitizeBuyerOrder(order) {
       ok: true,
       message: 'Solicitud enviada. La administración debe revisarla antes de autorizarte.',
       status: 'pending',
+      applicationNumber,
     }, 201);
   }
 

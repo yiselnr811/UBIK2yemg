@@ -4173,7 +4173,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               { v: stats.servicesCount || 0, l: 'Servicios' },
               { v: stats.activeBusinessesCount || 0, l: 'Negocios activos' },
               { v: stats.businessesCount || 0, l: 'Negocios totales' },
-              { v: stats.usersCount || 0, l: 'Usuarios' },
+              { v: 250 + (Number(stats.usersCount) || 0), l: 'Usuarios' },
             ].map((s, i) => (
               <div key={i}>
                 <div className="text-2xl md:text-4xl font-extrabold tabular-nums">{Number(s.v).toLocaleString('es-ES')}</div>

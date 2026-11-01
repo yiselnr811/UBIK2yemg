@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 import { MongoClient } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -551,15 +551,18 @@ async function sendOrderConfirmationEmail(toEmail, name, order) {
   }
   const safeName = (name || '').toString().split(' ')[0] || 'usuario';
   const orderUrl = `${BASE_URL}/?order=${order.id}`;
+  const commercialCode = order.ubikCode || String(order.id || '').slice(0, 8).toUpperCase();
+  const technicalReference = order.publicInvoiceId || order.id;
   const itemsHtml = orderItemsHtml(order.items);
   const shipping = shippingHtml(order.shipping);
 
   const content = `
     <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} 👋</h1>
     <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
-      Gracias por tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong> en <strong>${order.businessName}</strong>.
+      Gracias por tu pedido <strong>#${commercialCode}</strong> en <strong>${order.businessName}</strong>.
       Lo hemos recibido y está <span style="color:#1565C0;font-weight:600;">pendiente de pago</span>.
     </p>
+    <p style="margin:0 0 16px;font-size:12px;color:#6b7280;">Referencia técnica: ${technicalReference}</p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
       <thead>
         <tr style="background:#f9fafb;">
@@ -588,7 +591,7 @@ async function sendOrderConfirmationEmail(toEmail, name, order) {
   `;
 
   const html = emailWrapper({
-    title: `Pedido confirmado #${order.id.slice(0, 8)}`,
+    title: `Pedido confirmado #${commercialCode}`,
     preheader: `Tu pedido en ${order.businessName} por ${Number(order.total).toLocaleString('es-ES')} ${order.currency} está pendiente de pago.`,
     content,
     footerNote: 'Si no realizaste este pedido, por favor contacta a soporte.',
@@ -598,7 +601,7 @@ async function sendOrderConfirmationEmail(toEmail, name, order) {
     const { data, error } = await resend.emails.send({
       from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
       to: [toEmail],
-      subject: `✅ Pedido confirmado #${order.id.slice(0, 8).toUpperCase()} - ${order.businessName}`,
+      subject: `✅ Pedido confirmado #${commercialCode} - ${order.businessName}`,
       html,
     });
     if (error) {
@@ -745,13 +748,16 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
   }
   const safeName = (name || '').toString().split(' ')[0] || 'usuario';
   const orderUrl = `${BASE_URL}/?order=${order.id}`;
+  const commercialCode = order.ubikCode || String(order.id || '').slice(0, 8).toUpperCase();
+  const technicalReference = order.publicInvoiceId || order.id;
 
   const content = `
     <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} ✅</h1>
     <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
-      ¡Tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong> de <strong>${order.businessName}</strong>
+      ¡Tu pedido <strong>#${commercialCode}</strong> de <strong>${order.businessName}</strong>
       ha sido <span style="color:#166534;font-weight:700;">entregado</span>!
     </p>
+    <p style="margin:0 0 16px;font-size:12px;color:#6b7280;">Referencia técnica: ${technicalReference}</p>
     <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
       Esperamos que disfrutes tu compra. Tu opinión nos ayuda a mejorar.
     </p>
@@ -766,8 +772,8 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
   `;
 
   const html = emailWrapper({
-    title: `Pedido entregado #${order.id.slice(0, 8)}`,
-    preheader: `Tu pedido #${order.id.slice(0, 8)} de ${order.businessName} ha sido entregado.`,
+    title: `Pedido entregado #${commercialCode}`,
+    preheader: `Tu pedido #${commercialCode} de ${order.businessName} ha sido entregado.`,
     content,
     footerNote: 'Gracias por confiar en UBIK2 YEMG. ¡Vuelve pronto!',
   });
@@ -776,7 +782,7 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
     const { data, error } = await resend.emails.send({
       from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
       to: [toEmail],
-      subject: `✅ Pedido entregado #${order.id.slice(0, 8).toUpperCase()} - ${order.businessName}`,
+      subject: `✅ Pedido entregado #${commercialCode} - ${order.businessName}`,
       html,
     });
     if (error) {
@@ -913,6 +919,33 @@ let _client = null;
 let _connectPromise = null;
 let _indexesEnsured = false;
 let _indexesPromise = null;
+
+const UBIK_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function generateUbikCode() {
+  const bytes = randomBytes(8);
+  let code = 'UBIK2-';
+  for (const byte of bytes) {
+    code += UBIK_CODE_ALPHABET[byte & 31];
+  }
+  return code;
+}
+
+async function generateUniqueUbikCode(orders, excludeId = null) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const candidate = generateUbikCode();
+    const filter = { ubikCode: candidate };
+    if (excludeId !== null) filter._id = { $ne: excludeId };
+
+    const existing = await orders.findOne(
+      filter,
+      { projection: { _id: 1 } }
+    );
+    if (!existing) return candidate;
+  }
+  throw new Error('[Orders] No se pudo generar un código UBIK2 único');
+}
+
 async function ensureIndexes(db) {
   if (_indexesEnsured) return;
   try {
@@ -976,6 +1009,73 @@ async function ensureIndexes(db) {
       err.criticalInvoiceIdIndex = true;
       throw err;
     });
+
+    // Código comercial UBIK2: completar pedidos antiguos y corregir duplicados.
+    const ordersForUbikCodes = db.collection('orders');
+
+    const missingUbikCodes = await ordersForUbikCodes.find({
+      $or: [
+        { ubikCode: { $exists: false } },
+        { ubikCode: null },
+        { ubikCode: '' }
+      ]
+    }, { projection: { _id: 1 } }).toArray();
+
+    let migratedUbikCodes = 0;
+    for (const doc of missingUbikCodes) {
+      const candidate = await generateUniqueUbikCode(ordersForUbikCodes);
+      const result = await ordersForUbikCodes.updateOne(
+        {
+          _id: doc._id,
+          $or: [
+            { ubikCode: { $exists: false } },
+            { ubikCode: null },
+            { ubikCode: '' }
+          ]
+        },
+        { $set: { ubikCode: candidate } }
+      );
+      migratedUbikCodes += result.modifiedCount;
+    }
+
+    const duplicateUbikCodes = await ordersForUbikCodes.aggregate([
+      { $match: { ubikCode: { $type: 'string', $ne: '' } } },
+      { $group: { _id: '$ubikCode', ids: { $push: '$_id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
+
+    let correctedUbikDuplicates = 0;
+    for (const group of duplicateUbikCodes) {
+      for (const duplicateId of group.ids.slice(1)) {
+        const candidate = await generateUniqueUbikCode(
+          ordersForUbikCodes,
+          duplicateId
+        );
+        const result = await ordersForUbikCodes.updateOne(
+          { _id: duplicateId, ubikCode: group._id },
+          { $set: { ubikCode: candidate } }
+        );
+        correctedUbikDuplicates += result.modifiedCount;
+      }
+    }
+
+    await ordersForUbikCodes.createIndex(
+      { ubikCode: 1 },
+      {
+        unique: true,
+        name: 'orders_ubikCode_unique',
+        partialFilterExpression: { ubikCode: { $type: 'string' } }
+      }
+    ).catch((err) => {
+      err.criticalUbikCodeIndex = true;
+      throw err;
+    });
+
+    if (migratedUbikCodes || correctedUbikDuplicates) {
+      console.log(
+        `[MongoDB] Códigos UBIK2: asignados=${migratedUbikCodes}, duplicados corregidos=${correctedUbikDuplicates}`
+      );
+    }
 
     if (missingInvoiceIds.length || duplicateInvoiceIds.length) {
       console.log(`[MongoDB] Facturas migradas: faltantes=${missingInvoiceIds.length}, grupos duplicados=${duplicateInvoiceIds.length}`);
@@ -1054,7 +1154,8 @@ async function ensureIndexes(db) {
       e?.criticalTxHashIndex ||
       e?.criticalInvoiceIdIndex ||
       e?.criticalSettlementLedgerIndex ||
-      e?.criticalTransferPaymentReferenceIndex
+      e?.criticalTransferPaymentReferenceIndex ||
+      e?.criticalUbikCodeIndex
     ) throw e;
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
@@ -2309,7 +2410,7 @@ async function route(request, method, path) {
     const order = await db.collection('orders').findOne(
       { publicInvoiceId: token },
       { projection: {
-        _id: 0, publicInvoiceId: 1, businessName: 1, items: 1,
+        _id: 0, publicInvoiceId: 1, ubikCode: 1, businessName: 1, items: 1,
         subtotal: 1, total: 1, currency: 1, createdAt: 1,
         paymentStatus: 1, status: 1, cryptoInvoiceId: 1,
         paymentMethod: 1, localPaymentAmountCUP: 1
@@ -2342,6 +2443,7 @@ async function route(request, method, path) {
     return json({
       valid: true,
       invoiceNumber: token.toUpperCase(),
+      ubikCode: order.ubikCode || null,
       businessName: String(order.businessName || 'Negocio').slice(0, 160),
       items,
       total: Number(order.total ?? order.subtotal ?? 0) || 0,
@@ -3725,9 +3827,11 @@ return json({ payments: out });
 
     const now = new Date().toISOString();
     const orderId = uuidv4();
+    const ubikCode = await generateUniqueUbikCode(db.collection('orders'));
     const order = {
       id: orderId,
       publicInvoiceId: orderId,
+      ubikCode,
       buyerId: user.id,
       buyerEmail: user.email,
       businessId,
@@ -3913,7 +4017,34 @@ return json({ payments: out });
       if (invoice) {
         await db.collection('crypto_invoices').insertOne(invoice);
       }
-      await db.collection('orders').insertOne(order);
+      const ordersCollection = db.collection('orders');
+      let orderInserted = false;
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          await ordersCollection.insertOne(order);
+          orderInserted = true;
+          break;
+        } catch (insertError) {
+          const isUbikCodeCollision =
+            insertError?.code === 11000 &&
+            (
+              insertError?.keyPattern?.ubikCode === 1 ||
+              insertError?.keyValue?.ubikCode ||
+              String(insertError?.message || '').includes('orders_ubikCode_unique')
+            );
+
+          if (!isUbikCodeCollision || attempt === 4) {
+            throw insertError;
+          }
+
+          order.ubikCode = await generateUniqueUbikCode(ordersCollection);
+        }
+      }
+
+      if (!orderInserted) {
+        throw new Error('[Orders] No se pudo insertar el pedido con un código UBIK2 único');
+      }
     } catch (creationError) {
       if (invoice) {
         try {
@@ -5442,6 +5573,7 @@ function sanitizeBuyerOrder(order) {
 
     drawLine('UBIK2YEMG', { size: 22, bold: true, gap: 30 });
     drawLine('FACTURA COMERCIAL', { size: 15, bold: true, gap: 25 });
+    drawLine('Código UBIK2: ' + String(order.ubikCode || '—'));
     drawLine('Número de factura: ' + String(order.publicInvoiceId).toUpperCase());
     drawLine('Pedido: ' + String(order.id).slice(0, 80));
     drawLine('Negocio: ' + String(order.businessName || 'No indicado').slice(0, 120));
@@ -6644,6 +6776,8 @@ function sanitizeBuyerOrder(order) {
       projection: {
         _id: 0,
         id: 1,
+        publicInvoiceId: 1,
+        ubikCode: 1,
         businessId: 1,
         businessName: 1,
         items: 1,
@@ -6667,6 +6801,8 @@ function sanitizeBuyerOrder(order) {
       })
       .map(order => ({
         orderId: order.id,
+        publicInvoiceId: order.publicInvoiceId || order.id,
+        ubikCode: order.ubikCode || null,
         businessId: order.businessId,
         businessName: order.businessName || '',
         items: (order.items || []).map(item => ({
@@ -6693,6 +6829,8 @@ function sanitizeBuyerOrder(order) {
       projection: {
         _id: 0,
         id: 1,
+        publicInvoiceId: 1,
+        ubikCode: 1,
         items: 1,
         totalCUP: 1,
         total: 1,
@@ -6712,6 +6850,8 @@ function sanitizeBuyerOrder(order) {
 
       return {
         orderId: order.id,
+        publicInvoiceId: order.publicInvoiceId || order.id,
+        ubikCode: order.ubikCode || null,
         status: service.status,
         routeType: service.routeType,
         acceptedAt: service.acceptedAt || null,

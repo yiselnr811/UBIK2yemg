@@ -50,7 +50,8 @@ export default function PublicInvoicePage() {
         {!loading && data && (
           <>
             <p className="text-green-700 font-semibold">✓ Factura válida</p>
-            <p>Número: <strong>{data.invoiceNumber}</strong></p>
+            <p>Código UBIK2: <strong>{data.ubikCode || 'Pendiente'}</strong></p>
+            <p>Referencia técnica: <strong>{data.invoiceNumber}</strong></p>
             <p>Negocio: <strong>{data.businessName}</strong></p>
             {data.createdAt && <p>Fecha: {new Date(data.createdAt).toLocaleString()}</p>}
             <div>

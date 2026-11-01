@@ -5345,8 +5345,11 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                   <div>
                     <h3 className="text-base sm:text-lg font-bold tracking-tight break-all">
-                      Pedido {order.id || order._id}
+                      Pedido {order.ubikCode || 'Código pendiente'}
                     </h3>
+                    <p className="mt-1 text-xs text-muted-foreground break-all">
+                      Referencia técnica: {order.publicInvoiceId || order.id || order._id}
+                    </p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       {t.orderDate}: {formatDate(order.createdAt)}
                     </p>
@@ -6756,7 +6759,10 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                 <CardContent className="space-y-4 p-4 sm:p-5">
                   <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
                     <div>
-                      <h3 className="font-bold">{t.orderLabel} #{String(order.id || 'Sin identificador')}</h3>
+                      <h3 className="font-bold">{t.orderLabel} #{order.ubikCode || 'Código pendiente'}</h3>
+                      <p className="text-xs text-muted-foreground break-all">
+                        Referencia técnica: {order.publicInvoiceId || order.id}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {order.createdAt ? new Date(order.createdAt).toLocaleString(({ es: 'es-ES', en: 'en-US', it: 'it-IT', ru: 'ru-RU' })[lang] || 'es-ES') : t.dateUnavailable}
                       </p>

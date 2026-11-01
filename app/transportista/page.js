@@ -359,9 +359,14 @@ export default function TransportistaPage() {
                 {availableServices.map(service => (
                   <article key={service.orderId} className="rounded-xl border p-4 space-y-3">
                     <div className="flex justify-between gap-2">
-                      <span className="font-semibold">
-                        Pedido #{service.orderId}
-                      </span>
+                      <div className="min-w-0">
+                      <p className="font-semibold">
+                        Pedido #{service.ubikCode || 'Código pendiente'}
+                      </p>
+                      <p className="text-xs text-muted-foreground break-all">
+                        Referencia técnica: {service.publicInvoiceId || service.orderId}
+                      </p>
+                    </div>
                       <span className="text-xs rounded-full bg-green-100 text-green-800 px-2 py-1">
                         Disponible
                       </span>
@@ -429,7 +434,14 @@ export default function TransportistaPage() {
                 {assignedServices.map(service => (
                   <article key={service.orderId} className="rounded-xl border p-4 space-y-3">
                     <div className="flex justify-between gap-2">
-                      <strong>Pedido #{service.orderId}</strong>
+                      <div className="min-w-0">
+                      <p className="font-semibold">
+                        Pedido #{service.ubikCode || 'Código pendiente'}
+                      </p>
+                      <p className="text-xs text-muted-foreground break-all">
+                        Referencia técnica: {service.publicInvoiceId || service.orderId}
+                      </p>
+                    </div>
                       <span className="text-xs rounded-full bg-blue-100 text-blue-800 px-2 py-1">
                         {({
                           accepted: 'Aceptado',

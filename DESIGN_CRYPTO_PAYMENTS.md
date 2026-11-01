@@ -1,7 +1,7 @@
 # DISEÑO — Sistema de Pagos Propios con Criptomonedas (ETAPA 2)
 
-**Rama**: `feat/own-crypto-payments`  
-**Basado en**: `main` (commit `be34301`)  
+**Rama**: `feat/own-crypto-payments`
+**Basado en**: `main` (commit `be34301`)
 **Fecha**: 2025
 
 ---
@@ -45,7 +45,7 @@ Implementar cobro directo a **billeteras propias** (self-custody) sin pasarelas 
   orderId: "uuid-v4",               // Ref a orders.id
   buyerId: "uuid-v4",               // Ref a users.id
   businessId: "uuid-v4",            // Ref a businesses.id (vendedor)
-  
+
   // Configuración de pago
   currency: "USDT",                 // "USDT" | "USDC"
   network: "TRC20",                 // "TRC20" | "ERC20" | "POLYGON" | "BASE" | "ARBITRUM"
@@ -54,25 +54,25 @@ Implementar cobro directo a **billeteras propias** (self-custody) sin pasarelas 
   expectedAmount: 100.00,           // Importe esperado en token (ej: 100 USDT)
   expectedAmountRaw: "100000000",   // En unidades mínimas (6 decimales = 100 * 10^6)
   receiverAddress: "TXyZ123...",    // Dirección receptora (de config/env)
-  
+
   // Estado y ciclo de vida
   status: "pending",                // "pending" | "submitted" | "approved" | "rejected" | "expired" | "underpaid" | "overpaid"
   expiresAt: ISODate("2025-01-15T10:30:00Z"), // 30 min por defecto
   submittedAt: ISODate,             // Cuando cliente envía txHash
   confirmedAt: ISODate,             // Cuando admin aprueba (manual) o auto-verifica
-  
+
   // Datos de transacción (cliente)
   txHash: "0xabc...",               // Hash enviado por cliente
   txHashNormalized: "0xabc...",     // Lowercase sin 0x duplicado para índice único
   senderAddress: "0x...",           // Opcional: dirección remitente (si la extraemos)
-  
+
   // Auditoría admin
   approvedBy: "admin-uuid",         // Admin que aprobó
   approvedAt: ISODate,
   rejectReason: "",                 // Si rejected
   rejectedBy: "admin-uuid",
   rejectedAt: ISODate,
-  
+
   // Verificación automática (ETAPA 4)
   verification: {
     lastCheckedAt: ISODate,
@@ -82,11 +82,11 @@ Implementar cobro directo a **billeteras propias** (self-custody) sin pasarelas 
     error: null,
     retryCount: 0,
   },
-  
+
   // Metadatos
   createdAt: ISODate,
   updatedAt: ISODate,
-  
+
   // Índices únicos críticos
   // - { txHashNormalized: 1 } unique (anti-duplicado global)
   // - { orderId: 1 } unique (una factura por orden)

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useId } from 'react';
 import jsQR from 'jsqr';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -58,14 +58,90 @@ import {
   AlertCircle, CheckCircle, XCircle, CreditCard, Wallet, Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import AadsFloatingAd from '@/components/AadsFloatingAd';
+import { CUBA_PROVINCES, getCubanMunicipalities } from '@/lib/cuba-locations';
+
+const OFFLINE_CATALOG_DB = 'ubik2-offline-catalog';
+const OFFLINE_CATALOG_STORE = 'catalog';
+
+function openOfflineCatalogDB() {
+  if (typeof indexedDB === 'undefined') return Promise.reject(new Error('IndexedDB no disponible'));
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(OFFLINE_CATALOG_DB, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(OFFLINE_CATALOG_STORE)) {
+        db.createObjectStore(OFFLINE_CATALOG_STORE, { keyPath: 'key' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('No se pudo abrir el catálogo local'));
+  });
+}
+
+async function readOfflineCatalog() {
+  let db;
+  try {
+    db = await openOfflineCatalogDB();
+    return await new Promise((resolve, reject) => {
+      const request = db.transaction(OFFLINE_CATALOG_STORE, 'readonly')
+        .objectStore(OFFLINE_CATALOG_STORE).get('home');
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
+    });
+  } catch {
+    return null;
+  } finally {
+    if (db) db.close();
+  }
+}
+
+async function writeOfflineCatalog(data) {
+  let db;
+  try {
+    db = await openOfflineCatalogDB();
+    await new Promise((resolve, reject) => {
+      const transaction = db.transaction(OFFLINE_CATALOG_STORE, 'readwrite');
+      transaction.objectStore(OFFLINE_CATALOG_STORE).put({
+        key: 'home',
+        savedAt: Date.now(),
+        ...data
+      });
+      transaction.oncomplete = resolve;
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+    return true;
+  } catch (error) {
+    console.warn('No se pudo guardar el catálogo sin conexión:', error);
+    return false;
+  } finally {
+    if (db) db.close();
+  }
+}
 
 const API = '/api';
-const LOGO = '/logo.png';
+const LOGO = '/logo.svg';
 
 // ========= i18n =========
 const TRANSLATIONS = {
   es: {
     slogan: 'Todo en un solo lugar.',
+    cartTitle: "Mi carrito",
+    cartSubtitle: "Revisa tus productos antes de pagar.",
+    continueShopping: "Seguir comprando",
+    emptyCart: "Tu carrito está vacío",
+    emptyCartDesc: "Abre un producto y pulsa «Añadir al carrito».",
+    viewProducts: "Ver productos",
+    removeItem: "Quitar",
+    estimatedSubtotal: "Subtotal estimado",
+    serverCalculatesTotal: "El servidor calcula el importe definitivo al crear el pedido.",
+    payCartCrypto: "Pagar carrito con crypto",
+    productFallback: "Producto",
+    languageLabel: "Idioma",
+    legalLabel: "Legal",
+    rightsReserved: "Todos los derechos reservados",
+    loginRequired: "Necesitas iniciar sesión",
     subSlogan: 'Compra fácil. Vende rápido. Conectando compradores y vendedores.',
     searchPlaceholder: 'Buscar productos, servicios o categorías...',
     publish: 'Publicar anuncio',
@@ -137,9 +213,117 @@ const TRANSLATIONS = {
     rejectedDesc: 'Motivo: {reason}',
     stockRestored: 'El stock ha sido restaurado. Puedes crear un nuevo pedido.',
     invoiceExpiredDesc: 'El tiempo para pagar ha terminado. El stock ha sido restaurado.',
-  },
+      accountSubtitle: 'Tu cuenta personal de UBIK2 YEMG',
+    becomeSellerTitle: '¿Tienes algo para vender?',
+    becomeSellerDesc: 'Conviértete en vendedor gratis y publica hasta 10 productos.',
+    accountEmail: 'Email de tu cuenta',
+    myOrdersInvoices: 'Mis pedidos y facturas',
+    loadingOrders: 'Cargando tus pedidos…',
+    noOrders: 'Todavía no tienes pedidos asociados a esta cuenta.',
+    orderDate: 'Fecha',
+    orderStatus: 'Estado del pedido',
+    deliveryData: 'Datos de entrega',
+    noProductDetails: 'No hay detalles de productos disponibles.',
+    downloadInvoiceQR: 'Descargar factura PDF con QR',
+    verifyInvoice: 'Verificar factura',
+    invoiceNumber: 'Número de factura:',
+    loadingInvoice: 'Cargando factura…',
+    hideInvoice: 'Ocultar factura',
+    viewPaymentInvoice: 'Ver factura de pago',
+    sellerOrdersTitle: 'Pedidos y entregas',
+    sellerOrdersDesc: 'Actualiza el envío de los pedidos de tu comercio. Solo puedes gestionar pedidos con el pago confirmado.',
+    loadingSellerOrders: 'Cargando pedidos...',
+    noSellerOrders: 'Todavía no hay pedidos para este comercio.',
+    orderLabel: 'Pedido',
+    dateUnavailable: 'Fecha no disponible',
+    paymentConfirmedLabel: 'Pago confirmado',
+    paymentPendingLabel: 'Pago pendiente',
+    buyerConfirmedReceipt: 'El comprador confirmó la recepción.',
+    awaitingBuyerReceipt: 'Entrega marcada. Pendiente de confirmación del comprador.',
+    shippingStatus: 'Estado del envío',
+    trackingNumber: 'Número de seguimiento',
+    buyerNotes: 'Notas para el comprador',
+    deliveryPhotos: 'Fotos de entrega (máximo 4 por actualización)',
+    registeredPhotos: 'Fotos registradas',
+    shippingHistory: 'Historial de estados',
+    confirmDelivery: 'Confirmar entrega',
+    deliveryConfirmSuccess: 'Entrega confirmada por el vendedor.',
+    deliveryConfirmError: 'No se pudo confirmar la entrega.',
+    saveTracking: 'Guardar seguimiento',
+    saving: 'Guardando...',
+    ordersLoadError: 'No se pudieron cargar los pedidos.',
+    invoiceLoadError: 'No se pudo cargar la factura.',
+    receiptError: 'No se pudo confirmar la recepción.',
+    hashSent: 'Hash enviado. Pago pendiente de verificación.',
+    hashError: 'No se pudo enviar el hash.',
+    qrDownloadError: 'No se pudo descargar el QR.',
+    invoiceIdMissing: 'La factura todavía no tiene identificador.',
+    invalidInvoiceId: 'Esta factura todavía no tiene identificador válido.',
+    trackingSaveError: 'No se pudo guardar el seguimiento.',
+    addressLabel: 'Dirección',
+    carrierPlaceholder: 'Ej. transportista local',
+    deliveryNotesPlaceholder: 'Información sobre la preparación o entrega',
+    photosWillUpload: 'Las fotos seleccionadas se subirán al guardar. Fotos ya registradas:',
+    personalGreeting: 'Hola',
+    basicPlan: 'Plan Básico',
+    premiumPlan: 'Plan Premium',
+    premiumActive: 'Premium activo',
+    improvePlan: 'Mejorar plan',
+    newProduct: 'Nuevo producto',
+    totalProducts: 'Total productos',
+    groupByCategory: 'Agrupar por categoría',
+    noOutOfStock: '¡No tienes productos agotados! 🎉',
+    noFeaturedProducts: 'No tienes productos destacados.',
+    noActiveProducts: 'No tienes productos activos.',
+    noPublishedProducts: 'Aún no tienes productos publicados.',
+    publishFirst: 'Publica el primero',
+    createProduct: 'Crear producto',
+    noLogoTitle: 'Aún no tienes logo.',
+    noLogoDesc: 'Súbelo ahora para que los compradores te encuentren más fácilmente y tu negocio se vea profesional. Se comprime y optimiza automáticamente.',
+    saveWallets: 'Guardar billeteras',
+    walletsNoTransfers: 'Guardar estos datos no activa transferencias automáticas.',
+    productNotVisible: 'Este producto no será visible en el marketplace porque no tiene stock disponible. Edítalo y agrega stock para reactivarlo.',
+    edit: 'Editar',
+    product: 'Producto',
+    total: 'Total',
+    sellerLoadingError: 'No se pudieron cargar los pedidos.',
+    trackingNumberLabel: 'Número de seguimiento',
+      trackingSection: 'Seguimiento del envío',
+      statusLabel: 'Estado',
+      carrierLabel: 'Transportista',
+      trackingLabel: 'Seguimiento',
+      newOrderStatusPrompt: 'Nuevo estado de preparación/entrega:',
+      invalidStatusMessage: 'Estado no válido. Usa uno de los estados indicados.',
+      noCarrier: 'No indicado',
+      trackingPending: 'Pendiente',
+      shippingHistoryTitle: 'Historial del envío',
+      deliveryPhotosTitle: 'Fotos de entrega',
+      deliveryPhotoAlt: 'Foto de entrega',
+      updateLabel: 'Actualización',
+      carrierNotSpecified: 'Transportista no indicado',
+      numberPending: 'Número pendiente',
+
+      preparingOrder: 'Preparando pedido',
+      shipped: 'Enviado',
+      delivered: 'Entregado'
+    },
   en: {
     slogan: 'All in one place.',
+    cartTitle: "My cart",
+    cartSubtitle: "Review your products before paying.",
+    continueShopping: "Continue shopping",
+    emptyCart: "Your cart is empty",
+    emptyCartDesc: "Open a product and press “Add to cart”.",
+    viewProducts: "View products",
+    removeItem: "Remove",
+    estimatedSubtotal: "Estimated subtotal",
+    serverCalculatesTotal: "The server calculates the final amount when creating the order.",
+    payCartCrypto: "Pay cart with crypto",
+    productFallback: "Product",
+    languageLabel: "Language",
+    legalLabel: "Legal",
+    rightsReserved: "All rights reserved",
+    loginRequired: "You need to sign in",
     subSlogan: 'Buy easy. Sell fast. Connecting buyers and sellers.',
     searchPlaceholder: 'Search products, services or categories...',
     publish: 'Post ad',
@@ -211,9 +395,117 @@ const TRANSLATIONS = {
     outOfStock: 'Out of stock',
     featured: 'Featured',
     new: 'New',
-  },
+      accountSubtitle: 'Your personal UBIK2 YEMG account',
+    becomeSellerTitle: 'Have something to sell?',
+    becomeSellerDesc: 'Become a seller for free and publish up to 10 products.',
+    accountEmail: 'Account email',
+    myOrdersInvoices: 'My orders and invoices',
+    loadingOrders: 'Loading your orders…',
+    noOrders: "You don't have any orders associated with this account yet.",
+    orderDate: 'Date',
+    orderStatus: 'Order status',
+    deliveryData: 'Delivery details',
+    noProductDetails: 'No product details available.',
+    downloadInvoiceQR: 'Download PDF invoice with QR',
+    verifyInvoice: 'Verify invoice',
+    invoiceNumber: 'Invoice number:',
+    loadingInvoice: 'Loading invoice…',
+    hideInvoice: 'Hide invoice',
+    viewPaymentInvoice: 'View payment invoice',
+    sellerOrdersTitle: 'Orders and deliveries',
+    sellerOrdersDesc: "Update shipping for your store's orders. You can only manage orders with confirmed payment.",
+    loadingSellerOrders: 'Loading orders...',
+    noSellerOrders: 'There are no orders for this store yet.',
+    orderLabel: 'Order',
+    dateUnavailable: 'Date unavailable',
+    paymentConfirmedLabel: 'Payment confirmed',
+    paymentPendingLabel: 'Payment pending',
+    buyerConfirmedReceipt: 'The buyer confirmed receipt.',
+    awaitingBuyerReceipt: 'Delivery marked. Waiting for buyer confirmation.',
+    shippingStatus: 'Shipping status',
+    trackingNumber: 'Tracking number',
+    buyerNotes: 'Notes for the buyer',
+    deliveryPhotos: 'Delivery photos (up to 4 per update)',
+    registeredPhotos: 'Registered photos',
+    shippingHistory: 'Status history',
+    confirmDelivery: 'Confirm delivery',
+    deliveryConfirmSuccess: 'Delivery confirmed by the seller.',
+    deliveryConfirmError: 'Could not confirm delivery.',
+    saveTracking: 'Save tracking',
+    saving: 'Saving...',
+    ordersLoadError: "Couldn't load orders.",
+    invoiceLoadError: "Couldn't load the invoice.",
+    receiptError: "Couldn't confirm receipt.",
+    hashSent: 'Hash submitted. Payment verification pending.',
+    hashError: "Couldn't submit the hash.",
+    qrDownloadError: "Couldn't download the QR.",
+    invoiceIdMissing: "The invoice doesn't have an identifier yet.",
+    invalidInvoiceId: "This invoice doesn't have a valid identifier yet.",
+    trackingSaveError: "Couldn't save tracking information.",
+    addressLabel: 'Address',
+    carrierPlaceholder: 'e.g. local carrier',
+    deliveryNotesPlaceholder: 'Information about preparation or delivery',
+    photosWillUpload: 'Selected photos will be uploaded when saved. Already registered photos:',
+    personalGreeting: 'Hello',
+    basicPlan: 'Basic plan',
+    premiumPlan: 'Premium plan',
+    premiumActive: 'Premium active',
+    improvePlan: 'Upgrade plan',
+    newProduct: 'New product',
+    totalProducts: 'Total products',
+    groupByCategory: 'Group by category',
+    noOutOfStock: 'No out-of-stock products! 🎉',
+    noFeaturedProducts: 'You have no featured products.',
+    noActiveProducts: 'You have no active products.',
+    noPublishedProducts: "You haven't published any products yet.",
+    publishFirst: 'Publish your first',
+    createProduct: 'Create product',
+    noLogoTitle: "You don't have a logo yet.",
+    noLogoDesc: 'Upload one so buyers can find you more easily and your business looks professional. It is automatically compressed and optimized.',
+    saveWallets: 'Save wallets',
+    walletsNoTransfers: 'Saving this information does not enable automatic transfers.',
+    productNotVisible: "This product won't be visible in the marketplace because it has no stock. Edit it and add stock to reactivate it.",
+    edit: 'Edit',
+    product: 'Product',
+    total: 'Total',
+    sellerLoadingError: "Couldn't load orders.",
+    trackingNumberLabel: 'Tracking number',
+      trackingSection: 'Shipment tracking',
+      statusLabel: 'Status',
+      carrierLabel: 'Carrier',
+      trackingLabel: 'Tracking',
+      newOrderStatusPrompt: 'New preparation/delivery status:',
+      invalidStatusMessage: 'Invalid status. Use one of the listed statuses.',
+      noCarrier: 'Not specified',
+      trackingPending: 'Pending',
+      shippingHistoryTitle: 'Shipment history',
+      deliveryPhotosTitle: 'Delivery photos',
+      deliveryPhotoAlt: 'Delivery photo',
+      updateLabel: 'Update',
+      carrierNotSpecified: 'Carrier not specified',
+      numberPending: 'Number pending',
+
+      preparingOrder: 'Preparing order',
+      shipped: 'Shipped',
+      delivered: 'Delivered'
+    },
   it: {
     slogan: 'Tutto in un solo posto.',
+    cartTitle: "Il mio carrello",
+    cartSubtitle: "Controlla i prodotti prima di pagare.",
+    continueShopping: "Continua gli acquisti",
+    emptyCart: "Il carrello è vuoto",
+    emptyCartDesc: "Apri un prodotto e premi «Aggiungi al carrello».",
+    viewProducts: "Vedi prodotti",
+    removeItem: "Rimuovi",
+    estimatedSubtotal: "Subtotale stimato",
+    serverCalculatesTotal: "Il server calcola l'importo definitivo quando crea l'ordine.",
+    payCartCrypto: "Paga il carrello con crypto",
+    productFallback: "Prodotto",
+    languageLabel: "Lingua",
+    legalLabel: "Informazioni legali",
+    rightsReserved: "Tutti i diritti riservati",
+    loginRequired: "Devi accedere",
     subSlogan: 'Compra facile. Vendi veloce. Collegando acquirenti e venditori.',
     searchPlaceholder: 'Cerca prodotti, servizi o categorie...',
     publish: 'Pubblica annuncio',
@@ -285,9 +577,117 @@ const TRANSLATIONS = {
     rejectedDesc: 'Motivo: {reason}',
     stockRestored: 'Stock ripristinato. Puoi creare un nuovo ordine.',
     invoiceExpiredDesc: 'Tempo di pagamento scaduto. Stock ripristinato.',
-  },
+      accountSubtitle: 'Il tuo account personale UBIK2 YEMG',
+    becomeSellerTitle: 'Hai qualcosa da vendere?',
+    becomeSellerDesc: 'Diventa venditore gratuitamente e pubblica fino a 10 prodotti.',
+    accountEmail: 'Email del tuo account',
+    myOrdersInvoices: 'I miei ordini e fatture',
+    loadingOrders: 'Caricamento degli ordini…',
+    noOrders: 'Non hai ancora ordini associati a questo account.',
+    orderDate: 'Data',
+    orderStatus: "Stato dell'ordine",
+    deliveryData: 'Dati di consegna',
+    noProductDetails: 'Nessun dettaglio dei prodotti disponibile.',
+    downloadInvoiceQR: 'Scarica la fattura PDF con QR',
+    verifyInvoice: 'Verifica fattura',
+    invoiceNumber: 'Numero fattura:',
+    loadingInvoice: 'Caricamento fattura…',
+    hideInvoice: 'Nascondi fattura',
+    viewPaymentInvoice: 'Visualizza fattura di pagamento',
+    sellerOrdersTitle: 'Ordini e consegne',
+    sellerOrdersDesc: 'Aggiorna la spedizione degli ordini del tuo negozio. Puoi gestire solo gli ordini con pagamento confermato.',
+    loadingSellerOrders: 'Caricamento ordini...',
+    noSellerOrders: 'Non ci sono ancora ordini per questo negozio.',
+    orderLabel: 'Ordine',
+    dateUnavailable: 'Data non disponibile',
+    paymentConfirmedLabel: 'Pagamento confermato',
+    paymentPendingLabel: 'Pagamento in attesa',
+    buyerConfirmedReceipt: "L'acquirente ha confermato la ricezione.",
+    awaitingBuyerReceipt: "Consegna segnata. In attesa della conferma dell'acquirente.",
+    shippingStatus: 'Stato della spedizione',
+    trackingNumber: 'Numero di tracciamento',
+    buyerNotes: "Note per l'acquirente",
+    deliveryPhotos: 'Foto della consegna (massimo 4 per aggiornamento)',
+    registeredPhotos: 'Foto registrate',
+    shippingHistory: 'Cronologia degli stati',
+    confirmDelivery: 'Conferma consegna',
+    deliveryConfirmSuccess: 'Consegna confermata dal venditore.',
+    deliveryConfirmError: 'Impossibile confermare la consegna.',
+    saveTracking: 'Salva tracciamento',
+    saving: 'Salvataggio...',
+    ordersLoadError: 'Impossibile caricare gli ordini.',
+    invoiceLoadError: 'Impossibile caricare la fattura.',
+    receiptError: 'Impossibile confermare la ricezione.',
+    hashSent: 'Hash inviato. Verifica del pagamento in attesa.',
+    hashError: "Impossibile inviare l'hash.",
+    qrDownloadError: 'Impossibile scaricare il QR.',
+    invoiceIdMissing: 'La fattura non ha ancora un identificativo.',
+    invalidInvoiceId: 'Questa fattura non ha ancora un identificativo valido.',
+    trackingSaveError: 'Impossibile salvare il tracciamento.',
+    addressLabel: 'Indirizzo',
+    carrierPlaceholder: 'es. corriere locale',
+    deliveryNotesPlaceholder: 'Informazioni sulla preparazione o consegna',
+    photosWillUpload: 'Le foto selezionate saranno caricate al salvataggio. Foto già registrate:',
+    personalGreeting: 'Ciao',
+    basicPlan: 'Piano Base',
+    premiumPlan: 'Piano Premium',
+    premiumActive: 'Premium attivo',
+    improvePlan: 'Migliora piano',
+    newProduct: 'Nuovo prodotto',
+    totalProducts: 'Prodotti totali',
+    groupByCategory: 'Raggruppa per categoria',
+    noOutOfStock: 'Non hai prodotti esauriti! 🎉',
+    noFeaturedProducts: 'Non hai prodotti in evidenza.',
+    noActiveProducts: 'Non hai prodotti attivi.',
+    noPublishedProducts: 'Non hai ancora pubblicato prodotti.',
+    publishFirst: 'Pubblica il primo',
+    createProduct: 'Crea prodotto',
+    noLogoTitle: 'Non hai ancora un logo.',
+    noLogoDesc: 'Caricalo affinché gli acquirenti possano trovarti più facilmente e la tua attività abbia un aspetto professionale. Viene compresso e ottimizzato automaticamente.',
+    saveWallets: 'Salva portafogli',
+    walletsNoTransfers: 'Salvare questi dati non attiva trasferimenti automatici.',
+    productNotVisible: 'Questo prodotto non sarà visibile nel marketplace perché non ha scorte. Modificalo e aggiungi scorte per riattivarlo.',
+    edit: 'Modifica',
+    product: 'Prodotto',
+    total: 'Totale',
+    sellerLoadingError: 'Impossibile caricare gli ordini.',
+    trackingNumberLabel: 'Numero di tracciamento',
+      trackingSection: 'Tracciamento della spedizione',
+      statusLabel: 'Stato',
+      carrierLabel: 'Corriere',
+      trackingLabel: 'Tracciamento',
+      newOrderStatusPrompt: 'Nuovo stato di preparazione/consegna:',
+      invalidStatusMessage: 'Stato non valido. Usa uno degli stati indicati.',
+      noCarrier: 'Non indicato',
+      trackingPending: 'In attesa',
+      shippingHistoryTitle: 'Cronologia della spedizione',
+      deliveryPhotosTitle: 'Foto della consegna',
+      deliveryPhotoAlt: 'Foto della consegna',
+      updateLabel: 'Aggiornamento',
+      carrierNotSpecified: 'Corriere non indicato',
+      numberPending: 'Numero in attesa',
+
+      preparingOrder: "Preparazione dell'ordine",
+      shipped: 'Spedito',
+      delivered: 'Consegnato'
+    },
   ru: {
     slogan: 'Всё в одном месте.',
+    cartTitle: "Моя корзина",
+    cartSubtitle: "Проверьте товары перед оплатой.",
+    continueShopping: "Продолжить покупки",
+    emptyCart: "Корзина пуста",
+    emptyCartDesc: "Откройте товар и нажмите «Добавить в корзину».",
+    viewProducts: "Посмотреть товары",
+    removeItem: "Удалить",
+    estimatedSubtotal: "Предварительная сумма",
+    serverCalculatesTotal: "Сервер рассчитает окончательную сумму при создании заказа.",
+    payCartCrypto: "Оплатить корзину криптовалютой",
+    productFallback: "Товар",
+    languageLabel: "Язык",
+    legalLabel: "Правовая информация",
+    rightsReserved: "Все права защищены",
+    loginRequired: "Войдите в аккаунт",
     subSlogan: 'Покупайте легко. Продавайте быстро. Соединяя покупателей и продавцов.',
     searchPlaceholder: 'Поиск товаров, услуг или категорий...',
     publish: 'Разместить',
@@ -359,7 +759,100 @@ const TRANSLATIONS = {
     rejectedDesc: 'Причина: {reason}',
     stockRestored: 'Склад восстановлен. Можно создать новый заказ.',
     invoiceExpiredDesc: 'Время оплаты истекло. Склад восстановлен.',
-  },
+      accountSubtitle: 'Ваша личная учётная запись UBIK2 YEMG',
+    becomeSellerTitle: 'Есть что продать?',
+    becomeSellerDesc: 'Станьте продавцом бесплатно и публикуйте до 10 товаров.',
+    accountEmail: 'Электронная почта аккаунта',
+    myOrdersInvoices: 'Мои заказы и счета',
+    loadingOrders: 'Загрузка заказов…',
+    noOrders: 'У вас пока нет заказов, связанных с этой учётной записью.',
+    orderDate: 'Дата',
+    orderStatus: 'Статус заказа',
+    deliveryData: 'Данные доставки',
+    noProductDetails: 'Нет доступных сведений о товарах.',
+    downloadInvoiceQR: 'Скачать счёт PDF с QR',
+    verifyInvoice: 'Проверить счёт',
+    invoiceNumber: 'Номер счёта:',
+    loadingInvoice: 'Загрузка счёта…',
+    hideInvoice: 'Скрыть счёт',
+    viewPaymentInvoice: 'Посмотреть счёт на оплату',
+    sellerOrdersTitle: 'Заказы и доставка',
+    sellerOrdersDesc: 'Обновляйте доставку заказов магазина. Управлять можно только заказами с подтверждённой оплатой.',
+    loadingSellerOrders: 'Загрузка заказов...',
+    noSellerOrders: 'У этого магазина пока нет заказов.',
+    orderLabel: 'Заказ',
+    dateUnavailable: 'Дата недоступна',
+    paymentConfirmedLabel: 'Оплата подтверждена',
+    paymentPendingLabel: 'Ожидается оплата',
+    buyerConfirmedReceipt: 'Покупатель подтвердил получение.',
+    awaitingBuyerReceipt: 'Доставка отмечена. Ожидается подтверждение покупателя.',
+    shippingStatus: 'Статус доставки',
+    trackingNumber: 'Номер отслеживания',
+    buyerNotes: 'Примечания для покупателя',
+    deliveryPhotos: 'Фото доставки (не более 4 за обновление)',
+    registeredPhotos: 'Зарегистрированные фотографии',
+    shippingHistory: 'История статусов',
+    confirmDelivery: 'Подтвердить доставку',
+    deliveryConfirmSuccess: 'Продавец подтвердил доставку.',
+    deliveryConfirmError: 'Не удалось подтвердить доставку.',
+    saveTracking: 'Сохранить отслеживание',
+    saving: 'Сохранение...',
+    ordersLoadError: 'Не удалось загрузить заказы.',
+    invoiceLoadError: 'Не удалось загрузить счёт.',
+    receiptError: 'Не удалось подтвердить получение.',
+    hashSent: 'Хеш отправлен. Ожидается проверка платежа.',
+    hashError: 'Не удалось отправить хеш.',
+    qrDownloadError: 'Не удалось скачать QR.',
+    invoiceIdMissing: 'У счёта пока нет идентификатора.',
+    invalidInvoiceId: 'У этого счёта пока нет действительного идентификатора.',
+    trackingSaveError: 'Не удалось сохранить отслеживание.',
+    addressLabel: 'Адрес',
+    carrierPlaceholder: 'например, местный перевозчик',
+    deliveryNotesPlaceholder: 'Информация о подготовке или доставке',
+    photosWillUpload: 'Выбранные фотографии будут загружены при сохранении. Уже зарегистрировано:',
+    personalGreeting: 'Здравствуйте',
+    basicPlan: 'Базовый план',
+    premiumPlan: 'Премиум-план',
+    premiumActive: 'Премиум активен',
+    improvePlan: 'Улучшить план',
+    newProduct: 'Новый товар',
+    totalProducts: 'Всего товаров',
+    groupByCategory: 'Группировать по категории',
+    noOutOfStock: 'Нет товаров, которых нет в наличии! 🎉',
+    noFeaturedProducts: 'У вас нет рекомендуемых товаров.',
+    noActiveProducts: 'У вас нет активных товаров.',
+    noPublishedProducts: 'Вы ещё не публиковали товары.',
+    publishFirst: 'Опубликуйте первый',
+    createProduct: 'Создать товар',
+    noLogoTitle: 'У вас пока нет логотипа.',
+    noLogoDesc: 'Загрузите его, чтобы покупатели легче находили вас, а ваш бизнес выглядел профессионально. Логотип автоматически сжимается и оптимизируется.',
+    saveWallets: 'Сохранить кошельки',
+    walletsNoTransfers: 'Сохранение этих данных не включает автоматические переводы.',
+    productNotVisible: 'Этот товар не будет виден на маркетплейсе, потому что его нет в наличии. Отредактируйте товар и добавьте остаток, чтобы снова активировать его.',
+    edit: 'Изменить',
+    product: 'Товар',
+    total: 'Итого',
+    sellerLoadingError: 'Не удалось загрузить заказы.',
+    trackingNumberLabel: 'Номер отслеживания',
+      trackingSection: 'Отслеживание доставки',
+      statusLabel: 'Статус',
+      carrierLabel: 'Перевозчик',
+      trackingLabel: 'Отслеживание',
+      newOrderStatusPrompt: 'Новый статус подготовки/доставки:',
+      invalidStatusMessage: 'Недопустимый статус. Выберите один из указанных статусов.',
+      noCarrier: 'Не указан',
+      trackingPending: 'Ожидается',
+      shippingHistoryTitle: 'История доставки',
+      deliveryPhotosTitle: 'Фото доставки',
+      deliveryPhotoAlt: 'Фото доставки',
+      updateLabel: 'Обновление',
+      carrierNotSpecified: 'Перевозчик не указан',
+      numberPending: 'Номер ожидается',
+
+      preparingOrder: 'Заказ готовится',
+      shipped: 'Отправлен',
+      delivered: 'Доставлен'
+    },
 };
 const FLAGS = { es: '🇪🇸', en: '🇬🇧', it: '🇮🇹', ru: '🇷🇺' };
 const LANG_NAMES = { es: 'Español', en: 'English', it: 'Italiano', ru: 'Русский' };
@@ -378,15 +871,64 @@ const CURRENCY_INFO = {
 };
 const ALL_CURRENCIES = Object.keys(CURRENCY_INFO);
 
+const CurrencyIcon = ({ currency, className = 'h-5 w-5' }) => {
+  const code = String(currency || 'CUP').toUpperCase();
+  const logo = code === 'USDT'
+    ? '/coins/usdt.svg'
+    : code === 'USDC'
+      ? '/coins/usdc.svg'
+      : null;
+
+  if (logo) {
+    return (
+      <img
+        src={logo}
+        alt={`${code} logo`}
+        className={`${className} inline-block shrink-0 object-contain align-middle`}
+        loading="lazy"
+      />
+    );
+  }
+
+  const info = CURRENCY_INFO[code] || CURRENCY_INFO.CUP;
+  return (
+    <span
+      className="inline-flex shrink-0 items-center justify-center text-base leading-none align-middle"
+      aria-hidden="true"
+    >
+      {info.flag}
+    </span>
+  );
+};
+
+const PriceWithCurrencyIcon = ({ value, currency = 'CUP', className = '' }) => {
+  const code = String(currency || 'CUP').toUpperCase();
+  const info = CURRENCY_INFO[code] || CURRENCY_INFO.CUP;
+  const numericValue = Number(value);
+  const formatted = new Intl.NumberFormat(info.locale, {
+    minimumFractionDigits: info.fractionDigits,
+    maximumFractionDigits: info.fractionDigits,
+  }).format(Number.isFinite(numericValue) ? numericValue : 0);
+
+  return (
+    <span className={`inline-flex items-center gap-1 ${className}`}>
+      <span>{formatted}</span>
+      <CurrencyIcon currency={code} />
+      <span>{info.label}</span>
+    </span>
+  );
+};
+
 const formatPrice = (n, currency = 'CUP') => {
   const num = Number(n || 0);
-  const info = CURRENCY_INFO[currency] || CURRENCY_INFO.CUP;
-  const code = info.label;
+  const code = String(currency || 'CUP').toUpperCase();
+  const info = CURRENCY_INFO[code] || CURRENCY_INFO.CUP;
   const formatted = new Intl.NumberFormat(info.locale, {
     minimumFractionDigits: info.fractionDigits,
     maximumFractionDigits: info.fractionDigits,
   }).format(num);
-  return `${formatted} ${code}`;
+
+  return `${formatted} ${info.label}`;
 };
 
 // === Cloudinary thumbnail helper ===
@@ -411,7 +953,10 @@ const buildContactLinks = (p) => {
   const cleanPhone = (s) => String(s || '').replace(/[^0-9+]/g, '').replace(/^\+/, '');
   const wa = cleanPhone(b.whatsapp);
   const tgRaw = (b.telegram || '').trim();
-  const sms = cleanPhone(b.sms || b.whatsapp);
+  // El teléfono solo se habilita si el vendedor lo configuró explícitamente.
+  const phoneRaw = String(b.sms || '').trim();
+  const phone = phoneRaw.replace(/[^0-9+]/g, '');
+  const sms = cleanPhone(phoneRaw);
 
   const name = p.name || 'tu producto';
   const price = formatPrice(p.price, p.currency);
@@ -431,15 +976,17 @@ const buildContactLinks = (p) => {
   // Telegram: t.me/<username> — Telegram doesn't support prefilled text via deep link reliably,
   // so we open the chat directly. Username can be "@user" or "user".
   const tgUser = tgRaw.replace(/^@/, '').replace(/^https?:\/\/(t\.me|telegram\.me)\//i, '');
-  const tgLink = tgUser ? `https://t.me/${tgUser}` : '';
+  // Telegram puede ignorar el texto prellenado según el cliente; WhatsApp permanece intacto.
+  const tgLink = tgUser ? `https://t.me/${tgUser}?text=${encoded}` : '';
   // SMS: spec is sms:NUMBER?body=... (iOS uses `&body=`, Android `?body=`; ?body works on both).
+  const phoneLink = phone ? `tel:${phone}` : '';
   const smsLink = sms ? `sms:${sms}?body=${encoded}` : '';
 
   return {
     msg, encoded,
-    wa, tg: tgUser, sms,
-    waLink, tgLink, smsLink,
-    anyAvailable: !!(waLink || tgLink || smsLink),
+    wa, tg: tgUser, phone, sms,
+    waLink, tgLink, phoneLink, smsLink,
+    anyAvailable: !!(waLink || tgLink || phoneLink || smsLink),
   };
 };
 
@@ -470,7 +1017,18 @@ function api(path, { method = 'GET', body, token, timeout = 10000, retries = 1, 
       .then(async (r) => {
         clearTimeout(timer);
         const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || `Error ${r.status}`);
+        if (!r.ok) {
+          const details = data.details && typeof data.details === 'object'
+            ? Object.entries(data.details)
+                .map(([field, messages]) =>
+                  `${field}: ${Array.isArray(messages) ? messages.join(', ') : String(messages)}`
+                )
+                .join('; ')
+            : '';
+          throw new Error(details
+            ? `${data.error || `Error ${r.status}`} — ${details}`
+            : (data.error || `Error ${r.status}`));
+        }
         return data;
       })
       .catch((err) => {
@@ -508,6 +1066,21 @@ const App = () => {
   const [business, setBusiness] = useState(null);
 
   const [products, setProducts] = useState([]);
+  const [isOnline, setIsOnline] = useState(true);
+  const [offlineCatalogSavedAt, setOfflineCatalogSavedAt] = useState(null);
+  const [usingOfflineCatalog, setUsingOfflineCatalog] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const updateConnection = () => setIsOnline(navigator.onLine);
+    window.addEventListener('online', updateConnection);
+    window.addEventListener('offline', updateConnection);
+    updateConnection();
+    return () => {
+      window.removeEventListener('online', updateConnection);
+      window.removeEventListener('offline', updateConnection);
+    };
+  }, []);
   const [featured, setFeatured] = useState([]);
   const [categories, setCategories] = useState([]);
   const [businessTypes, setBusinessTypes] = useState([]);
@@ -561,6 +1134,7 @@ const App = () => {
     name: '', price: '', description: '', category: 'electronica', subcategory: '', stock: 1, image: '',
     available: true, featured: false, location: '', currency: 'CUP',
     showPublicContact: true, province: '', municipality: '', address: '', openingHours: '', closingHours: '',
+    allowedPaymentMethods: [],
   };
   const [productForm, setProductForm] = useState(emptyProduct);
   const [legalOpen, setLegalOpen] = useState(null); // 'privacy' | 'terms' | 'contact'
@@ -586,20 +1160,86 @@ const App = () => {
   const [cryptoConfig, setCryptoConfig] = useState(null);
   const [cryptoSelectorOpen, setCryptoSelectorOpen] = useState(false);
   const [cryptoSelectedKey, setCryptoSelectedKey] = useState('');
+  const [checkoutPaymentMethod, setCheckoutPaymentMethod] = useState('crypto');
   const [cryptoPendingCheckout, setCryptoPendingCheckout] = useState(null);
   const [checkoutBusiness, setCheckoutBusiness] = useState(null);
   const [deliveryMethod, setDeliveryMethod] = useState('pickup');
   const canUseHomeDelivery = user?.plan === 'premium' && checkoutBusiness?.deliveryEnabled === true;
   const [cryptoRecipientData, setCryptoRecipientData] = useState({
     recipientId: '', name: '', address: '', email: '', phone: '',
+    province: '', municipality: '',
   });
 
   // Admin
-  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [] });
-  const [adminTab, setAdminTab] = useState('payments');
+  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [], transfermovilEvents: [], carriers: [] });
+  const [adminTab, setAdminTab] = useState('overview');
   const [adminSettings, setAdminSettings] = useState(null);
 
   const t = useMemo(() => TRANSLATIONS[lang] || TRANSLATIONS.es, [lang]);
+
+  const getOrderStatusLabel = (status) => {
+    const labels = {
+      es: {
+        pending_payment: 'Pago pendiente',
+        paid: 'Pagado',
+        auto_approved: 'Pago aprobado',
+        processing: 'Preparando pedido',
+        shipped: 'Enviado',
+        delivered: 'Entregado',
+        payment_failed: 'Pago fallido',
+        cancelled: 'Cancelado',
+        canceled: 'Cancelado',
+        refunded: 'Reembolsado',
+        confirmed_pending_release: 'Pago confirmado, pendiente de liberación',
+        blocked_payment_verification: 'Verificación del pago bloqueada',
+      },
+      en: {
+        pending_payment: 'Payment pending',
+        paid: 'Paid',
+        auto_approved: 'Payment approved',
+        processing: 'Preparing order',
+        shipped: 'Shipped',
+        delivered: 'Delivered',
+        payment_failed: 'Payment failed',
+        cancelled: 'Cancelled',
+        canceled: 'Cancelled',
+        refunded: 'Refunded',
+        confirmed_pending_release: 'Payment confirmed, awaiting release',
+        blocked_payment_verification: 'Payment verification blocked',
+      },
+      it: {
+        pending_payment: 'Pagamento in attesa',
+        paid: 'Pagato',
+        auto_approved: 'Pagamento approvato',
+        processing: 'Preparazione dell’ordine',
+        shipped: 'Spedito',
+        delivered: 'Consegnato',
+        payment_failed: 'Pagamento non riuscito',
+        cancelled: 'Annullato',
+        canceled: 'Annullato',
+        refunded: 'Rimborsato',
+        confirmed_pending_release: 'Pagamento confermato, in attesa di rilascio',
+        blocked_payment_verification: 'Verifica del pagamento bloccata',
+      },
+      ru: {
+        pending_payment: 'Ожидается оплата',
+        paid: 'Оплачено',
+        auto_approved: 'Платёж подтверждён',
+        processing: 'Заказ готовится',
+        shipped: 'Отправлен',
+        delivered: 'Доставлен',
+        payment_failed: 'Ошибка оплаты',
+        cancelled: 'Отменён',
+        canceled: 'Отменён',
+        refunded: 'Возвращён',
+        confirmed_pending_release: 'Оплата подтверждена, ожидается разблокировка',
+        blocked_payment_verification: 'Проверка платежа заблокирована',
+      },
+    };
+
+    return labels[lang]?.[status] || status || '—';
+  };
+
 
   // === Boot ===
   useEffect(() => {
@@ -743,58 +1383,151 @@ const App = () => {
   const refreshHome = useCallback(() => {
     setLoading(true);
     setPage(1);
-    const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since;
-    // Show ALL products (incl. featured) in main grid so destacados también aparecen en "Recientes".
-    // Featured section sigue cargando aparte para el carrusel arriba.
+    const hasFiltersOrQuery = !!(
+      query || category || filters.location || filters.priceMin || filters.priceMax ||
+      filters.since || filters.country || filters.province || filters.municipality ||
+      filters.businessName || filters.businessType || filters.subcategory ||
+      filters.currency || filters.physicalOnly || filters.featuredOnly || filters.availableOnly === false
+    );
     const mainQ = buildQuery({ page: '1' });
     const featQ = dataSaver ? '/products?featured=true&lite=true&limit=8' : '/products?featured=true&limit=12';
+
     Promise.all([
       api(`/products?${mainQ}`),
       hasFiltersOrQuery ? Promise.resolve({ products: [], hasMore: false }) : api(featQ),
       hasFiltersOrQuery ? Promise.resolve({ businesses: [] }) : api('/businesses?limit=12'),
     ])
       .then(([all, feat, biz]) => {
-        setProducts(all.products || []);
+        // No sustituir el catálogo local con respuestas incompletas.
+        if (
+          !all || !Array.isArray(all.products) ||
+          !feat || !Array.isArray(feat.products) ||
+          !biz || !Array.isArray(biz.businesses)
+        ) {
+          throw new Error('La API devolvió un catálogo incompleto. Se conservarán los datos anteriores.');
+        }
+
+        const nextProducts = all.products;
+        const nextFeatured = feat.products;
+        const nextBusinesses = biz.businesses;
+        setProducts(nextProducts);
         setHasMore(!!all.hasMore);
-        setFeatured(feat.products || []);
-        setTopBusinesses(biz.businesses || []);
+        setFeatured(nextFeatured);
+        setTopBusinesses(nextBusinesses);
+        setUsingOfflineCatalog(false);
+        setOfflineCatalogSavedAt(Date.now());
+
+        // Guardamos únicamente el catálogo general, nunca resultados filtrados.
+        if (!hasFiltersOrQuery) {
+          void writeOfflineCatalog({
+            products: nextProducts,
+            featured: nextFeatured,
+            topBusinesses: nextBusinesses,
+            hasMore: !!all.hasMore
+          });
+        }
       })
-      .catch((e) => toast.error(e.message))
+      .catch(async (error) => {
+        if (!hasFiltersOrQuery) {
+          const saved = await readOfflineCatalog();
+          if (saved && Array.isArray(saved.products)) {
+            setProducts(saved.products);
+            setFeatured(Array.isArray(saved.featured) ? saved.featured : []);
+            setTopBusinesses(Array.isArray(saved.topBusinesses) ? saved.topBusinesses : []);
+            setHasMore(false);
+            setPage(1);
+            setUsingOfflineCatalog(true);
+            setOfflineCatalogSavedAt(saved.savedAt || null);
+            return;
+          }
+        }
+        toast.error(
+          typeof navigator !== 'undefined' && !navigator.onLine
+            ? 'Sin conexión y todavía no hay un catálogo guardado en este dispositivo.'
+            : (error?.message || 'No se pudo cargar el catálogo.')
+        );
+      })
       .finally(() => setLoading(false));
   }, [buildQuery, query, category, filters, dataSaver]);
 
   const loadMore = useCallback(() => {
-    if (loadingMore || !hasMore) return;
+    if (loadingMore || !hasMore || !isOnline) return;
     setLoadingMore(true);
     const next = page + 1;
     const mainQ = buildQuery({ page: String(next) });
     api(`/products?${mainQ}`)
       .then((d) => {
-        setProducts((prev) => [...prev, ...(d.products || [])]);
+        // No avanzar la paginación con una respuesta incompleta.
+        if (!d || !Array.isArray(d.products)) {
+          throw new Error('La API devolvió una página incompleta. Se conservarán los productos anteriores.');
+        }
+
+        const updatedProducts = [...products, ...d.products];
+        setProducts(updatedProducts);
         setHasMore(!!d.hasMore);
         setPage(next);
+
+        const hasActiveFilters = !!(
+          query || category || filters.location || filters.priceMin ||
+          filters.priceMax || filters.since || filters.country ||
+          filters.province || filters.municipality || filters.businessName ||
+          filters.businessType || filters.subcategory || filters.currency ||
+          filters.physicalOnly || filters.featuredOnly ||
+          filters.availableOnly === false
+        );
+
+        if (!hasActiveFilters) {
+          void writeOfflineCatalog({
+            products: updatedProducts,
+            featured,
+            topBusinesses,
+            hasMore: !!d.hasMore
+          });
+        }
       })
       .catch((e) => toast.error(e.message))
       .finally(() => setLoadingMore(false));
-  }, [loadingMore, hasMore, page, buildQuery]);
+  }, [
+    loadingMore, hasMore, page, buildQuery, products, featured,
+    topBusinesses, query, category, filters, isOnline
+  ]);
 
   // === Autocomplete (debounced) ===
   useEffect(() => {
+    let cancelled = false;
     const q = (searchInput || '').trim();
+
     if (q.length < 2) {
       setSuggestions([]);
       setSuggestLoading(false);
-      return;
+      return () => { cancelled = true; };
     }
+
     setSuggestLoading(true);
     const ctrl = new AbortController();
+
     const timer = setTimeout(() => {
-      api(`/search/suggest?q=${encodeURIComponent(q)}`, { signal: ctrl.signal, retries: 0, timeout: 4000 })
-        .then((d) => setSuggestions(d.suggestions || []))
-        .catch(() => setSuggestions([]))
-        .finally(() => setSuggestLoading(false));
+      api(`/search/suggest?q=${encodeURIComponent(q)}`, {
+        signal: ctrl.signal,
+        retries: 0,
+        timeout: 4000
+      })
+        .then((d) => {
+          if (!cancelled) setSuggestions(d.suggestions || []);
+        })
+        .catch(() => {
+          if (!cancelled && !ctrl.signal.aborted) setSuggestions([]);
+        })
+        .finally(() => {
+          if (!cancelled) setSuggestLoading(false);
+        });
     }, 280); // debounce ~280ms — gentle on Cuban networks
-    return () => { clearTimeout(timer); ctrl.abort(); };
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      ctrl.abort();
+    };
   }, [searchInput]);
 
   const onSuggestionClick = useCallback((s) => {
@@ -816,6 +1549,15 @@ const App = () => {
 
   useEffect(() => {
     if (view === 'home') refreshHome();
+  }, [view, refreshHome]);
+
+  // Al recuperar Internet, actualizar automáticamente el catálogo principal.
+  useEffect(() => {
+    const handleOnline = () => {
+      if (view === 'home') refreshHome();
+    };
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
   }, [view, refreshHome]);
 
   // === Auth ===
@@ -884,7 +1626,17 @@ const App = () => {
   const shareProduct = async (p) => {
     // SEO-friendly URL — server-rendered with OpenGraph metadata so WhatsApp/FB preview shows the product image+price.
     const url = `${window.location.origin}/product/${p.id}`;
-    const text = `${p.name} — ${formatPrice(p.price, p.currency)}`;
+    const currency = String(p.currency || 'CUP').toUpperCase();
+    const rate = Number(settings?.usdRate);
+    const hasCupApproximation =
+      ['USD', 'USDT', 'USDC'].includes(currency) &&
+      Number(p.price) > 0 &&
+      Number.isFinite(rate) &&
+      rate > 0;
+    const cupApproximation = hasCupApproximation
+      ? ` — ≈ ${new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number(p.price) * rate)} CUP`
+      : '';
+    const text = `${p.name} — ${formatPrice(p.price, p.currency)}${cupApproximation}`;
     if (navigator.share) {
       try { await navigator.share({ title: p.name, text, url }); return; } catch {}
     }
@@ -1002,7 +1754,7 @@ const App = () => {
 
   const openProductCreate = () => {
     setEditingProduct(null);
-    setProductForm({ ...emptyProduct, location: business?.location || '' });
+    setProductForm({ ...emptyProduct, location: business?.location || '', allowedPaymentMethods: getAvailableBusinessPaymentMethods(business) });
     setProductOpen(true);
   };
   const openProductEdit = (p) => {
@@ -1014,6 +1766,7 @@ const App = () => {
       showPublicContact: p.showPublicContact !== false, // default true for legacy products
       province: p.province || '', municipality: p.municipality || '', address: p.address || '',
       openingHours: p.openingHours || '', closingHours: p.closingHours || '',
+      allowedPaymentMethods: Array.isArray(p.allowedPaymentMethods) ? p.allowedPaymentMethods : getAvailableBusinessPaymentMethods(business),
     });
     setProductOpen(true);
   };
@@ -1110,7 +1863,12 @@ const App = () => {
   };
 
   const addToCart = (product) => {
-    if (!product?.id || !product.stock || product.stock <= 0) return toast.error('Producto sin stock');
+    if (!product?.id || !product.stock || product.stock <= 0) {
+      return toast.error('Producto sin stock');
+    }
+    if (getProductPaymentMethods(product).length === 0) {
+      return toast.error('Este producto no tiene métodos de pago configurados.');
+    }
     setCart((current) => {
       const currentBusiness = current[0]?.product?.businessId;
       if (currentBusiness && product.businessId && currentBusiness !== product.businessId) {
@@ -1129,7 +1887,7 @@ const App = () => {
   const updateCartQuantity = (productId, quantity) => saveCart(cart.map((item) => item.product.id === productId ? { ...item, quantity: Math.max(1, Math.min(Number(item.product.stock) || 99, Number(quantity) || 1)) } : item));
   const removeFromCart = (productId) => saveCart(cart.filter((item) => item.product.id !== productId));
 
-  const startCryptoCheckout = async (productOrItems) => {
+  const startCryptoCheckout = async (productOrItems, requestedMethod = 'crypto') => {
     if (!token) {
       toast.error('Inicia sesión para pagar; tu carrito se conservará.');
       setAuthMode('login'); setAuthOpen(true); return;
@@ -1156,14 +1914,55 @@ const App = () => {
       setCheckoutBusiness(businessInfo);
       setDeliveryMethod('pickup');
 
-      const config = cryptoConfig || await fetchCryptoConfig();
-      if (!config?.enabled?.length) return toast.error('No hay redes crypto configuradas');
-      setCryptoConfig(config);
+      let config = cryptoConfig;
+      if (!config) {
+        try {
+          config = await api('/payments/crypto/config');
+          setCryptoConfig(config);
+        } catch {
+          config = null;
+        }
+      }
+
+      const businessCryptoEnabled = businessInfo?.cryptoEnabled === true;
+      const hasCrypto = businessCryptoEnabled && Array.isArray(config?.enabled) && config.enabled.length > 0;
+      const hasTransfermovil = businessInfo?.transfermovilEnabled === true
+        && Boolean(String(businessInfo?.transfermovilNumber || '').trim())
+        && Boolean(String(businessInfo?.transfermovilName || '').trim())
+        && Boolean(String(businessInfo?.transfermovilContactPhone || '').trim());
+      const hasEnzona = businessInfo?.enzonaEnabled === true
+        && Boolean(String(businessInfo?.enzonaRecipient || '').trim())
+        && Boolean(String(businessInfo?.enzonaCardNumber || '').trim())
+        && Boolean(String(businessInfo?.enzonaPhone || '').trim());
+
+      if (!hasCrypto && !hasTransfermovil && !hasEnzona) {
+        toast.error('Este negocio no tiene métodos de pago configurados.');
+        return;
+      }
+
+      if (requestedMethod === 'crypto' && !hasCrypto) {
+        toast.error('Este negocio no tiene criptomonedas habilitadas.');
+        return;
+      }
+      if (requestedMethod === 'transfermovil' && !hasTransfermovil) {
+        toast.error('Este negocio no tiene Transfermóvil configurado correctamente.');
+        return;
+      }
+      if (requestedMethod === 'enzona' && !hasEnzona) {
+        toast.error('Este negocio no tiene EnZona configurado correctamente.');
+        return;
+      }
+
+      setCheckoutPaymentMethod(requestedMethod);
       setCryptoPendingCheckout({
         items: checkoutItems,
         clearCart: Array.isArray(productOrItems),
       });
-      setCryptoSelectedKey(`${config.enabled[0].currency}:${config.enabled[0].network}`);
+      if (hasCrypto) {
+        setCryptoSelectedKey(`${config.enabled[0].currency}:${config.enabled[0].network}`);
+      } else {
+        setCryptoSelectedKey('');
+      }
       setCryptoSelectorOpen(true);
     } finally {
       setCheckoutSubmitting(false);
@@ -1179,6 +1978,8 @@ const App = () => {
       address: cryptoRecipientData.address.trim(),
       email: cryptoRecipientData.email.trim(),
       phone: cryptoRecipientData.phone.trim(),
+      province: cryptoRecipientData.province.trim(),
+      municipality: cryptoRecipientData.municipality.trim(),
     };
 
     if ([recipient.recipientId, recipient.name, recipient.email, recipient.phone].some((value) => !value)) {
@@ -1187,6 +1988,11 @@ const App = () => {
     }
     if (deliveryMethod === 'delivery' && !recipient.address) {
       toast.error('Introduce la dirección de entrega');
+      return;
+    }
+    if (deliveryMethod === 'delivery' &&
+        (!recipient.province || !recipient.municipality)) {
+      toast.error('Selecciona la provincia y el municipio de entrega');
       return;
     }
     if (deliveryMethod === 'delivery' && !canUseHomeDelivery) {
@@ -1199,11 +2005,18 @@ const App = () => {
       return;
     }
 
-    const selectedNetwork = cryptoConfig?.enabled?.find(
-      (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
-    );
-    if (!selectedNetwork) {
+    const selectedNetwork = checkoutPaymentMethod === 'crypto'
+      ? cryptoConfig?.enabled?.find(
+          (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
+        )
+      : null;
+
+    if (checkoutPaymentMethod === 'crypto' && !selectedNetwork) {
       toast.error('Selecciona una red crypto habilitada');
+      return;
+    }
+    if (!['crypto', 'transfermovil', 'enzona'].includes(checkoutPaymentMethod)) {
+      toast.error('Selecciona un método de pago válido');
       return;
     }
 
@@ -1222,12 +2035,20 @@ const App = () => {
           shippingAddress: deliveryMethod === 'delivery'
             ? recipient.address
             : `Recogida en el negocio: ${checkoutBusiness?.name || 'negocio'}`,
+          ...(deliveryMethod === 'delivery' ? {
+            shippingProvince: recipient.province,
+            shippingMunicipality: recipient.municipality,
+          } : {}),
           deliveryMethod,
           shippingEmail: recipient.email,
-          shippingNotes: 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network,
-          paymentMethod: 'crypto',
-          cryptoCurrency: selectedNetwork.currency,
-          cryptoNetwork: selectedNetwork.network,
+          shippingNotes: checkoutPaymentMethod === 'crypto'
+            ? 'Pago con ' + selectedNetwork.currency + ' ' + selectedNetwork.network
+            : 'Pago pendiente de revisión manual: ' + checkoutPaymentMethod,
+          paymentMethod: checkoutPaymentMethod,
+          ...(checkoutPaymentMethod === 'crypto' ? {
+            cryptoCurrency: selectedNetwork.currency,
+            cryptoNetwork: selectedNetwork.network,
+          } : {}),
         },
       });
       setCheckoutOrder(orderRes.order);
@@ -1345,7 +2166,7 @@ const App = () => {
     adminLoadingRef.current = true;
     setAdminLoading(true);
     try {
-      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes] = await Promise.all([
+      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes, transfermovilEventsRes, carriersRes] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
         api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
@@ -1354,12 +2175,16 @@ const App = () => {
         api('/admin/reports', { token }).catch(() => ({ reports: [] })),
         api('/admin/crypto-invoices', { token }).catch(() => ({ invoices: [] })),
         api('/admin/orders', { token }).catch(() => ({ orders: [] })),
+        api('/admin/transfermovil-events', { token }).catch(() => ({ events: [] })),
+        api('/admin/carriers', { token }).catch(() => ({ carriers: [] })),
       ]);
       setAdminData({
         payments: pays.payments || [], users: usrs.users || [],
         products: prods.products || [], stats: st, reports: reps.reports || [],
         cryptoInvoices: cryptoInvoices.invoices || [],
         orders: ordersRes.orders || [],
+        transfermovilEvents: transfermovilEventsRes.events || [],
+        carriers: carriersRes.carriers || [],
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
@@ -1377,24 +2202,42 @@ const App = () => {
   const approvePayment = async (id) => { try { await api(`/admin/payments/${id}/approve`, { method: 'POST', token }); toast.success('Aprobado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
   const rejectPayment = async (id) => { const r = prompt('Motivo') || ''; try { await api(`/admin/payments/${id}/reject`, { method: 'POST', token, body: { reason: r } }); toast.success('Rechazado'); loadAdmin(); } catch (e) { toast.error(e.message); } };
 
+  const adminReviewCarrier = async (id, status, reviewNotes = '') => {
+    try {
+      await api(`/admin/carriers/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        token,
+        body: { status, reviewNotes },
+      });
+      toast.success(
+        status === 'approved' ? 'Transportista aprobado'
+          : status === 'rejected' ? 'Solicitud rechazada'
+          : 'Transportista suspendido'
+      );
+      await loadAdmin();
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
   const adminUpdateOrder = async (order) => {
     const allowed = ['processing', 'shipped', 'delivered'];
     const currentShippingStatus = allowed.includes(order.shippingStatus)
       ? order.shippingStatus
       : 'processing';
     const status = prompt(
-      'Nuevo estado de preparación/entrega:\n' + allowed.join(', '),
+      t.newOrderStatusPrompt + '\n' + allowed.join(', '),
       currentShippingStatus
     );
     if (status === null) return;
     if (!allowed.includes(status.trim())) {
-      toast.error('Estado no válido. Usa uno de los estados indicados.');
+      toast.error(t.invalidStatusMessage);
       return;
     }
 
-    const trackingNumber = prompt('Número de seguimiento (deja vacío si no aplica):', order.trackingNumber || '');
+    const trackingNumber = prompt(t.trackingNumber + ':', order.trackingNumber || '');
     if (trackingNumber === null) return;
-    const trackingCarrier = prompt('Transportista:', order.trackingCarrier || '');
+    const trackingCarrier = prompt(t.carrierLabel + ':', order.trackingCarrier || '');
     if (trackingCarrier === null) return;
     const adminNotes = prompt('Notas administrativas:', order.adminNotes || '');
     if (adminNotes === null) return;
@@ -1460,12 +2303,17 @@ const App = () => {
     catch (e) { toast.error(e.message); loadAdmin(); }
   };
   const adminUpdateBusiness = async (id, patch) => {
-    setAdminData((d) => ({
-      ...d,
-      users: (d.users || []).map((u) => u.business?.id === id ? { ...u, business: { ...u.business, ...patch } } : u),
-    }));
-    try { await api(`/admin/businesses/${id}`, { method: 'PUT', token, body: patch }); toast.success('Negocio actualizado'); loadAdmin(); refreshHome(); }
-    catch (e) { toast.error(e.message); loadAdmin(); }
+    try {
+      await api(`/admin/businesses/${id}`, { method: 'PUT', token, body: patch });
+      toast.success('Negocio actualizado');
+      await loadAdmin();
+      refreshHome();
+      return true;
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo guardar el negocio.');
+      await loadAdmin();
+      return false;
+    }
   };
   const adminDeleteBusiness = async (id, name) => {
     if (!confirm(`Eliminar el negocio "${name}" y todos sus productos? El usuario se convertirá en comprador.`)) return;
@@ -1504,7 +2352,9 @@ const App = () => {
 
   const onSearch = (e) => {
     e?.preventDefault();
+    setCategory('');
     setQuery(searchInput.trim());
+    setSuggestOpen(false);
     if (view !== 'home') setView('home');
   };
 
@@ -1516,7 +2366,7 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className={`min-h-screen bg-background flex flex-col ${user && view !== 'checkout' ? 'pb-24 md:pb-0' : ''}`}>
       {/* ====== HEADER ====== */}
       <Header
         t={t} lang={lang} setLang={setLang} dark={dark} setDark={setDark}
@@ -1535,10 +2385,24 @@ const App = () => {
         dataSaver={dataSaver} setDataSaver={setDataSaver}
         suggestions={suggestions} suggestOpen={suggestOpen} setSuggestOpen={setSuggestOpen}
         suggestLoading={suggestLoading} onSuggestionClick={onSuggestionClick}
+        usdRate={settings?.usdRate}
       />
 
       {/* ====== MAIN ====== */}
       <main className="flex-1">
+        {(!isOnline || usingOfflineCatalog) && (
+          <div role="status" aria-live="polite" className="mx-auto w-full max-w-7xl px-4 py-3">
+            <div className="rounded-lg border border-amber-400/60 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+              <strong>{!isOnline ? 'Estás sin conexión.' : 'No se pudo actualizar el catálogo.'}</strong>
+              {' '}Mostramos productos guardados en este dispositivo. Los precios, el stock y la disponibilidad pueden haber cambiado.
+              {offlineCatalogSavedAt && (
+                <div className="mt-1 text-xs opacity-80">
+                  Última actualización guardada: {new Date(offlineCatalogSavedAt).toLocaleString('es-CU')}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {view === 'home' && (
           <Home
             t={t} stats={stats} categories={categories}
@@ -1546,13 +2410,13 @@ const App = () => {
             featured={featured} products={products} loading={loading}
             topBusinesses={topBusinesses}
             filters={filters} setFilters={setFilters}
-            onProduct={openProduct} onBusiness={openBusiness}
+            onProduct={openProduct} onBusiness={openBusiness} onAddToCart={addToCart} usdRate={settings?.usdRate}
             favorites={favorites} toggleFav={toggleFav}
             onShare={shareProduct} onReport={openReport}
             onCTA={() => { if (!user) { setAuthMode('register'); setAuthOpen(true); } else { setView('dashboard'); } }}
             onOpenFilters={() => setFiltersOpen(true)}
             resetFilters={resetFilters}
-            query={query} setQuery={setQuery} searchInput={searchInput} setSearchInput={setSearchInput}
+            query={query} setQuery={setQuery} searchInput={searchInput} setSearchInput={setSearchInput} onSearch={onSearch}
             onPublish={() => {
               if (!user) { setAuthMode('register'); setAuthForm({ ...authForm, accountType: 'seller' }); setAuthOpen(true); }
               else if (!business) { setUpgradeOpen(true); }
@@ -1560,6 +2424,10 @@ const App = () => {
             }}
             onRegister={() => { setAuthMode('register'); setAuthOpen(true); }}
             isLogged={!!user}
+            token={token}
+            user={user}
+            business={business}
+            onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
             dataSaver={dataSaver}
             hasMore={hasMore} loadingMore={loadingMore} onLoadMore={loadMore}
             suggestions={suggestions} suggestOpen={suggestOpen} setSuggestOpen={setSuggestOpen}
@@ -1578,6 +2446,7 @@ const App = () => {
             startCryptoCheckout={startCryptoCheckout}
             onAddToCart={addToCart}
             checkoutSubmitting={checkoutSubmitting}
+            usdRate={settings?.usdRate}
           />
         )}
 
@@ -1588,16 +2457,16 @@ const App = () => {
             token={token} isLogged={!!user}
             onLoginNeeded={() => { setAuthMode('login'); setAuthOpen(true); }}
             onShareBusiness={shareBusiness} onShareProduct={shareProduct}
-            onReport={openReport}
+            onReport={openReport} onAddToCart={addToCart} usdRate={settings?.usdRate}
           />
         )}
 
-        {view === 'cart' && <CartView items={cart} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
+        {view === 'cart' && <CartView t={t} lang={lang} items={cart} usdRate={settings?.usdRate} onBack={() => setView('home')} onUpdateQuantity={updateCartQuantity} onRemove={removeFromCart} onCheckout={startCryptoCheckout} submitting={checkoutSubmitting} />}
 
         {view === 'favorites' && (
           <FavoritesView
             t={t} favorites={favorites} onProduct={openProduct} toggleFav={toggleFav}
-            onShare={shareProduct} onReport={openReport}
+            onShare={shareProduct} onReport={openReport} onAddToCart={addToCart} usdRate={settings?.usdRate}
           />
         )}
 
@@ -1616,33 +2485,47 @@ const App = () => {
           />
         )}
 
+        {view === 'checkout' && checkoutOrder && !checkoutInvoice && (
+          <ManualPaymentCheckout
+            order={checkoutOrder}
+            token={token}
+            usdRate={settings?.usdRate}
+            onOrderUpdate={setCheckoutOrder}
+            onCancel={cancelCheckout}
+            onBack={() => setView('home')}
+          />
+        )}
+
         {view === 'dashboard' && user && business && (
           <Dashboard
             user={user} business={business} products={myProducts} token={token}
             onNew={openProductCreate} onEdit={openProductEdit} onDelete={deleteProduct}
             onPlan={() => setPlanOpen(true)}
             onShareBusiness={() => shareBusiness(business)}
-            compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo}
+            compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo} t={t} lang={lang}
+            getOrderStatusLabel={getOrderStatusLabel}
           />
         )}
         {view === 'dashboard' && user && !business && (
-          <BuyerDashboard user={user} token={token} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard t={t} lang={lang} user={user} token={token} getOrderStatusLabel={getOrderStatusLabel} showBecomeSeller onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'buyer-orders' && user && (
-          <BuyerDashboard user={user} token={token} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
+          <BuyerDashboard t={t} lang={lang} user={user} token={token} getOrderStatusLabel={getOrderStatusLabel} showBecomeSeller={!business} onBecomeSeller={() => setUpgradeOpen(true)} onFavorites={() => setView('favorites')} favoritesCount={favorites.length} />
         )}
         {view === 'dashboard' && !user && (
           <div className="container mx-auto py-32 text-center">
-            <p className="text-muted-foreground mb-4">Necesitas iniciar sesión</p>
+            <p className="text-muted-foreground mb-4">{t.loginRequired}</p>
             <Button onClick={() => { setAuthMode('login'); setAuthOpen(true); }}>Entrar</Button>
           </div>
         )}
 
         {view === 'admin' && user?.role === 'admin' && (
           <AdminDashboard
+            t={t}
             data={adminData} settings={adminSettings} setSettings={setAdminSettings}
             onApprove={approvePayment} onReject={rejectPayment} onUpdateOrder={adminUpdateOrder}
             onUpdateUser={adminUpdateUser} onDeleteUser={adminDeleteUser}
+            onReviewCarrier={adminReviewCarrier}
             onUpdateBusiness={adminUpdateBusiness} onDeleteBusiness={adminDeleteBusiness}
             onDeleteProduct={adminDeleteProduct}
             onResolveReport={adminResolveReport}
@@ -1657,9 +2540,147 @@ const App = () => {
             setRejectCryptoInvoiceId={setRejectCryptoInvoiceId}
             rejectCryptoReason={rejectCryptoReason}
             setRejectCryptoReason={setRejectCryptoReason}
+            getOrderStatusLabel={getOrderStatusLabel}
           />
         )}
+      {user && view !== 'checkout' && (
+        <nav className="ubik-bottom-nav" aria-label="Accesos rápidos">
+          {(user.role === 'admin'
+            ? [
+                { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
+                { label: 'Resumen', icon: LayoutDashboard, active: view === 'admin' && adminTab === 'overview', action: () => { setView('admin'); setAdminTab('overview'); } },
+                { label: 'Pedidos', icon: ShoppingBag, active: view === 'admin' && adminTab === 'orders', action: () => { setAdminTab('orders'); setView('admin'); } },
+                { label: 'Usuarios', icon: ShieldCheck, active: view === 'admin' && adminTab === 'users', action: () => { setAdminTab('users'); setView('admin'); } },
+                {
+                  label: 'Más',
+                  icon: Menu,
+                  active: view === 'admin' && ['payments', 'crypto-invoices', 'transfermovil', 'reports', 'products', 'settings', 'carriers'].includes(adminTab),
+                  menu: [
+                    { label: 'Pagos locales', value: 'payments' },
+                    { label: 'Facturas cripto', value: 'crypto-invoices' },
+                    { label: 'Transfermóvil', value: 'transfermovil' },
+                    { label: 'Reportes', value: 'reports' },
+                    { label: 'Productos', value: 'products' },
+                    { label: 'Configuración', value: 'settings' },
+                    { label: 'Transportistas', value: 'carriers' },
+                  ],
+                },
+              ]
+            : business
+              ? [
+                  { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
+                  { label: 'Mi panel', icon: LayoutDashboard, active: view === 'dashboard', action: () => setView('dashboard') },
+                  { label: 'Publicar', icon: Plus, active: false, action: () => { setView('dashboard'); setTimeout(openProductCreate, 150); } },
+                  { label: 'Pedidos', icon: ShoppingBag, active: false, action: () => { setView('dashboard'); setTimeout(() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250); } },
+                  {
+                    label: 'Más',
+                    icon: Menu,
+                    active: view === 'dashboard' || view === 'business',
+                    menu: [
+                      { label: 'Mi tienda', target: 'business' },
+                      { label: 'Datos del negocio y ubicación', target: 'sellerBusinessProfile' },
+                      { label: 'Inventario y productos', target: 'sellerInventory' },
+                      { label: 'Entregas a domicilio', target: 'sellerDeliverySettings' },
+                      { label: 'Transfermóvil y EnZona', target: 'sellerLocalPayments' },
+                      { label: 'Billeteras de criptomonedas', target: 'sellerCryptoWallets' },
+                      { label: 'Personalizar panel', target: 'sellerPanelPreferences' },
+                    ],
+                  },
+                ]
+              : [
+                  { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
+                  { label: 'Buscar', icon: Search, active: false, action: () => {
+                    setView('home');
+                    window.setTimeout(() => {
+                      const visibleSearch = Array.from(
+                        document.querySelectorAll('header input[role="combobox"]')
+                      ).find((input) => input.getClientRects().length > 0);
+                      visibleSearch?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      visibleSearch?.focus();
+                    }, 200);
+                  } },
+                  { label: 'Carrito', icon: ShoppingBag, active: view === 'cart', action: () => setView('cart') },
+                  { label: 'Pedidos', icon: CreditCard, active: view === 'buyer-orders', action: () => setView('buyer-orders') },
+                  { label: 'Mi cuenta', icon: LayoutDashboard, active: view === 'dashboard', action: () => setView('dashboard') },
+                ]
+          ).map((item) => {
+            const Icon = item.icon;
+            if (item.menu) {
+              return (
+                <DropdownMenu key={item.label}>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      type="button"
+                      className={`ubik-bottom-nav__item${item.active ? ' is-active' : ''}`}
+                      aria-label={user.role === 'admin' ? 'Más secciones administrativas' : 'Más opciones del negocio'}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span>{item.label}</span>
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" side="top" className="w-64">
+                    <DropdownMenuLabel>
+                      {user.role === 'admin' ? 'Administración' : 'Mi negocio'}
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {item.menu.map((entry) => (
+                      <DropdownMenuItem
+                        key={entry.value || entry.target}
+                        onSelect={() => {
+                          if (user.role === 'admin') {
+                            setView('admin');
+                            setAdminTab(entry.value);
+                            return;
+                          }
+
+                          if (entry.target === 'business') {
+                            const id = business?.id;
+                            if (id) openBusiness(id);
+                            else setView('dashboard');
+                            return;
+                          }
+
+                          setView('dashboard');
+                          window.setTimeout(() => {
+                            const targetElement = document.getElementById(entry.target) ||
+                              (entry.target === 'sellerInventory' ? document.getElementById('sellerPanelPreferences') : null);
+                            targetElement?.scrollIntoView({
+                              behavior: 'smooth',
+                              block: 'start',
+                            });
+                          }, 250);
+                        }}
+                      >
+                        {entry.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              );
+            }
+
+            return (
+              <button
+                key={item.label}
+                type="button"
+                onClick={item.action}
+                className={`ubik-bottom-nav__item${item.active ? ' is-active' : ''}`}
+                aria-label={item.label}
+                aria-current={item.active ? 'page' : undefined}
+              >
+                <Icon aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
+
       </main>
+      {/* Publicidad A-ADS solo en vistas públicas; nunca durante el pago ni en administración */}
+      {['home', 'product', 'business', 'favorites'].includes(view) && (
+        <AadsFloatingAd />
+      )}
 
       {/* ====== FOOTER ====== */}
       <Footer t={t} settings={settings} onLegal={setLegalOpen} setLang={setLang} lang={lang} />
@@ -1721,7 +2742,13 @@ const App = () => {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Elige tu criptomoneda y red</DialogTitle>
+            <DialogTitle>
+              {checkoutPaymentMethod === 'transfermovil'
+                ? 'Pago por Transfermóvil'
+                : checkoutPaymentMethod === 'enzona'
+                  ? 'Pago por EnZona'
+                  : 'Elige tu criptomoneda y red'}
+            </DialogTitle>
             <DialogDescription>
               Selecciona cómo deseas pagar. El pedido se creará después de confirmar.
             </DialogDescription>
@@ -1778,6 +2805,59 @@ const App = () => {
               </div>
 
               <div className="space-y-1">
+                {(() => {
+                  const items = cryptoPendingCheckout?.items || [];
+                  if (!items.length) return null;
+                  const currency = String(items[0]?.product?.currency || 'CUP').toUpperCase();
+                  const roundMoney = (value) =>
+                    Math.round((value + Number.EPSILON) * 100) / 100;
+                  const subtotal = roundMoney(items.reduce(
+                    (sum, item) => sum + (Number(item.product?.price) || 0) * (Number(item.quantity) || 0),
+                    0
+                  ));
+                  const rateValue = Number(settings?.usdRate);
+                  const rate = Number.isFinite(rateValue) && rateValue > 0 ? rateValue : 120;
+                  const feeCUP = deliveryMethod === 'delivery'
+                    ? Number(checkoutBusiness?.deliveryFeeCUP ?? 0)
+                    : 0;
+                  const isLocalPayment = ['transfermovil', 'enzona'].includes(
+                    String(checkoutPaymentMethod || '').toLowerCase()
+                  );
+                  const supportedCurrencies = ['USD', 'USDT', 'USDC'];
+                  const localSubtotalCUP = currency === 'CUP'
+                    ? subtotal
+                    : supportedCurrencies.includes(currency)
+                      ? roundMoney(subtotal * rate)
+                      : null;
+                  const localTotalCUP = localSubtotalCUP !== null &&
+                    Number.isFinite(feeCUP) && feeCUP >= 0
+                      ? roundMoney(localSubtotalCUP + feeCUP)
+                      : null;
+
+                  const fee = currency === 'CUP' ? roundMoney(feeCUP)
+                    : supportedCurrencies.includes(currency) ? roundMoney(feeCUP / rate) : null;
+
+                  return (
+                    <div className="mb-3 space-y-1 rounded-lg border bg-muted/40 p-3 text-sm" aria-live="polite">
+                      {isLocalPayment ? (
+                        <>
+                          <p>Precio original: <strong>{subtotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</strong></p>
+                          <p>Tasa de cambio: <strong>{rate.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP por USD</strong></p>
+                          <p>Subtotal convertido: <strong>{localSubtotalCUP === null ? 'Conversión no disponible' : `${localSubtotalCUP.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`}</strong></p>
+                          <p>Entrega: <strong>{feeCUP.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP</strong></p>
+                          <p className="font-bold text-green-800">Importe estimado a transferir: {localTotalCUP === null ? 'No disponible' : `${localTotalCUP.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CUP`}</p>
+                        </>
+                      ) : (
+                        <>
+                          <p>Subtotal: <strong>{subtotal.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}</strong></p>
+                          <p>{deliveryMethod === 'delivery' ? 'Tarifa de entrega' : 'Entrega'}: <strong>{fee === null ? 'Conversión no disponible' : `${fee.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</strong></p>
+                          <p className="font-bold">Total estimado: {fee === null ? 'No disponible' : `${roundMoney(subtotal + fee).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`}</p>
+                        </>
+                      )}
+                      <p className="text-xs text-muted-foreground">El servidor calcula y confirma el total definitivo.</p>
+                    </div>
+                  );
+                })()}
                 <Label htmlFor="crypto-recipient-id">ID del destinatario</Label>
                 <Input id="crypto-recipient-id" autoComplete="off" maxLength={50}
                   value={cryptoRecipientData.recipientId}
@@ -1792,13 +2872,53 @@ const App = () => {
                   disabled={checkoutSubmitting} required placeholder="Nombre completo" />
               </div>
               {deliveryMethod === 'delivery' ? (
+                <>
+                <div className="space-y-1">
+                  <Label>Provincia de entrega</Label>
+                  <Select
+                    value={cryptoRecipientData.province}
+                    onValueChange={(province) => setCryptoRecipientData((prev) => ({
+                      ...prev, province, municipality: '',
+                    }))}
+                    disabled={checkoutSubmitting}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona la provincia" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CUBA_PROVINCES.map((province) => (
+                        <SelectItem key={province} value={province}>{province}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Municipio de entrega</Label>
+                  <Select
+                    value={cryptoRecipientData.municipality}
+                    onValueChange={(municipality) => setCryptoRecipientData((prev) => ({
+                      ...prev, municipality,
+                    }))}
+                    disabled={checkoutSubmitting || !cryptoRecipientData.province}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecciona el municipio" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getCubanMunicipalities(cryptoRecipientData.province).map((municipality) => (
+                        <SelectItem key={municipality} value={municipality}>{municipality}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <div className="space-y-1">
                   <Label htmlFor="crypto-recipient-address">Dirección de entrega</Label>
                   <Input id="crypto-recipient-address" autoComplete="street-address" maxLength={500}
                     value={cryptoRecipientData.address}
                     onChange={(e) => setCryptoRecipientData((prev) => ({ ...prev, address: e.target.value }))}
-                    disabled={checkoutSubmitting} required placeholder="Calle, número, ciudad y país" />
+                    disabled={checkoutSubmitting} required placeholder="Calle, número, reparto y referencia" />
                 </div>
+                </>
               ) : (
                 <p className="rounded-md bg-muted p-3 text-sm">
                   Recogerás el pedido en el negocio. No necesitas introducir una dirección de entrega.
@@ -1819,7 +2939,49 @@ const App = () => {
                   disabled={checkoutSubmitting} required placeholder="+34 600 000 000" />
               </div>
             </div>
+            {checkoutPaymentMethod === 'crypto' && (
             <div className="space-y-3 border-t pt-4">
+              <h3 className="font-semibold">Método de pago</h3>
+              {checkoutPaymentMethod !== 'transfermovil' && Array.isArray(cryptoConfig?.enabled) && cryptoConfig.enabled.length > 0 && (
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-3">
+                  <input
+                    type="radio"
+                    name="checkout-payment-method"
+                    checked={checkoutPaymentMethod === 'crypto'}
+                    onChange={() => setCheckoutPaymentMethod('crypto')}
+                    disabled={checkoutSubmitting}
+                    className="mt-1"
+                  />
+                  <span>
+                    <span className="font-medium">Criptomonedas</span>
+                    <span className="block text-sm text-muted-foreground">Pago mediante una red crypto habilitada.</span>
+                  </span>
+                </label>
+              )}
+            </div>
+            )}
+
+            {checkoutPaymentMethod === 'transfermovil' && (
+              <div className="rounded-md bg-muted p-3 text-sm space-y-1">
+                <p className="font-semibold">Destinatario de Transfermóvil</p>
+                <p>Tarjeta receptora: {checkoutBusiness?.transfermovilNumber}</p>
+                <p>Titular: {checkoutBusiness?.transfermovilName}</p>
+                <p>Móvil de contacto: {checkoutBusiness?.transfermovilContactPhone}</p>
+                <p className="text-muted-foreground">El pedido quedará pendiente hasta que se revise el pago.</p>
+              </div>
+            )}
+            {checkoutPaymentMethod === 'enzona' && (
+              <div className="rounded-md bg-muted p-3 text-sm space-y-1">
+                <p className="font-semibold">Datos para pagar por EnZona</p>
+                <p>Destinatario: {checkoutBusiness?.enzonaRecipient}</p>
+                <p>Tarjeta receptora: {checkoutBusiness?.enzonaCardNumber}</p>
+                <p>Móvil de contacto: {checkoutBusiness?.enzonaPhone}</p>
+                <p className="text-muted-foreground">El pedido quedará pendiente hasta que se revise el pago.</p>
+              </div>
+            )}
+
+            {checkoutPaymentMethod === 'crypto' && (
+              <div className="space-y-3 border-t pt-4">
               <Label htmlFor="crypto-network-select">Red de pago</Label>
             <Select
               value={cryptoSelectedKey}
@@ -1834,13 +2996,70 @@ const App = () => {
                   const key = `${network.currency}:${network.network}`;
                   return (
                     <SelectItem key={key} value={key}>
-                      {network.label || `${network.currency} (${network.network})`}
+                      <CurrencyIcon currency={network.currency} /> {network.label || `${network.currency} (${network.network})`}
                     </SelectItem>
                   );
                 })}
               </SelectContent>
             </Select>
-          </div>
+            {(() => {
+              const items = cryptoPendingCheckout?.items || [];
+              if (!items.length) return null;
+
+              const roundMoney = (value) =>
+                Math.round((value + Number.EPSILON) * 100) / 100;
+              const subtotal = roundMoney(items.reduce(
+                (sum, item) => sum + (Number(item.product?.price) || 0) * (Number(item.quantity) || 0),
+                0
+              ));
+              const orderCurrency = String(items[0]?.product?.currency || 'CUP').toUpperCase();
+              const configuredRate = Number(settings?.usdRate);
+              const usdRate = Number.isFinite(configuredRate) && configuredRate > 0
+                ? configuredRate
+                : 120;
+              const feeCUP = deliveryMethod === 'delivery'
+                ? Number(checkoutBusiness?.deliveryFeeCUP ?? 0)
+                : 0;
+              const fee = deliveryMethod !== 'delivery' ? 0
+                : orderCurrency === 'CUP' ? roundMoney(feeCUP)
+                : ['USD', 'USDT', 'USDC'].includes(orderCurrency) ? roundMoney(feeCUP / usdRate)
+                : null;
+              const total = fee === null ? subtotal : roundMoney(subtotal + fee);
+
+              const amount = fee === null ? null
+                : orderCurrency === 'CUP' ? total / usdRate
+                : ['USD', 'USDT', 'USDC'].includes(orderCurrency) ? total
+                : null;
+
+              const selected = cryptoConfig?.enabled?.find(
+                (network) => `${network.currency}:${network.network}` === cryptoSelectedKey
+              );
+
+              if (amount === null) {
+                return (
+                  <p className="text-sm text-destructive" role="alert">
+                    No hay conversión configurada de {orderCurrency} a criptomonedas.
+                  </p>
+                );
+              }
+
+              return (
+                <div className="rounded-md bg-muted p-3 space-y-1" aria-live="polite">
+                  <p className="font-semibold">
+                    Importe estimado: {amount.toLocaleString('es-ES', {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 4
+                    })} {selected?.currency || ''}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {selected?.network ? `Red: ${selected.network}. ` : ''}
+                    El importe definitivo se confirmará al crear la factura.
+                  </p>
+                </div>
+              );
+            })()}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
@@ -1853,7 +3072,7 @@ const App = () => {
             </Button>
             <Button
               type="button"
-              disabled={checkoutSubmitting || !cryptoSelectedKey}
+              disabled={checkoutSubmitting || (checkoutPaymentMethod === 'crypto' && !cryptoSelectedKey)}
               onClick={confirmCryptoCheckout}
             >
               {checkoutSubmitting ? 'Procesando...' : 'Confirmar y crear pedido'}
@@ -1981,9 +3200,39 @@ const Logo = ({ size = 'md', withText = true, onDark = false }) => {
   );
 };
 
-const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, setOpen, loading, onPick, compact = false }) => {
+const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, setOpen, loading, onPick, usdRate, compact = false }) => {
   const [focused, setFocused] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const suggestionId = useId();
   const show = focused && open && (suggestions?.length > 0 || loading);
+
+  useEffect(() => {
+    setActiveIndex(-1);
+  }, [value, suggestions]);
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      setOpen(false);
+      setActiveIndex(-1);
+      return;
+    }
+
+    if (!suggestions?.length) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => current >= suggestions.length - 1 ? 0 : current + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setOpen(true);
+      setActiveIndex((current) => current <= 0 ? suggestions.length - 1 : current - 1);
+    } else if (e.key === 'Enter' && show && activeIndex >= 0 && activeIndex < suggestions.length) {
+      e.preventDefault();
+      onPick(suggestions[activeIndex]);
+      setActiveIndex(-1);
+    }
+  };
   return (
     <div className="relative flex-1">
       <form onSubmit={(e) => { e.preventDefault(); setOpen(false); onSubmit(e); }}>
@@ -1994,19 +3243,31 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
           onFocus={() => { setFocused(true); setOpen(true); }}
           onBlur={() => setTimeout(() => setFocused(false), 180)}
           placeholder={placeholder}
-          className={compact ? 'pl-9 h-9' : 'pl-9 pr-20 h-10 bg-muted/40'}
+          role="combobox"
+          aria-label={placeholder || "Buscar productos y negocios"}
+          aria-autocomplete="list"
+          aria-haspopup="listbox"
+          aria-expanded={Boolean(show)}
+          aria-controls={suggestionId}
+          aria-activedescendant={show && activeIndex >= 0 && activeIndex < suggestions.length ? `${suggestionId}-option-${activeIndex}` : undefined}
+          onKeyDown={handleSearchKeyDown}
+          className={compact ? 'pl-9 pr-16 h-9' : 'pl-9 pr-20 h-10 bg-muted/40'}
           autoComplete="off"
         />
-        {!compact && (
-          <Button type="submit" size="sm" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
-            Buscar
-          </Button>
-        )}
+        <Button type="submit" size="sm" aria-label="Buscar" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
+          Buscar
+        </Button>
       </form>
       {show && (
-        <div className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg overflow-hidden z-50 max-h-80 overflow-y-auto">
+        <div
+          id={suggestionId}
+          role="listbox"
+          aria-label="Sugerencias de búsqueda"
+          aria-busy={Boolean(loading)}
+          className="absolute left-0 right-0 top-full mt-1 bg-popover border border-border rounded-md shadow-lg overflow-hidden z-50 max-h-80 overflow-y-auto"
+        >
           {loading && suggestions.length === 0 && (
-            <div className="p-3 text-xs text-muted-foreground flex items-center gap-2">
+            <div role="status" aria-live="polite" className="p-3 text-xs text-muted-foreground flex items-center gap-2">
               <span className="inline-block h-3 w-3 rounded-full border-2 border-[#1565C0] border-t-transparent animate-spin" />
               Buscando sugerencias…
             </div>
@@ -2014,8 +3275,13 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
           {suggestions.map((s, i) => (
             <button
               key={`${s.type}-${s.value}-${i}`}
+              id={`${suggestionId}-option-${i}`}
               type="button"
-              onMouseDown={(e) => { e.preventDefault(); onPick(s); }}
+              role="option"
+              aria-selected={activeIndex === i}
+              onMouseEnter={() => setActiveIndex(i)}
+              aria-label={`${s.type === 'product' ? 'Producto' : s.type === 'business' ? 'Negocio' : 'Categoría'}: ${s.label}`}
+              onMouseDown={(e) => { e.preventDefault(); onPick(s); setActiveIndex(-1); }}
               className="w-full text-left px-3 py-2 hover:bg-muted text-sm flex items-center justify-between gap-2 border-b last:border-b-0 border-border/40"
             >
               <span className="flex items-center gap-2 truncate">
@@ -2025,8 +3291,17 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
                 <span className="truncate">{s.label}</span>
               </span>
               {s.type === 'product' && s.price != null && (
-                <span className="text-xs font-bold text-[#1565C0] flex-shrink-0">
-                  {s.currency === 'USDC' ? '💎' : '🇨🇺'} {Number(s.price || 0).toLocaleString('es-ES')}
+                <span className="flex flex-col items-end gap-0.5 flex-shrink-0 max-w-[45%]">
+                  <span className="text-xs font-bold text-[#1565C0] whitespace-nowrap">
+                    <PriceWithCurrencyIcon value={s.price} currency={s.currency || 'CUP'} />
+                  </span>
+                  {['USD', 'USDT', 'USDC'].includes(String(s.currency || '').toUpperCase()) &&
+                    Number(s.price) > 0 && Number(usdRate) > 0 && (
+                    <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+                      ≈ {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 })
+                        .format(Number(s.price) * Number(usdRate))} CUP
+                    </span>
+                  )}
                 </span>
               )}
             </button>
@@ -2040,7 +3315,7 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
   );
 };
 
-const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, cartCount = 0, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick }) => {
+const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onLogin, onRegister, onPublish, onUpgradeSeller, searchInput, setSearchInput, onSearch, setView, favorites, cartCount = 0, dataSaver, setDataSaver, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, usdRate }) => {
   const isBuyer = user && !business;
   return (
   <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm">
@@ -2060,6 +3335,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
           setOpen={setSuggestOpen}
           loading={suggestLoading}
           onPick={onSuggestionClick}
+          usdRate={usdRate}
         />
       </div>
 
@@ -2073,7 +3349,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
           <Plus className="h-4 w-4 mr-1" /> {t.publish}
         </Button>
 
-        <Button variant="ghost" size="icon" onClick={() => setView('favorites')} className="relative">
+        <Button variant="ghost" size="icon" onClick={() => setView('favorites')} className="relative" aria-label={`Favoritos (${favorites.length})`} title="Favoritos">
           <Heart className="h-5 w-5" />
           {favorites.length > 0 && (
             <span className="absolute -top-1 -right-1 bg-[#00A86B] text-white text-[9px] rounded-full h-4 min-w-4 px-1 flex items-center justify-center font-bold">
@@ -2101,16 +3377,16 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
           {dataSaver ? <Leaf className="h-5 w-5" /> : <ImageIcon className="h-5 w-5" />}
         </Button>
 
-        <Button variant="ghost" size="icon" onClick={() => setDark(!dark)}>
+        <Button variant="ghost" size="icon" onClick={() => setDark(!dark)} aria-label={dark ? "Activar tema claro" : "Activar tema oscuro"} title={dark ? "Activar tema claro" : "Activar tema oscuro"}>
           {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
         </Button>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon"><Globe className="h-5 w-5" /></Button>
+            <Button variant="ghost" size="icon" aria-label={t.languageLabel} title={t.languageLabel}><Globe className="h-5 w-5" /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuLabel>Idioma</DropdownMenuLabel>
+            <DropdownMenuLabel>{t.languageLabel}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {Object.entries(LANG_NAMES).map(([k, n]) => (
               <DropdownMenuItem key={k} onClick={() => setLang(k)} className={lang === k ? 'bg-muted' : ''}>
@@ -2141,6 +3417,11 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
               {isBuyer && (
                 <DropdownMenuItem onClick={onUpgradeSeller} className="text-[#00A86B] font-semibold">
                   <Store className="h-4 w-4 mr-2" /> Hazte vendedor
+                </DropdownMenuItem>
+              )}
+              {isBuyer && (
+                <DropdownMenuItem onClick={() => { window.location.href = '/transportista'; }}>
+                  <MapPin className="h-4 w-4 mr-2" /> Solicitar ser transportista
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => setView('buyer-orders')}>
@@ -2184,6 +3465,7 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
         setOpen={setSuggestOpen}
         loading={suggestLoading}
         onPick={onSuggestionClick}
+        usdRate={usdRate}
       />
     </div>
   </header>
@@ -2192,13 +3474,17 @@ const Header = ({ t, lang, setLang, dark, setDark, user, business, onLogout, onL
 
 // ============ HOME ============
 
-function PublicInvoiceScanner() {
+function PublicInvoiceScanner({ token, user, business, onLoginNeeded }) {
   const [open, setOpen] = React.useState(false);
   const [scanning, setScanning] = React.useState(false);
   const [value, setValue] = React.useState('');
   const [invoice, setInvoice] = React.useState(null);
   const [error, setError] = React.useState('');
   const [loading, setLoading] = React.useState(false);
+  const [resolvedInvoiceId, setResolvedInvoiceId] = React.useState('');
+  const [actionsInfo, setActionsInfo] = React.useState(null);
+  const [actionLoading, setActionLoading] = React.useState('');
+  const [actionMessage, setActionMessage] = React.useState('');
   const videoRef = React.useRef(null);
 
   const stopCamera = React.useCallback(() => {
@@ -2235,6 +3521,9 @@ function PublicInvoiceScanner() {
     setLoading(true);
     setError('');
     setInvoice(null);
+    setResolvedInvoiceId('');
+    setActionsInfo(null);
+    setActionMessage('');
     try {
       const response = await fetch('/api/public/invoices/' + encodeURIComponent(token), {
         method: 'GET',
@@ -2245,6 +3534,7 @@ function PublicInvoiceScanner() {
         throw new Error(data.error || 'Factura no encontrada o no válida.');
       }
       setInvoice(data);
+      setResolvedInvoiceId(token);
       setValue(raw);
       setScanning(false);
       stopCamera();
@@ -2252,6 +3542,89 @@ function PublicInvoiceScanner() {
       setError(e.message || 'No se pudo verificar la factura.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  React.useEffect(() => {
+    if (!invoice || !resolvedInvoiceId || !token || !user) {
+      setActionsInfo(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    api('/invoices/' + encodeURIComponent(resolvedInvoiceId) + '/actions', {
+      token,
+      timeout: 12000,
+      retries: 0,
+    }).then(data => {
+      if (!cancelled) {
+        setActionsInfo(data);
+        setActionMessage('');
+      }
+    }).catch(() => {
+      if (!cancelled) {
+        setActionsInfo(null);
+        setActionMessage(
+          'No se pudieron consultar las acciones. Comprueba que has iniciado sesión con la cuenta del comprador o del negocio vendedor.'
+        );
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [invoice, resolvedInvoiceId, token, user]);
+
+  const confirmQrAction = async (action) => {
+    if (!token || !user || !actionsInfo?.orderId || !resolvedInvoiceId) {
+      setActionMessage('Inicia sesión con la cuenta autorizada para continuar.');
+      return;
+    }
+
+    setActionLoading(action);
+    setActionMessage('');
+
+    try {
+      const isDelivery = action === 'delivery';
+      if (
+        isDelivery &&
+        !actionsInfo.actions?.confirmDelivery
+      ) {
+        throw new Error('La entrega no está disponible para este pedido.');
+      }
+      if (
+        !isDelivery &&
+        !actionsInfo.actions?.confirmReceipt
+      ) {
+        throw new Error('La recepción no está disponible para este pedido.');
+      }
+
+      const path = isDelivery
+        ? '/seller/orders/' + encodeURIComponent(actionsInfo.orderId) + '/confirm-delivery'
+        : '/orders/' + encodeURIComponent(actionsInfo.orderId) + '/confirm-receipt';
+
+      await api(path, {
+        method: 'POST',
+        token,
+        body: { publicInvoiceId: resolvedInvoiceId },
+        timeout: 15000,
+        retries: 0,
+      });
+
+      const updated = await api(
+        '/invoices/' + encodeURIComponent(resolvedInvoiceId) + '/actions',
+        { token, timeout: 12000, retries: 0 }
+      );
+
+      setActionsInfo(updated);
+      setActionMessage(
+        isDelivery
+          ? 'Entrega confirmada correctamente.'
+          : 'Recepción confirmada correctamente.'
+      );
+    } catch (e) {
+      setActionMessage(e.message || 'No se pudo registrar la confirmación.');
+    } finally {
+      setActionLoading('');
     }
   };
 
@@ -2410,9 +3783,83 @@ function PublicInvoiceScanner() {
                     )}</ul>
                   : <p>Sin detalles de productos disponibles.</p>}
               </div>
-              <p><b>Total:</b> {invoice.total ?? '—'} {invoice.currency || '—'}</p>
+              <p><b>Total original:</b> {invoice.total ?? '—'} {invoice.currency || '—'}</p>
+              {['transfermovil', 'enzona'].includes(
+                String(invoice.paymentMethod || '').toLowerCase()
+              ) && (
+                Number.isFinite(Number(invoice.localPaymentAmountCUP)) &&
+                Number(invoice.localPaymentAmountCUP) > 0 ? (
+                  <p className="font-bold text-green-800">
+                    Importe a transferir: {formatMoney(Number(invoice.localPaymentAmountCUP), 'CUP')}
+                  </p>
+                ) : String(invoice.currency || 'CUP').toUpperCase() === 'CUP' &&
+                  Number.isFinite(Number(invoice.total)) &&
+                  Number(invoice.total) > 0 ? (
+                  <p className="font-bold text-green-800">
+                    Importe a transferir: {formatMoney(Number(invoice.total), 'CUP')}
+                  </p>
+                ) : (
+                  <p className="font-semibold text-red-700">
+                    Importe CUP no disponible. Confirma con soporte antes de pagar.
+                  </p>
+                )
+              )}
               <p><b>Estado del pago:</b> {invoice.paymentStatus || 'No disponible'}</p>
-              <p className="text-xs text-gray-700">La validez de la factura no demuestra por sí sola que el pago esté confirmado. Este escáner no modifica pedidos, pagos ni escrow.</p>
+              <p className="text-xs text-gray-700">
+                La validez de la factura no demuestra por sí sola que el pago esté confirmado.
+                Escanear el QR públicamente no modifica pedidos ni pagos.
+              </p>
+
+              {!token || !user ? (
+                <button
+                  type="button"
+                  onClick={() => onLoginNeeded?.()}
+                  className="w-full rounded-lg bg-blue-700 px-3 py-2 font-bold text-white"
+                >
+                  Iniciar sesión para confirmar entrega o recepción
+                </button>
+              ) : (
+                <div className="space-y-2 border-t border-green-200 pt-3">
+                  {actionsInfo?.actions?.confirmDelivery && (
+                    <button
+                      type="button"
+                      disabled={!!actionLoading}
+                      onClick={() => confirmQrAction('delivery')}
+                      className="w-full rounded-lg bg-blue-700 px-3 py-2 font-bold text-white disabled:opacity-50"
+                    >
+                      {actionLoading === 'delivery'
+                        ? 'Confirmando entrega…'
+                        : 'Confirmar entrega (vendedor)'}
+                    </button>
+                  )}
+
+                  {actionsInfo?.actions?.confirmReceipt && (
+                    <button
+                      type="button"
+                      disabled={!!actionLoading}
+                      onClick={() => confirmQrAction('receipt')}
+                      className="w-full rounded-lg bg-green-700 px-3 py-2 font-bold text-white disabled:opacity-50"
+                    >
+                      {actionLoading === 'receipt'
+                        ? 'Confirmando recepción…'
+                        : 'Confirmar recepción (comprador)'}
+                    </button>
+                  )}
+
+                  {actionsInfo && !actionsInfo.actions?.confirmDelivery &&
+                    !actionsInfo.actions?.confirmReceipt && (
+                      <p className="text-xs text-gray-700">
+                        No hay acciones disponibles para esta cuenta en el estado actual de la factura.
+                      </p>
+                    )}
+                </div>
+              )}
+
+              {actionMessage && (
+                <p role="status" className="rounded-lg bg-white p-2 text-sm text-gray-800">
+                  {actionMessage}
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -2421,8 +3868,10 @@ function PublicInvoiceScanner() {
   );
 }
 
-const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onPublish, onRegister, isLogged, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites }) => {
-  const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.featuredOnly;
+const Home = ({ t, stats, categories, category, setCategory, featured, products, loading, topBusinesses = [], filters, setFilters, onProduct, onBusiness, favorites, toggleFav, onShare, onReport, onCTA, onOpenFilters, resetFilters, query, setQuery, searchInput, setSearchInput, onSearch, onPublish, onRegister, isLogged, token, user, business, onLoginNeeded, dataSaver, hasMore, loadingMore, onLoadMore, suggestions, suggestOpen, setSuggestOpen, suggestLoading, onSuggestionClick, onFavorites, onAddToCart, usdRate }) => {
+  const [showFeaturedProducts, setShowFeaturedProducts] = React.useState(true);
+  const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
+  const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.province || filters.municipality || filters.businessName || filters.featuredOnly;
 
   // Smooth scroll helper
   const scrollToExplore = () => {
@@ -2473,15 +3922,6 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(255,255,255,0.15),transparent_50%)]" />
         <div className="relative container mx-auto px-4 pt-6 pb-10 md:pt-8 md:pb-12 text-white">
           <div className="max-w-3xl mx-auto text-center">
-            {/* Compact brand bar */}
-            <div className="mx-auto mb-4 inline-flex items-center justify-center rounded-2xl bg-black/85 backdrop-blur-sm px-4 py-2 shadow-xl ring-1 ring-white/15">
-              <LogoSVG size={40} />
-              <div className="ml-2 text-left">
-                <div className="text-base md:text-lg font-extrabold tracking-tight brand-text-gradient leading-none">UBIK2 YEMG</div>
-                <div className="text-[9px] text-white/70 tracking-widest uppercase mt-0.5">Todo en un solo lugar</div>
-              </div>
-            </div>
-
             <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight leading-tight drop-shadow">
               {t.slogan}
             </h1>
@@ -2493,18 +3933,19 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
                 <SearchBar
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
-                  onSubmit={(e) => { setQuery(searchInput.trim()); }}
+                  onSubmit={onSearch}
                   placeholder={t.searchPlaceholder}
                   suggestions={suggestions}
                   open={suggestOpen}
                   setOpen={setSuggestOpen}
                   loading={suggestLoading}
                   onPick={onSuggestionClick}
+                  usdRate={usdRate}
                 />
               </div>
             </div>
 
-            <PublicInvoiceScanner />
+            <PublicInvoiceScanner token={token} user={user} business={business} onLoginNeeded={onLoginNeeded} />
 
             {/* CTA buttons compact */}
             <div className="mt-3 flex gap-2 justify-center max-w-xl mx-auto">
@@ -2537,30 +3978,8 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
         </div>
       </section>
 
-      {/* QUICK NAV — visible always for fast access */}
-      <section className="container mx-auto px-4 -mt-6 relative z-20">
-        <div className="bg-card border border-border rounded-2xl shadow-xl p-3 md:p-4">
-          <div
-            className="flex md:grid md:grid-cols-7 gap-2 overflow-x-auto scroll-smooth"
-            style={{ scrollbarWidth: 'thin' }}
-          >
-            {navActions.map((a) => (
-              <button
-                key={a.id}
-                onClick={a.onClick}
-                className="flex flex-col items-center justify-center gap-1 min-w-[80px] md:min-w-0 px-3 py-2.5 rounded-xl border border-border bg-card hover:bg-[#1565C0]/5 hover:border-[#1565C0]/40 transition shrink-0"
-              >
-                <span className="text-2xl leading-none">{a.icon}</span>
-                <span className="text-[11px] font-semibold text-foreground whitespace-nowrap">{a.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* CATEGORIES - compact horizontal strip (mobile-first) */}
-      {!hasFiltersOrQuery && (
-        <section id="categories-section" className="container mx-auto px-4 mt-6 relative z-10">
+      {/* CATEGORIES - keep available while searching or filtering */}
+      <section id="categories-section" className="container mx-auto px-4 mt-6 relative z-10">
           <div className="flex items-center justify-between mb-2">
             <h2 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{t.categories}</h2>
             {category && (
@@ -2573,7 +3992,13 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
             {categories.map((c) => (
               <button
                 key={c.id}
-                onClick={() => setCategory(category === c.id ? '' : c.id)}
+                onClick={() => {
+                  setCategory(category === c.id ? '' : c.id);
+                  setQuery('');
+                  setSearchInput('');
+                  setSuggestOpen(false);
+                  setFilters({ ...filters, subcategory: '' });
+                }}
                 className={`shrink-0 flex flex-col items-center justify-center gap-1 min-w-[78px] py-2.5 px-3 rounded-2xl border-2 transition-all ${
                   category === c.id
                     ? 'border-[#1565C0] bg-[#1565C0]/10 shadow-md'
@@ -2585,23 +4010,31 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               </button>
             ))}
           </div>
-        </section>
-      )}
+      </section>
 
       {/* FEATURED PRODUCTS - PRIMARY HERO CONTENT (above everything else on home) */}
       {!hasFiltersOrQuery && featured.length > 0 && (
         <section className="container mx-auto px-4 mt-8 mb-8">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
-              <Star className="h-5 w-5 text-amber-500 fill-amber-500" /> Destacados
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+                <Star className="h-5 w-5 text-amber-500 fill-amber-500" /> Destacados
+              </h2>
+              <button type="button" onClick={() => setShowFeaturedProducts(v => !v)}
+                aria-expanded={showFeaturedProducts}
+                className="text-xs font-semibold rounded-lg border border-border px-3 py-2 hover:bg-muted">
+                {showFeaturedProducts ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
             <span className="text-xs text-muted-foreground">{featured.length}</span>
           </div>
+{showFeaturedProducts && (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
             {featured.map((p) => (
-              <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+              <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} onAddToCart={onAddToCart} usdRate={usdRate} />
             ))}
           </div>
+          )}
         </section>
       )}
 
@@ -2609,11 +4042,19 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
       {!hasFiltersOrQuery && topBusinesses.length > 0 && (
         <section className="container mx-auto px-4 mb-10">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
-              <Store className="h-5 w-5 text-[#00A86B]" /> Negocios destacados
-            </h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl md:text-2xl font-extrabold flex items-center gap-2">
+                <Store className="h-5 w-5 text-[#00A86B]" /> Negocios destacados
+              </h2>
+              <button type="button" onClick={() => setShowFeaturedBusinesses(v => !v)}
+                aria-expanded={showFeaturedBusinesses}
+                className="text-xs font-semibold rounded-lg border border-border px-3 py-2 hover:bg-muted">
+                {showFeaturedBusinesses ? 'Ocultar' : 'Mostrar'}
+              </button>
+            </div>
             <span className="text-xs text-muted-foreground">{topBusinesses.length}</span>
           </div>
+{showFeaturedBusinesses && (
           <div className="flex gap-3 overflow-x-auto pb-3 -mx-4 px-4 snap-x snap-mandatory" style={{ scrollbarWidth: 'thin' }}>
             {topBusinesses.map((b) => (
               <button
@@ -2653,6 +4094,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               </button>
             ))}
           </div>
+          )}
         </section>
       )}
 
@@ -2695,7 +4137,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
           <>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
               {products.map((p) => (
-                <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+                <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={favorites.includes(p.id)} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} onAddToCart={onAddToCart} usdRate={usdRate} />
               ))}
             </div>
             {hasMore && (
@@ -2738,7 +4180,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               { v: stats.servicesCount || 0, l: 'Servicios' },
               { v: stats.activeBusinessesCount || 0, l: 'Negocios activos' },
               { v: stats.businessesCount || 0, l: 'Negocios totales' },
-              { v: stats.usersCount || 0, l: 'Usuarios' },
+              { v: 250 + (Number(stats.usersCount) || 0), l: 'Usuarios' },
             ].map((s, i) => (
               <div key={i}>
                 <div className="text-2xl md:text-4xl font-extrabold tabular-nums">{Number(s.v).toLocaleString('es-ES')}</div>
@@ -2767,8 +4209,55 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
   );
 };
 
+// Métodos de pago disponibles según la configuración del negocio.
+const getAvailableBusinessPaymentMethods = (business) => {
+  if (!business) return [];
+
+  // La API pública entrega la lista calculada con la configuración privada completa.
+  if (Array.isArray(business.availablePaymentMethods)) {
+    return business.availablePaymentMethods.filter(
+      (method) => ['crypto', 'transfermovil', 'enzona'].includes(method)
+    );
+  }
+
+  const methods = [];
+
+  if (business.cryptoEnabled === true) methods.push('crypto');
+
+  const tmReady = business.transfermovilEnabled === true && [
+    business.transfermovilNumber,
+    business.transfermovilName,
+    business.transfermovilContactPhone,
+    business.transfermovilVerificationPhone,
+  ].every((value) => typeof value === 'string' && value.trim());
+
+  if (tmReady) methods.push('transfermovil');
+
+  const enzonaReady = business.enzonaEnabled === true && [
+    business.enzonaRecipient,
+    business.enzonaCardNumber,
+    business.enzonaPhone,
+  ].every((value) => typeof value === 'string' && value.trim());
+
+  if (enzonaReady) methods.push('enzona');
+
+  return methods;
+};
+
+const getProductPaymentMethods = (product) => {
+  const businessMethods = getAvailableBusinessPaymentMethods(product?.business);
+  const productMethods = Array.isArray(product?.allowedPaymentMethods)
+    ? product.allowedPaymentMethods
+    : businessMethods;
+
+  // Solo permitir métodos configurados y habilitados actualmente en el negocio.
+  return [...new Set(productMethods)].filter(
+    (method) => businessMethods.includes(method)
+  );
+};
+
 // ============ PRODUCT CARD ============
-const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight }) => {
+const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, onAddToCart, usdRate }) => {
   const contactsHidden = p.contactsHidden === true || p.showPublicContact === false || p.business?.contactsHidden === true;
   const { waLink, tgLink, smsLink } = contactsHidden ? {} : buildContactLinks(p);
 
@@ -2803,6 +4292,8 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
           </Badge>
         )}
         <button
+          type="button"
+          aria-label={isFav ? `Quitar ${p.name} de favoritos` : `Añadir ${p.name} a favoritos`}
           onClick={(e) => { e.stopPropagation(); onFav(); }}
           className="absolute top-2 right-2 h-8 w-8 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-md hover:scale-110 transition"
         >
@@ -2811,8 +4302,18 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
       </div>
 
       <CardContent className="p-3">
-        <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none">{formatPrice(p.price, p.currency)}</div>
+        <div className="text-xl md:text-2xl font-extrabold text-[#00A86B] leading-none"><PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
+        {['USD', 'USDT', 'USDC'].includes(String(p.currency || '').toUpperCase()) && Number(p.price) > 0 && Number(usdRate) > 0 && (
+          <div className="text-xs font-semibold text-muted-foreground mt-1">
+            {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number(p.price) * Number(usdRate))} CUP
+          </div>
+        )}
         <div className="text-sm font-medium mt-1.5 line-clamp-2 leading-tight min-h-[2.5rem]">{p.name}</div>
+        {p.business?.name && (
+          <div className="text-xs font-semibold text-[#1565C0] mt-1 truncate" title={p.business.name}>
+            {p.business.name}
+          </div>
+        )}
         <div className="flex items-center justify-between mt-1 text-[11px] text-muted-foreground">
           <span className="flex items-center gap-0.5 truncate">
             <MapPin className="h-3 w-3 flex-shrink-0" />
@@ -2822,19 +4323,30 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight })
             <Clock className="h-3 w-3" /> {timeAgo(p.createdAt)}
           </span>
         </div>
+        {getProductPaymentMethods(p).length > 0 && (
+          <button
+            type="button"
+            disabled={!(Number(p.stock) > 0)}
+            onClick={(e) => { e.stopPropagation(); onAddToCart?.(p); }}
+            className="mt-3 w-full h-9 rounded-lg bg-[#1565C0] hover:bg-[#0d4fa3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition"
+          >
+            <ShoppingBag className="h-4 w-4" />
+            {Number(p.stock) > 0 ? 'Añadir al carrito' : 'Sin stock'}
+          </button>
+        )}
         <div className="flex gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
           {waLink && (
-            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp">
+            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp" aria-label={`Contactar por WhatsApp sobre ${p.name}`}>
               <MessageCircle className="h-4 w-4" />
             </a>
           )}
           {tgLink && (
-            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center transition" title="Telegram">
+            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center transition" title="Telegram" aria-label={`Contactar por Telegram sobre ${p.name}`}>
               <Send className="h-4 w-4" />
             </a>
           )}
           {smsLink && (
-            <a href={smsLink} className="flex-1 h-8 rounded-md bg-foreground hover:opacity-90 text-background flex items-center justify-center transition" title="SMS">
+            <a href={smsLink} className="flex-1 h-8 rounded-md bg-foreground hover:opacity-90 text-background flex items-center justify-center transition" title="SMS" aria-label={`Enviar SMS sobre ${p.name}`}>
               <Phone className="h-4 w-4" />
             </a>
           )}
@@ -2860,17 +4372,17 @@ const ProductGridSkeleton = () => (
 );
 
 // ============ PRODUCT DETAIL ============
-const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded, startCryptoCheckout, onAddToCart, checkoutSubmitting }) => {
+const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, onShare, onReport, token, isLogged, onLoginNeeded, startCryptoCheckout, onAddToCart, checkoutSubmitting, usdRate }) => {
   if (!product) {
     return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   }
   const contact = buildContactLinks(product);
-  const { waLink, tgLink, smsLink, anyAvailable } = contact;
-
-  // Smart unified CTA: prefers WhatsApp, then Telegram, then SMS.
-  // Opens the first available channel directly so user doesn't have to choose if there's only one.
-  const primaryHref = waLink || tgLink || smsLink || '#';
-  const primaryLabel = waLink ? 'WhatsApp' : tgLink ? 'Telegram' : smsLink ? 'SMS' : '';
+  const { waLink, tgLink, phoneLink, smsLink, anyAvailable } = contact;
+  const contactsHidden =
+    product.contactsHidden === true ||
+    product.showPublicContact === false ||
+    product.business?.contactsHidden === true ||
+    product.business?.showContactsPublicly === false;
   const isFav = favorites.includes(product.id);
 
   return (
@@ -2890,7 +4402,14 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
             {product.stock > 0 ? <Badge className="bg-green-500 text-white">{t.inStock}</Badge> : <Badge variant="destructive">{t.outOfStock}</Badge>}
           </div>
           <h1 className="text-3xl md:text-4xl font-extrabold">{product.name}</h1>
-          <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3">{formatPrice(product.price, product.currency)}</div>
+          <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3"><PriceWithCurrencyIcon value={product.price} currency={product.currency} className="text-4xl md:text-5xl font-extrabold text-[#00A86B]" /></div>
+          {['USD', 'USDT', 'USDC'].includes(String(product.currency || '').toUpperCase()) &&
+            Number(product.price) > 0 && Number(usdRate) > 0 && (
+            <p className="mt-1 text-base font-semibold text-muted-foreground" aria-label="Precio aproximado en pesos cubanos">
+              ≈ {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 })
+                .format(Number(product.price) * Number(usdRate))} CUP
+            </p>
+          )}
 
           <div className="flex flex-wrap items-center gap-4 mt-3 text-sm text-muted-foreground">
             {product.location && <span className="flex items-center gap-1"><MapPin className="h-4 w-4" /> {product.location}</span>}
@@ -2914,9 +4433,8 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 
           {/* Contact section */}
           <div className="mt-6 p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
-            {/* Privacy mode: product or business hides digital contacts → show physical info */}
-            {(product.contactsHidden || product.business?.contactsHidden) ? (() => {
-              // Effective physical info: product-level fields override business-level
+            {/* Mostrar solo los canales configurados y respetar la privacidad. */}
+            {contactsHidden ? (() => {
               const province = product.province || product.business?.province;
               const municipality = product.municipality || product.business?.municipality;
               const address = product.address || product.business?.address;
@@ -2935,10 +4453,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   {(address || locLine) && (
                     <div className="text-sm text-muted-foreground flex items-start gap-2">
                       <MapPin className="h-4 w-4 mt-0.5 flex-shrink-0 text-[#00A86B]" />
-                      <span>
-                        {address && <>{address}<br /></>}
-                        {locLine}
-                      </span>
+                      <span>{address && <>{address}<br /></>}{locLine}</span>
                     </div>
                   )}
                   {(opening || closing) && (
@@ -2949,71 +4464,82 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                   )}
                 </div>
               );
-            })() : anyAvailable ? (
-              <>
-                {/* Primary CTA — Web3-style */}
-                <a
-                  href={primaryHref}
-                  target={primaryHref.startsWith('sms:') ? undefined : '_blank'}
-                  rel="noopener noreferrer"
-                  className="block w-full h-14 rounded-xl brand-gradient text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
-                  aria-label="Contactar vendedor"
-                >
-                  <MessageCircle className="h-5 w-5" />
-                  Contactar vendedor
-                  <span className="text-xs opacity-80 ml-1">· {primaryLabel}</span>
-                </a>
-
-                {product.stock && product.stock > 0 && (
-                  <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-3 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
-                    <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
-                  </Button>
+            })() : (
+              <div className="space-y-3">
+                <div className="font-semibold text-base">Contactar vendedor</div>
+                {anyAvailable ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {waLink && (
+                      <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <MessageCircle className="h-5 w-5" /> WhatsApp
+                      </a>
+                    )}
+                    {tgLink && (
+                      <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-12 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <Send className="h-5 w-5" /> Telegram
+                      </a>
+                    )}
+                    {phoneLink && (
+                      <a href={phoneLink} className="h-12 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <Phone className="h-5 w-5" /> Llamar
+                      </a>
+                    )}
+                    {smsLink && (
+                      <a href={smsLink} className="h-12 rounded-xl border border-border hover:bg-muted font-semibold flex items-center justify-center gap-2 transition shadow-sm">
+                        <MessageCircle className="h-5 w-5" /> SMS
+                      </a>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Este vendedor no configuró canales de contacto.
+                  </div>
                 )}
-
-                {/* Crypto Buy Button */}
-                {product.stock && product.stock > 0 && (
-                  <Button
-                    onClick={() => startCryptoCheckout(product)}
-                    disabled={checkoutSubmitting}
-                    className="w-full h-14 rounded-xl mt-3 bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 active:shadow-md text-base"
-                    aria-label="Comprar con criptomonedas"
-                  >
-                    {checkoutSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CreditCard className="h-5 w-5" />}
-                    Comprar con Crypto
-                    <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
-                  </Button>
-                )}
-
-                {/* Secondary channels — only shown if there are 2+ channels */}
-                {((!!waLink + !!tgLink + !!smsLink) > 1) && (
-                  <>
-                    <div className="text-[10px] text-muted-foreground uppercase tracking-wider mt-4 mb-2 text-center font-semibold">
-                      O elige otro canal
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                      {waLink && (
-                        <a href={waLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-green-500 hover:bg-green-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <MessageCircle className="h-4 w-4" /> {t.whatsapp}
-                        </a>
-                      )}
-                      {tgLink && (
-                        <a href={tgLink} target="_blank" rel="noopener noreferrer" className="h-11 rounded-xl bg-sky-500 hover:bg-sky-600 text-white font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <Send className="h-4 w-4" /> {t.telegram}
-                        </a>
-                      )}
-                      {smsLink && (
-                        <a href={smsLink} className="h-11 rounded-xl bg-foreground text-background hover:opacity-90 font-semibold flex items-center justify-center gap-2 transition shadow-sm hover:shadow-md">
-                          <Phone className="h-4 w-4" /> {t.sms}
-                        </a>
-                      )}
-                    </div>
-                  </>
-                )}
-              </>
-            ) : (
-              <div className="text-center py-3 text-sm text-muted-foreground">
-                Este vendedor no configuró canales de contacto.
               </div>
+            )}
+
+            {/* Las opciones de compra no dependen de los canales de contacto. */}
+            {product.stock > 0 && getProductPaymentMethods(product).length > 0 && (
+              <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-4 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
+                <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
+              </Button>
+            )}
+
+            {product.stock > 0 && getProductPaymentMethods(product).includes('crypto') && (
+              <Button
+                onClick={() => startCryptoCheckout(product)}
+                disabled={checkoutSubmitting}
+                className="w-full h-14 rounded-xl mt-3 bg-amber-500 hover:bg-amber-600 text-white font-bold flex items-center justify-center gap-2 transition-all shadow-lg"
+                aria-label="Comprar con criptomonedas"
+              >
+                {checkoutSubmitting ? <Loader2 className="h-5 w-5 animate-spin" /> : <CreditCard className="h-5 w-5" />}
+                Comprar con Crypto
+                <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
+              </Button>
+            )}
+            {product.stock > 0 && getProductPaymentMethods(product).includes('transfermovil') && (
+              <Button
+                onClick={() => startCryptoCheckout(product, 'transfermovil')}
+                disabled={checkoutSubmitting}
+                variant="outline"
+                className="w-full h-14 rounded-xl mt-3 border-2 border-[#00A86B] text-[#008653] hover:bg-[#00A86B]/10 font-bold flex items-center justify-center gap-2"
+                aria-label="Pagar con Transfermóvil"
+              >
+                <CreditCard className="h-5 w-5" />
+                Pagar con Transfermóvil
+              </Button>
+            )}
+            {product.stock > 0 && getProductPaymentMethods(product).includes('enzona') && (
+              <Button
+                onClick={() => startCryptoCheckout(product, 'enzona')}
+                disabled={checkoutSubmitting}
+                variant="outline"
+                className="w-full h-14 rounded-xl mt-3 border-2 border-sky-500 text-sky-700 hover:bg-sky-500/10 font-bold flex items-center justify-center gap-2"
+                aria-label="Pagar con EnZona"
+              >
+                <CreditCard className="h-5 w-5" />
+                Pagar con EnZona
+              </Button>
             )}
           </div>
 
@@ -3059,7 +4585,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
 };
 
 // ============ BUSINESS DETAIL ============
-const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, token, isLogged, onLoginNeeded, onShareBusiness, onShareProduct, onReport }) => {
+const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, token, isLogged, onLoginNeeded, onShareBusiness, onShareProduct, onReport, onAddToCart, usdRate }) => {
   if (!data) return <div className="container mx-auto py-32 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#1565C0]" /></div>;
   const { business, products } = data;
   const wa = (business.whatsapp || '').replace(/[^0-9+]/g, '').replace('+', '');
@@ -3131,6 +4657,7 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, toke
               onFav={() => toggleFav(p.id)}
               onShare={() => onShareProduct?.({ ...p, business })}
               onReport={() => onReport?.(p.id, business.id)}
+              onAddToCart={onAddToCart} usdRate={usdRate}
             />
           ))}
         </div>
@@ -3143,7 +4670,7 @@ const BusinessDetail = ({ t, data, onBack, onProduct, favorites, toggleFav, toke
 };
 
 // ============ FAVORITES ============
-const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport }) => {
+const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport, onAddToCart, usdRate }) => {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -3165,7 +4692,7 @@ const FavoritesView = ({ t, favorites, onProduct, toggleFav, onShare, onReport }
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
           {items.map((p) => (
-            <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={true} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} />
+            <ProductCard key={p.id} p={p} onClick={() => onProduct(p.id)} isFav={true} onFav={() => toggleFav(p.id)} onShare={() => onShare(p)} onReport={() => onReport(p.id, null)} onAddToCart={onAddToCart} usdRate={usdRate} />
           ))}
         </div>
       )}
@@ -3288,25 +4815,120 @@ const Reviews = ({ productId, businessId, token, isLogged, onLoginNeeded }) => {
 };
 
 // ============ SHOPPING CART ============
-const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting }) => {
+const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submitting, t, lang, usdRate }) => {
+  const currencyOf = (product) => String(product?.currency || 'CUP').toUpperCase();
+  const currencies = [...new Set(items.map(({ product }) => currencyOf(product)))];
+  const mixedCurrencies = currencies.length > 1;
+  const availableCartPaymentMethods = ['crypto', 'transfermovil', 'enzona'].filter(
+    (method) => items.length > 0 &&
+      items.every(({ product }) => getProductPaymentMethods(product).includes(method))
+  );
   const total = items.reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
+  const locale = lang === 'en' ? 'en-US' : lang === 'it' ? 'it-IT' : lang === 'ru' ? 'ru-RU' : 'es-ES';
+  const money = (value) => Number(value).toLocaleString(locale, { maximumFractionDigits: 2 });
+  const approximateCup = (product) => {
+    const currency = currencyOf(product);
+    const price = Number(product?.price);
+    const rate = Number(usdRate);
+    if (!['USD', 'USDT', 'USDC'].includes(currency) || !(price > 0) || !(rate > 0)) return null;
+    return price * rate;
+  };
+
   return (
     <section className="container mx-auto px-4 py-8 max-w-4xl">
-      <div className="flex items-center justify-between gap-3 mb-6"><div><h1 className="text-3xl font-extrabold">Mi carrito</h1><p className="text-muted-foreground">Revisa tus productos antes de pagar.</p></div><Button variant="outline" onClick={onBack}>Seguir comprando</Button></div>
-      {!items.length ? <Card><CardContent className="p-10 text-center"><ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/><h2 className="text-xl font-bold mb-2">Tu carrito está vacío</h2><p className="text-muted-foreground mb-4">Abre un producto y pulsa «Añadir al carrito».</p><Button onClick={onBack}>Ver productos</Button></CardContent></Card> : <>
-        <div className="space-y-3">{items.map(({ product, quantity }) => <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
-          {product.image ? <img src={product.image} alt={product.name || 'Producto'} className="w-20 h-20 rounded-lg object-cover bg-muted"/> : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
-          <div className="flex-1 min-w-0"><div className="font-bold truncate">{product.name || 'Producto'}</div><div className="text-sm text-muted-foreground">{product.price} {product.currency || 'CUP'} c/u</div><div className="flex items-center gap-2 mt-2"><Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button><span>{quantity}</span><Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>Quitar</Button></div></div>
-          <div className="font-bold whitespace-nowrap">{((Number(product.price) || 0) * quantity).toLocaleString('es-ES')} {product.currency || 'CUP'}</div>
-        </CardContent></Card>)}</div>
-        <Card className="mt-5"><CardContent className="p-5 flex flex-col sm:flex-row items-center justify-between gap-4"><div><div className="text-sm text-muted-foreground">Subtotal estimado</div><div className="text-2xl font-extrabold">{total.toLocaleString('es-ES')} CUP</div><p className="text-xs text-muted-foreground mt-1">El servidor calcula el importe definitivo al crear el pedido.</p></div><Button size="lg" disabled={submitting} onClick={() => onCheckout(items)} className="brand-gradient text-white font-bold">{submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}Pagar carrito con crypto</Button></CardContent></Card>
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <div>
+          <h1 className="text-3xl font-extrabold">{t.cartTitle}</h1>
+          <p className="text-muted-foreground">{t.cartSubtitle}</p>
+        </div>
+        <Button variant="outline" onClick={onBack}>{t.continueShopping}</Button>
+      </div>
+      {!items.length ? (
+        <Card><CardContent className="p-10 text-center">
+          <ShoppingBag className="h-12 w-12 mx-auto mb-3 text-muted-foreground"/>
+          <h2 className="text-xl font-bold mb-2">{t.emptyCart}</h2>
+          <p className="text-muted-foreground mb-4">{t.emptyCartDesc}</p>
+          <Button onClick={onBack}>{t.viewProducts}</Button>
+        </CardContent></Card>
+      ) : <>
+        <div className="space-y-3">
+          {items.map(({ product, quantity }) => {
+            const currency = currencyOf(product);
+            const cup = approximateCup(product);
+            return (
+              <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
+                {product.image
+                  ? <img src={product.image} alt={product.name || t.productFallback} className="w-20 h-20 rounded-lg object-cover bg-muted"/>
+                  : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold truncate">{product.name || t.productFallback}</div>
+                  <div className="text-sm text-muted-foreground">{money(product.price)} {currency} c/u</div>
+                  {cup !== null && <div className="text-xs text-muted-foreground">Equivalente: {money(cup)} CUP c/u</div>}
+                  <div className="flex items-center gap-2 mt-2">
+                    <Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button>
+                    <span>{quantity}</span>
+                    <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button>
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button>
+                  </div>
+                </div>
+                <div className="text-right font-bold whitespace-nowrap">
+                  <div>{money((Number(product.price) || 0) * quantity)} {currency}</div>
+                  {cup !== null && <div className="text-xs text-muted-foreground font-normal">{money(cup * quantity)} CUP</div>}
+                </div>
+              </CardContent></Card>
+            );
+          })}
+        </div>
+        <Card className="mt-5"><CardContent className="p-5 flex flex-col gap-4">
+          <div>
+            <div className="text-sm text-muted-foreground">{t.estimatedSubtotal}</div>
+            {mixedCurrencies ? (
+              <>
+                <div className="text-sm font-semibold text-amber-700">El carrito contiene monedas diferentes.</div>
+                {currencies.map((currency) => {
+                  const subtotal = items.filter(({ product }) => currencyOf(product) === currency)
+                    .reduce((sum, item) => sum + (Number(item.product?.price) || 0) * item.quantity, 0);
+                  return <div key={currency} className="text-xl font-extrabold">{money(subtotal)} {currency}</div>;
+                })}
+                <p className="text-xs text-muted-foreground mt-1">Para continuar, deja productos de una sola moneda en el carrito.</p>
+              </>
+            ) : (
+              <>
+                <div className="text-2xl font-extrabold">{money(total)} {currencies[0] || 'CUP'}</div>
+                {currencies[0] && ['USD', 'USDT', 'USDC'].includes(currencies[0]) && Number(usdRate) > 0 &&
+                  <div className="text-sm text-muted-foreground">Equivalente según la tasa configurada: {money(total * Number(usdRate))} CUP</div>}
+                <p className="text-xs text-muted-foreground mt-1">{t.serverCalculatesTotal}</p>
+              </>
+            )}
+          </div>
+          <div className="flex w-full flex-col gap-3">
+            {availableCartPaymentMethods.includes('crypto') && (
+            <Button size="lg" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'crypto')} className="brand-gradient text-white font-bold">
+              {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}
+              {t.payCartCrypto}
+            </Button>
+            )}
+            {availableCartPaymentMethods.includes('transfermovil') && (
+            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'transfermovil')} className="border-2 border-[#00A86B] text-[#008653] font-bold">
+              <CreditCard className="h-4 w-4 mr-2"/>
+              Pagar con Transfermóvil
+            </Button>
+            )}
+            {availableCartPaymentMethods.includes('enzona') && (
+            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'enzona')} className="border-2 border-[#2563EB] text-[#1D4ED8] font-bold">
+              <CreditCard className="h-4 w-4 mr-2"/>
+              Pagar con EnZona
+            </Button>
+            )}
+          </div>
+        </CardContent></Card>
       </>}
     </section>
   );
 };
 
 // ============ BUYER DASHBOARD ============
-const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount }) => {
+const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller, onFavorites, favoritesCount, t, lang = 'es', getOrderStatusLabel }) => {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState('');
@@ -3319,6 +4941,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
   const [invoiceSubmitMessages, setInvoiceSubmitMessages] = useState({});
   const [receiptConfirmLoading, setReceiptConfirmLoading] = useState({});
   const [receiptConfirmMessages, setReceiptConfirmMessages] = useState({});
+  const [referenceDrafts, setReferenceDrafts] = useState({});
+  const [referenceEditing, setReferenceEditing] = useState({});
+  const [referenceSubmitting, setReferenceSubmitting] = useState({});
+  const [referenceMessages, setReferenceMessages] = useState({});
 
 
   useEffect(() => {
@@ -3342,7 +4968,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       })
       .catch((error) => {
         if (!cancelled) {
-          setOrdersError(error?.message || 'No se pudieron cargar tus pedidos.');
+          setOrdersError(error?.message || t.ordersLoadError);
         }
       })
       .finally(() => {
@@ -3351,6 +4977,79 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 
     return () => { cancelled = true; };
   }, [token]);
+
+  const submitOrderPaymentReference = async (order, event) => {
+    event.preventDefault();
+
+    const orderId = order?.id;
+    const reference = String(
+      referenceDrafts[orderId] ?? order?.buyerTransactionReference ?? ''
+    ).trim();
+
+    if (!orderId) {
+      toast.error('No se pudo identificar el pedido.');
+      return;
+    }
+
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(reference)) {
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: 'Introduce una referencia de 4 a 100 letras, números, guiones o guiones bajos.'
+      }));
+      return;
+    }
+
+    if (!token) {
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: 'Inicia sesión para registrar la referencia.'
+      }));
+      return;
+    }
+
+    setReferenceSubmitting((prev) => ({ ...prev, [orderId]: true }));
+    setReferenceMessages((prev) => ({ ...prev, [orderId]: '' }));
+
+    try {
+      const result = await api(
+        `/orders/${encodeURIComponent(orderId)}/submit-payment-reference`,
+        {
+          method: 'POST',
+          body: { transactionReference: reference },
+          token,
+        }
+      );
+
+      const isPaid = ['paid', 'auto_approved'].includes(result.status);
+
+      setOrders((prev) => prev.map((item) =>
+        item.id === orderId
+          ? {
+              ...item,
+              buyerTransactionReference: reference,
+              ...(isPaid ? { paymentStatus: 'paid', status: 'paid' } : {}),
+            }
+          : item
+      ));
+
+      setReferenceDrafts((prev) => ({ ...prev, [orderId]: reference }));
+      setReferenceEditing((prev) => ({ ...prev, [orderId]: false }));
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: result.message ||
+          (isPaid
+            ? 'Pago confirmado.'
+            : 'Referencia guardada. El pago sigue pendiente de verificación.')
+      }));
+    } catch (error) {
+      setReferenceMessages((prev) => ({
+        ...prev,
+        [orderId]: error?.message || 'No se pudo guardar la referencia.'
+      }));
+    } finally {
+      setReferenceSubmitting((prev) => ({ ...prev, [orderId]: false }));
+    }
+  };
 
   const loadInvoice = async (order) => {
     if (openInvoiceId === order.id) {
@@ -3370,7 +5069,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     } catch (error) {
       setInvoiceErrors((prev) => ({
         ...prev,
-        [order.id]: error?.message || 'No se pudo cargar la factura.',
+        [order.id]: error?.message || t.invoiceLoadError,
       }));
     } finally {
       setInvoiceLoading((prev) => ({ ...prev, [order.id]: false }));
@@ -3386,7 +5085,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       );
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'No se pudo descargar la factura.');
+        throw new Error(data.error || t.invoiceLoadError);
       }
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(blob);
@@ -3398,13 +5097,13 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       link.remove();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
     } catch (error) {
-      toast.error(error?.message || 'No se pudo descargar la factura.');
+      toast.error(error?.message || t.invoiceLoadError);
     }
   };
 
   const downloadInvoiceQR = async (order) => {
     if (!order?.publicInvoiceId) {
-      toast.error('La factura todavía no tiene identificador.');
+      toast.error(t.invoiceIdMissing);
       return;
     }
     try {
@@ -3412,7 +5111,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
         `${API}/public/invoices/${encodeURIComponent(order.publicInvoiceId)}/qr.png`,
         { cache: 'no-store' }
       );
-      if (!response.ok) throw new Error('No se pudo descargar el QR.');
+      if (!response.ok) throw new Error(t.qrDownloadError);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -3431,7 +5130,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     if (!order?.publicInvoiceId) {
       setReceiptConfirmMessages((prev) => ({
         ...prev,
-        [order.id]: 'Esta factura todavía no tiene identificador válido.'
+        [order.id]: t.invalidInvoiceId
       }));
       return;
     }
@@ -3462,7 +5161,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     } catch (error) {
       setReceiptConfirmMessages((prev) => ({
         ...prev,
-        [order.id]: error?.message || 'No se pudo confirmar la recepción.'
+        [order.id]: error?.message || t.receiptError
       }));
     } finally {
       setReceiptConfirmLoading((prev) => ({ ...prev, [order.id]: false }));
@@ -3505,12 +5204,12 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 
       setInvoiceSubmitMessages((prev) => ({
         ...prev,
-        [order.id]: result.message || 'Hash enviado. Pago pendiente de verificación.',
+        [order.id]: result.message || t.hashSent,
       }));
     } catch (error) {
       setInvoiceSubmitMessages((prev) => ({
         ...prev,
-        [order.id]: error?.message || 'No se pudo enviar el hash.',
+        [order.id]: error?.message || t.hashError,
       }));
     } finally {
       setInvoiceSubmitLoading((prev) => ({
@@ -3547,20 +5246,32 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
         <h1 className="text-3xl font-extrabold">
           Hola, {user.name || user.email?.split('@')[0] || 'comprador'} 👋
         </h1>
-        <p className="text-muted-foreground">Tu cuenta personal de UBIK2 YEMG</p>
+        <p className="text-muted-foreground">{t.accountSubtitle}</p>
       </div>
 
       {showBecomeSeller && (
         <Card className="overflow-hidden border-0 shadow-xl mb-6 brand-gradient text-white">
           <CardContent className="p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-4">
-            <div><Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge><h2 className="text-2xl md:text-3xl font-extrabold">¿Tienes algo para vender?</h2><p className="text-white/90 mt-1 max-w-lg">Conviértete en vendedor gratis y publica hasta 10 productos.</p></div>
+            <div><Badge className="bg-white/20 text-white border-0 mb-2">Plan PRO</Badge><h2 className="text-2xl md:text-3xl font-extrabold">{t.becomeSellerTitle}</h2><p className="text-white/90 mt-1 max-w-lg">{t.becomeSellerDesc}</p></div>
             <Button size="lg" onClick={onBecomeSeller} className="bg-white text-[#1565C0] hover:bg-white/90 font-bold h-12 px-6"><Store className="h-5 w-5 mr-2" /> Hazte vendedor</Button>
           </CardContent>
         </Card>
       )}
 
       <div className="grid md:grid-cols-3 gap-4">
-        <Card className="hover-lift cursor-pointer" onClick={onFavorites}>
+        <Card
+    role="button"
+    tabIndex={0}
+    aria-label={`Ver ${favoritesCount} productos guardados`}
+    onClick={onFavorites}
+    onKeyDown={(event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onFavorites?.();
+      }
+    }}
+    className="hover-lift cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A86B] focus-visible:ring-offset-2"
+  >
           <CardContent className="p-6">
             <Heart className="h-8 w-8 text-red-500 mb-2" />
             <div className="text-2xl font-bold">{favoritesCount}</div>
@@ -3571,7 +5282,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
           <CardContent className="p-6">
             <Mail className="h-8 w-8 text-[#1565C0] mb-2" />
             <div className="text-sm font-semibold break-all">{user.email}</div>
-            <div className="text-xs text-muted-foreground">Email de tu cuenta</div>
+            <div className="text-xs text-muted-foreground">{t.accountEmail}</div>
           </CardContent>
         </Card>
         <Card>
@@ -3583,11 +5294,39 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
         </Card>
       </div>
 
+      <Card
+        role="button"
+        tabIndex={0}
+        aria-label="Solicitar ser transportista"
+        onClick={() => { window.location.href = '/transportista'; }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            window.location.href = '/transportista';
+          }
+        }}
+        className="mt-6 cursor-pointer border-[#00A86B]/30 hover:border-[#00A86B] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00A86B]"
+      >
+        <CardContent className="p-5 flex items-center gap-4">
+          <div className="rounded-full bg-[#00A86B]/10 p-3">
+            <MapPin className="h-7 w-7 text-[#00A86B]" />
+          </div>
+          <div className="flex-1">
+            <h2 className="font-bold text-lg">¿Quieres ser transportista?</h2>
+            <p className="text-sm text-muted-foreground">
+              Solicita tu incorporación para ofrecer servicios de transporte en UBIK2YEMG.
+            </p>
+          </div>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </CardContent>
+      </Card>
+
       <div className="mt-8">
-        <h2 className="text-2xl font-bold mb-4">Mis pedidos y facturas</h2>
+        <h2 className="text-xl sm:text-2xl font-bold tracking-tight mb-2">{t.myOrdersInvoices}</h2>
+        <p className="text-sm text-muted-foreground mb-4">Consulta el estado de tus pedidos, pagos y facturas.</p>
 
         {ordersLoading && (
-          <Card><CardContent className="p-6">Cargando tus pedidos…</CardContent></Card>
+          <Card><CardContent className="p-6">{t.loadingOrders}</CardContent></Card>
         )}
 
         {!ordersLoading && ordersError && (
@@ -3601,63 +5340,235 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
         {!ordersLoading && !ordersError && orders.length === 0 && (
           <Card>
             <CardContent className="p-6 text-muted-foreground">
-              Todavía no tienes pedidos asociados a esta cuenta.
+              {t.noOrders}
             </CardContent>
           </Card>
         )}
 
         <div className="space-y-4">
           {orders.map((order) => (
-            <Card key={order.id || order._id}>
-              <CardContent className="p-5 space-y-3">
+            <Card key={order.id || order._id} className="border-border/80 shadow-sm transition-shadow duration-200 hover:shadow-md">
+              <CardContent className="p-4 sm:p-5 space-y-4">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                   <div>
-                    <h3 className="font-bold break-all">
-                      Pedido {order.id || order._id}
+                    <h3 className="text-base sm:text-lg font-bold tracking-tight break-all">
+                      Pedido {order.ubikCode || 'Código pendiente'}
                     </h3>
-                    <p className="text-sm text-muted-foreground">
-                      Fecha: {formatDate(order.createdAt)}
+                    <p className="mt-1 text-xs text-muted-foreground break-all">
+                      Referencia técnica: {order.publicInvoiceId || order.id || order._id}
                     </p>
-                    <p className="text-sm">
-                      Estado del pedido: <strong>{order.status || order.shippingStatus || 'Pendiente'}</strong>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {t.orderDate}: {formatDate(order.createdAt)}
                     </p>
-                    <p className="text-sm">
-                      Estado del pago: <strong>{order.paymentStatus || 'Pendiente'}</strong>
-                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-950 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-100">
+                        <span className="font-medium">{t.orderStatus}:</span>
+                        <strong className="break-words">{getOrderStatusLabel(order.status || order.shippingStatus || 'pending_payment')}</strong>
+                      </div>
+                      <div className="inline-flex max-w-full flex-wrap items-center gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-950 dark:border-green-900 dark:bg-green-950/40 dark:text-green-100">
+                        <span className="font-medium">Estado del pago:</span>
+                        <strong className="break-words">{getOrderStatusLabel(order.paymentStatus || 'pending_payment')}</strong>
+                      </div>
+                    </div>
+
+                    {['transfermovil', 'enzona'].includes(order.paymentMethod) &&
+                     order.paymentStatus === 'pending_payment' && (
+                      <div className="mt-4 rounded-xl border border-blue-200/80 bg-blue-50/50 p-4 space-y-4 dark:border-blue-900 dark:bg-blue-950/20">
+                        <h4 className="text-base font-bold tracking-tight">Referencia de transferencia</h4>
+
+                        {order.buyerTransactionReference && !referenceEditing[order.id] ? (
+                          <div className="space-y-3">
+                            <p className="text-sm font-medium text-muted-foreground">Referencia registrada:</p>
+                            <p className="rounded-lg border bg-background px-3 py-3 font-mono text-base font-semibold break-all">
+                              {order.buyerTransactionReference}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="min-h-11 w-full whitespace-normal text-sm sm:w-auto"
+                              disabled={!!referenceSubmitting[order.id]}
+                              onClick={() => {
+                                setReferenceDrafts((prev) => ({
+                                  ...prev,
+                                  [order.id]: order.buyerTransactionReference || ''
+                                }));
+                                setReferenceEditing((prev) => ({
+                                  ...prev,
+                                  [order.id]: true
+                                }));
+                                setReferenceMessages((prev) => ({
+                                  ...prev,
+                                  [order.id]: ''
+                                }));
+                              }}
+                            >
+                              ✏️ Corregir número de transacción
+                            </Button>
+                          </div>
+                        ) : (
+                          <form
+                            onSubmit={(event) => submitOrderPaymentReference(order, event)}
+                            className="space-y-4"
+                          >
+                            <label
+                              htmlFor={`order-reference-${order.id}`}
+                              className="block text-sm font-semibold leading-6"
+                            >
+                              {order.buyerTransactionReference
+                                ? 'Introduce la referencia correcta'
+                                : 'Introduce la referencia real de la transferencia'}
+                            </label>
+                            <Input
+                              id={`order-reference-${order.id}`}
+                              value={
+                                referenceDrafts[order.id] ??
+                                order.buyerTransactionReference ??
+                                ''
+                              }
+                              onChange={(event) => setReferenceDrafts((prev) => ({
+                                ...prev,
+                                [order.id]: event.target.value
+                              }))}
+                              maxLength={100}
+                              autoComplete="off"
+                              spellCheck={false}
+                              placeholder="Número de transacción del comprobante"
+                              className="min-h-12 bg-background text-base"
+                              disabled={!!referenceSubmitting[order.id]}
+                              required
+                            />
+                            <p className="rounded-lg bg-muted/60 p-3 text-sm leading-6 text-muted-foreground">
+                              No introduzcas el número del pedido. El pago solo se confirmará si el sistema verifica una coincidencia válida.
+                            </p>
+                            <Button
+                              type="submit"
+                              className="min-h-11 w-full whitespace-normal font-semibold sm:w-auto"
+                              disabled={
+                                !!referenceSubmitting[order.id] ||
+                                !String(
+                                  referenceDrafts[order.id] ??
+                                  order.buyerTransactionReference ??
+                                  ''
+                                ).trim()
+                              }
+                            >
+                              {referenceSubmitting[order.id]
+                                ? 'Comprobando…'
+                                : order.buyerTransactionReference
+                                  ? 'Guardar corrección'
+                                  : 'Registrar referencia'}
+                            </Button>
+                            {order.buyerTransactionReference && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="min-h-11 w-full sm:w-auto"
+                                disabled={!!referenceSubmitting[order.id]}
+                                onClick={() => {
+                                  setReferenceDrafts((prev) => ({
+                                    ...prev,
+                                    [order.id]: order.buyerTransactionReference || ''
+                                  }));
+                                  setReferenceEditing((prev) => ({
+                                    ...prev,
+                                    [order.id]: false
+                                  }));
+                                  setReferenceMessages((prev) => ({
+                                    ...prev,
+                                    [order.id]: ''
+                                  }));
+                                }}
+                              >
+                                Cancelar
+                              </Button>
+                            )}
+                          </form>
+                        )}
+
+                        {referenceMessages[order.id] && (
+                          <p className="rounded-lg border bg-background p-3 text-sm leading-6 break-words" role="status">
+                            {referenceMessages[order.id]}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <div className="md:text-right">
-                    <div className="text-xl font-bold">
+                  <div className="rounded-xl border bg-muted/30 p-4 md:min-w-52 md:text-right">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Total del pedido
+                    </p>
+                    <div className="mt-1 text-2xl font-bold tracking-tight">
                       {formatMoney(order.total, order.currency || 'USD')}
                     </div>
+                    {['transfermovil', 'enzona'].includes(
+                      String(order.paymentMethod || '').toLowerCase()
+                    ) && (() => {
+                      const savedAmount = Number(order.localPaymentAmountCUP);
+                      const currency = String(order.currency || 'CUP').toUpperCase();
+                      const localAmount =
+                        Number.isFinite(savedAmount) && savedAmount > 0
+                          ? savedAmount
+                          : currency === 'CUP' &&
+                            Number.isFinite(Number(order.total)) &&
+                            Number(order.total) > 0
+                            ? Number(order.total)
+                            : null;
+
+                      return localAmount != null ? (
+                        <div className="mt-3 rounded-lg border border-green-200 bg-green-50 p-3 text-left dark:border-green-900 dark:bg-green-950/40">
+                          <p className="text-xs font-semibold text-green-800 dark:text-green-300">
+                            Importe a transferir en CUP
+                          </p>
+                          <p className="mt-1 text-lg font-bold text-green-900 dark:text-green-100">
+                            {formatMoney(localAmount, 'CUP')}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="mt-1 text-sm font-semibold text-red-600">
+                          Importe CUP no disponible. Confirma el importe con soporte antes de pagar.
+                        </div>
+                      );
+                    })()}
                     <div className="text-sm text-muted-foreground">
                       {order.businessName || 'Comercio'}
                     </div>
                   </div>
                 </div>
 
-                <div>
-                  <h4 className="font-semibold mb-2">Productos</h4>
+                <div className="rounded-xl border border-border/80 p-3 sm:p-4">
+                  <h4 className="mb-3 text-sm font-bold uppercase tracking-wide text-muted-foreground">
+                    Productos del pedido
+                  </h4>
                   {Array.isArray(order.items) && order.items.length > 0 ? (
-                    <ul className="list-disc pl-5 space-y-1">
-                      {order.items.map((item, index) => (
-                        <li key={item.productId || item.id || index} className="text-sm">
-                          {item.name || item.title || 'Producto'}
-                          {' · Cantidad: '}{item.quantity ?? 1}
-                          {' · '}{formatMoney(
-                            item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 1)),
-                            item.currency || order.currency || 'USD'
-                          )}
+                    <ul className="space-y-2">
+                      {(Array.isArray(order.items) ? order.items.filter(Boolean) : []).map((item, index) => (
+                        <li
+                          key={item.productId || item.id || index}
+                          className="flex flex-col gap-1 rounded-lg bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                        >
+                          <span className="text-sm font-medium break-words">
+                            {item.productName || item.name || item.title || 'Producto'}
+                          </span>
+                          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+                            <span>Cantidad: {item.quantity ?? 1}</span>
+                            <strong className="text-base text-foreground">
+                              {formatMoney(
+                                item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 1)),
+                                item.currency || order.currency || 'USD'
+                              )}
+                            </strong>
+                          </span>
                         </li>
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-sm text-muted-foreground">No hay detalles de productos disponibles.</p>
+                    <p className="text-sm text-muted-foreground">{t.noProductDetails}</p>
                   )}
                 </div>
 
                 {order.shipping && (
-                  <div className="rounded-lg border p-3">
-                    <h4 className="font-semibold mb-1">Datos de entrega</h4>
+                  <div className="rounded-xl border bg-muted/20 p-4 space-y-2">
+                    <h4 className="text-base font-bold tracking-tight mb-2">{t.deliveryData}</h4>
                     {order.shipping.recipientId && <p className="text-sm">ID del destinatario: {order.shipping.recipientId}</p>}
                     {order.shipping.name && <p className="text-sm">Nombre: {order.shipping.name}</p>}
                     {order.shipping.email && <p className="text-sm">Correo electrónico: {order.shipping.email}</p>}
@@ -3669,7 +5580,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 
                 {order.trackingNumber && (
                   <p className="text-sm">
-                    Seguimiento: {order.trackingNumber}
+                    {t.trackingLabel}: {order.trackingNumber}
                     {order.trackingCarrier ? ` · ${order.trackingCarrier}` : ''}
                   </p>
                 )}
@@ -3678,38 +5589,36 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 {(order.shippingStatus || order.trackingNumber || order.trackingCarrier ||
                   (Array.isArray(order.statusHistory) && order.statusHistory.length > 0) ||
                   (Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0)) && (
-                  <div className="rounded-lg border p-3 space-y-3">
-                    <h3 className="font-semibold">Seguimiento del envío</h3>
+                  <div className="rounded-xl border border-blue-200/80 bg-blue-50/40 p-4 space-y-4 dark:border-blue-900 dark:bg-blue-950/20">
+                    <h3 className="text-base font-bold tracking-tight">{t.trackingSection}</h3>
                     {order.shippingStatus && (
-                      <p className="text-sm">
-                        Estado:
-                        <strong className="ml-1">
-                          {{
-                            processing: 'Preparando pedido',
-                            shipped: 'Enviado',
-                            delivered: 'Entregado'
-                          }[order.shippingStatus] || order.shippingStatus}
+                      <p className="flex flex-wrap items-center gap-2 rounded-lg border bg-background p-3 text-sm">
+                        <span className="font-medium text-muted-foreground">{t.statusLabel}:</span>
+                        <strong className="rounded-full bg-blue-100 px-3 py-1 text-sm font-semibold text-blue-900 dark:bg-blue-900/60 dark:text-blue-100">
+                          {getOrderStatusLabel(order.shippingStatus)}
                         </strong>
                       </p>
                     )}
                     {(order.trackingNumber || order.trackingCarrier) && (
-                      <p className="text-sm">
-                        Transportista: {order.trackingCarrier || 'No indicado'}
-                        {' · '}Seguimiento: {order.trackingNumber || 'Pendiente'}
-                      </p>
+                      <div className="rounded-lg border bg-background p-3 space-y-2 text-sm">
+                        <p className="break-words">
+                          <span className="font-medium text-muted-foreground">{t.carrierLabel}:</span>{' '}
+                          <span className="font-semibold">{order.trackingCarrier || t.noCarrier}</span>
+                        </p>
+                        <p className="break-words">
+                          <span className="font-medium text-muted-foreground">{t.trackingLabel}:</span>{' '}
+                          <span className="font-mono font-semibold">{order.trackingNumber || t.trackingPending}</span>
+                        </p>
+                      </div>
                     )}
                     {Array.isArray(order.statusHistory) && order.statusHistory.length > 0 && (
                       <div className="space-y-2">
-                        <h4 className="text-sm font-medium">Historial del envío</h4>
+                        <h4 className="text-sm font-semibold tracking-tight">{t.shippingHistoryTitle}</h4>
                         {[...order.statusHistory].reverse().map((entry, index) => (
                           <div key={entry.id || `${entry.at || entry.createdAt || 'evento'}-${index}`}
-                               className="border-l-2 pl-3 py-1 space-y-1">
+                               className="rounded-r-lg border-l-4 border-blue-300 bg-background p-3 space-y-2 dark:border-blue-800">
                             <p className="text-sm font-medium">
-                              {{
-                                processing: 'Preparando pedido',
-                                shipped: 'Enviado',
-                                delivered: 'Entregado'
-                              }[entry.status] || entry.status || 'Actualización'}
+                              {getOrderStatusLabel(entry.status || 'processing')}
                             </p>
                             {(entry.at || entry.createdAt) && (
                               <p className="text-xs text-muted-foreground">
@@ -3717,10 +5626,10 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                               </p>
                             )}
                             {entry.trackingCarrier && (
-                              <p className="text-sm">Transportista: {entry.trackingCarrier}</p>
+                              <p className="text-sm">{t.carrierLabel}: {entry.trackingCarrier}</p>
                             )}
                             {entry.trackingNumber && (
-                              <p className="text-sm">Seguimiento: {entry.trackingNumber}</p>
+                              <p className="text-sm">{t.trackingLabel}: {entry.trackingNumber}</p>
                             )}
                             {entry.notes && <p className="text-sm">{entry.notes}</p>}
                           </div>
@@ -3729,15 +5638,15 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     )}
                     {Array.isArray(order.deliveryPhotos) && order.deliveryPhotos.length > 0 && (
                       <div className="space-y-2">
-                        <h4 className="text-sm font-medium">Fotos de entrega</h4>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <h4 className="text-sm font-semibold tracking-tight">{t.deliveryPhotosTitle}</h4>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
                           {order.deliveryPhotos.map((photo, index) => (
                             <a key={`${photo}-${index}`} href={photo}
                                target="_blank" rel="noopener noreferrer"
-                               className="block">
-                              <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                               className="block min-h-11 overflow-hidden rounded-xl border bg-background transition-shadow hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                              <img src={photo} alt={`${t.deliveryPhotoAlt} ${index + 1}`}
                                    loading="lazy"
-                                   className="w-full h-28 object-cover rounded-md border" />
+                                   className="h-32 w-full object-cover sm:h-36" />
                             </a>
                           ))}
                         </div>
@@ -3747,31 +5656,56 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                 )}
 
 
-                <div className="pt-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => downloadOrderInvoice(order)}
-                  >
-                    Descargar factura PDF con QR
-                  </Button>
-                  {order.publicInvoiceId && (
-                    <Button variant="outline" onClick={() => downloadInvoiceQR(order)}>
-                      Descargar QR en PNG
+                <div className="mt-4 rounded-xl border bg-muted/10 p-3 sm:p-4">
+                  <h4 className="mb-3 text-sm font-semibold tracking-tight">
+                    Documentos del pedido
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3 sm:flex sm:flex-wrap sm:gap-2">
+                    <Button
+                      className="min-h-11 w-full justify-center sm:w-auto"
+                      variant="outline"
+                      onClick={() => downloadOrderInvoice(order)}
+                    >
+                      {t.downloadInvoiceQR}
                     </Button>
-                  )}
-                  {order.publicInvoiceId && (
-                    <Button variant="outline" onClick={() =>
-                      window.open(`/invoice/${encodeURIComponent(order.publicInvoiceId)}`, '_blank', 'noopener,noreferrer')
-                    }>
-                      Verificar factura
-                    </Button>
-                  )}
+
+                    {order.publicInvoiceId && (
+                      <Button
+                        className="min-h-11 w-full justify-center sm:w-auto"
+                        variant="outline"
+                        onClick={() => downloadInvoiceQR(order)}
+                      >
+                        Descargar QR en PNG
+                      </Button>
+                    )}
+
+                    {order.publicInvoiceId && (
+                      <Button
+                        className="min-h-11 w-full justify-center sm:w-auto"
+                        variant="outline"
+                        onClick={() =>
+                          window.open(
+                            `/invoice/${encodeURIComponent(order.publicInvoiceId)}`,
+                            '_blank',
+                            'noopener,noreferrer'
+                          )
+                        }
+                      >
+                        {t.verifyInvoice}
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 {order.publicInvoiceId && (
-                  <p className="text-xs text-muted-foreground pt-2 break-all">
-                    Número de factura: <strong>{order.publicInvoiceId}</strong>
-                  </p>
+                  <div className="mt-3 rounded-lg border bg-muted/20 p-3">
+                    <p className="text-xs font-semibold text-muted-foreground">
+                      {t.invoiceNumber}
+                    </p>
+                    <p className="mt-1 break-all font-mono text-sm font-semibold leading-6 text-foreground">
+                      {order.publicInvoiceId}
+                    </p>
+                  </div>
                 )}
 
                 {(
@@ -3788,11 +5722,12 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                      ) && (
                       <div className="pt-3 space-y-2">
                         {order.buyerReceiptConfirmation?.confirmedAt ? (
-                          <p className="text-sm text-green-700 font-medium">
+                          <p className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm font-semibold text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status" aria-live="polite">
                             Recepción confirmada.
                           </p>
                         ) : (
                           <Button
+                            className="w-full sm:w-auto min-h-11 justify-center font-semibold focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                             onClick={() => confirmOrderReceipt(order)}
                             disabled={
                               !!receiptConfirmLoading[order.id] ||
@@ -3805,7 +5740,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                           </Button>
                         )}
                         {receiptConfirmMessages[order.id] && (
-                          <p className="text-sm" role="status">
+                          <p className="rounded-lg border bg-muted/30 p-3 text-sm leading-6 break-words" role="status" aria-live="polite">
                             {receiptConfirmMessages[order.id]}
                           </p>
                         )}
@@ -3822,37 +5757,43 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                       disabled={!!invoiceLoading[order.id]}
                     >
                       {invoiceLoading[order.id]
-                        ? 'Cargando factura…'
+                        ? t.loadingInvoice
                         : openInvoiceId === order.id
-                          ? 'Ocultar factura'
-                          : 'Ver factura de pago'}
+                          ? t.hideInvoice
+                          : t.viewPaymentInvoice}
                     </Button>
 
                     {openInvoiceId === order.id && invoiceErrors[order.id] && (
-                      <p className="text-sm text-red-600 mt-2">{invoiceErrors[order.id]}</p>
+                      <p className="mt-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm leading-6 text-destructive break-words" role="alert">
+                        {invoiceErrors[order.id]}
+                      </p>
                     )}
 
                     {openInvoiceId === order.id && invoices[order.id] && (
-                      <div className="rounded-lg border p-4 mt-3 space-y-1 break-words">
-                        <h4 className="font-semibold">Factura de pago</h4>
+                      <div className="mt-3 space-y-4 rounded-xl border bg-card p-4 break-words">
+                        <h4 className="text-base font-bold tracking-tight">Factura de pago</h4>
                         <p className="text-sm">
                           Estado: <strong>{invoices[order.id].status || 'Pendiente'}</strong>
                         </p>
-                        <p className="text-sm">
-                          Importe esperado: <strong>
-                            {formatMoney(
-                              invoices[order.id].expectedAmount,
-                              invoices[order.id].currency || 'USDT'
-                            )}
-                          </strong>
-                        </p>
-                        <p className="text-sm">Red: {invoices[order.id].network || '—'}</p>
-                        <p className="text-sm">
-                          Dirección de pago: {invoices[order.id].receiverAddress || '—'}
-                        </p>
-                        <p className="text-sm">
-                          Vence: {formatDate(invoices[order.id].expiresAt)}
-                        </p>
+                        <div className="rounded-lg border border-primary/20 bg-primary/5 p-3">
+                          <p className="text-xs font-semibold text-muted-foreground">Importe esperado</p>
+                          <p className="mt-1 text-xl font-bold tracking-tight">
+                            {Number(invoices[order.id].expectedAmount).toLocaleString('es-ES', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 4
+                            })} {invoices[order.id].currency || 'USDT'}
+                          </p>
+                        </div>
+                        <div className="space-y-3 rounded-lg border bg-muted/20 p-3 text-sm">
+                          <p><span className="font-semibold">Red:</span> {invoices[order.id].network || '—'}</p>
+                          <div>
+                            <p className="mb-1 font-semibold">Dirección de pago</p>
+                            <p className="break-all rounded-md bg-background p-2 font-mono text-xs leading-5">
+                              {invoices[order.id].receiverAddress || '—'}
+                            </p>
+                          </div>
+                          <p><span className="font-semibold">Vence:</span> {formatDate(invoices[order.id].expiresAt)}</p>
+                        </div>
                         {invoices[order.id].txHash && (
                           <p className="text-sm break-all">
                             Transacción enviada: {invoices[order.id].txHash}
@@ -3862,8 +5803,11 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                         {!['approved', 'rejected', 'expired', 'submitted'].includes(
                           String(invoices[order.id].status || '').toLowerCase()
                         ) && (
-                          <div className="pt-3 space-y-2">
-                            <Label htmlFor={`invoice-tx-${order.id}`}>
+                          <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+                            <Label
+                              htmlFor={`invoice-tx-${order.id}`}
+                              className="text-sm font-semibold"
+                            >
                               Hash de la transacción
                             </Label>
                             <Input
@@ -3883,11 +5827,12 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                               placeholder="Pega aquí el hash de la operación"
                               autoComplete="off"
                               spellCheck={false}
-                              className="font-mono text-sm"
+                              className="min-h-11 w-full font-mono text-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                               disabled={!!invoiceSubmitLoading[order.id]}
                             />
                             <Button
                               type="button"
+                              className="min-h-11 w-full justify-center font-semibold focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:w-auto"
                               onClick={() => submitInvoiceTxHash(order)}
                               disabled={
                                 !!invoiceSubmitLoading[order.id] ||
@@ -3901,7 +5846,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                                 : 'Enviar hash'}
                             </Button>
                             {invoiceSubmitMessages[order.id] && (
-                              <p className="text-sm break-words" role="status">
+                              <p className="rounded-lg border bg-background p-3 text-sm leading-6 break-words" role="status" aria-live="polite">
                                 {invoiceSubmitMessages[order.id]}
                               </p>
                             )}
@@ -3932,7 +5877,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token }) => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel }) => {
   const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
@@ -3948,10 +5893,248 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [cryptoPayoutWallets, setCryptoPayoutWallets] = React.useState({ ...(business?.cryptoPayoutWallets || {}) });
   const [walletSaving, setWalletSaving] = React.useState(false);
   const [walletMessage, setWalletMessage] = React.useState('');
+  const [businessDescription, setBusinessDescription] = React.useState(business?.description || '');
+  const [businessLocation, setBusinessLocation] = React.useState(business?.location || '');
+  const [businessDeliveryFeeCUP, setBusinessDeliveryFeeCUP] = React.useState(String(business?.deliveryFeeCUP ?? 0));
+  const [transfermovilEnabled, setTransfermovilEnabled] = React.useState(business?.transfermovilEnabled === true);
+  const [transfermovilNumber, setTransfermovilNumber] = React.useState(business?.transfermovilNumber || '');
+  const [transfermovilName, setTransfermovilName] = React.useState(business?.transfermovilName || '');
+  const [transfermovilContactPhone, setTransfermovilContactPhone] = React.useState(business?.transfermovilContactPhone || '');
+  const [transfermovilAccount, setTransfermovilAccount] = React.useState(business?.transfermovilAccount || '');
+  const [transfermovilVerificationPhone, setTransfermovilVerificationPhone] = React.useState(business?.transfermovilVerificationPhone || '');
+  const [enzonaEnabled, setEnzonaEnabled] = React.useState(business?.enzonaEnabled === true);
+  const [enzonaRecipient, setEnzonaRecipient] = React.useState(business?.enzonaRecipient || '');
+  const [enzonaCardNumber, setEnzonaCardNumber] = React.useState(business?.enzonaCardNumber || '');
+  const [enzonaPhone, setEnzonaPhone] = React.useState(business?.enzonaPhone || '');
+  const [paymentSettingsSaving, setPaymentSettingsSaving] = React.useState(false);
+  const [paymentSettingsMessage, setPaymentSettingsMessage] = React.useState('');
+
+  const [businessSaving, setBusinessSaving] = React.useState(false);
+  const [businessMessage, setBusinessMessage] = React.useState('');
+  const [identityVerification, setIdentityVerification] = React.useState(
+    business?.identityVerification || user?.identityVerification || null
+  );
+  const [identityBusy, setIdentityBusy] = React.useState(false);
+  const [identityMessage, setIdentityMessage] = React.useState('');
+  const [showWallets, setShowWallets] = React.useState(true);
+  const [showInventory, setShowInventory] = React.useState(true);
 
   React.useEffect(() => {
     setCryptoPayoutWallets({ ...(business?.cryptoPayoutWallets || {}) });
+    setBusinessDescription(business?.description || '');
+    setBusinessLocation(business?.location || '');
+    setTransfermovilEnabled(business?.transfermovilEnabled === true);
+    setTransfermovilNumber(business?.transfermovilNumber || '');
+    setTransfermovilName(business?.transfermovilName || '');
+    setTransfermovilContactPhone(business?.transfermovilContactPhone || '');
+    setTransfermovilAccount(business?.transfermovilAccount || '');
+    setTransfermovilVerificationPhone(business?.transfermovilVerificationPhone || '');
+    setEnzonaEnabled(business?.enzonaEnabled === true);
+    setEnzonaRecipient(business?.enzonaRecipient || '');
+    setEnzonaCardNumber(business?.enzonaCardNumber || '');
+    setEnzonaPhone(business?.enzonaPhone || '');
+
+    if (typeof window !== 'undefined' && business?.id) {
+      try {
+        const saved = window.localStorage.getItem(`ubik-seller-sections-${business.id}`);
+        if (saved) {
+          const preferences = JSON.parse(saved);
+          setShowWallets(preferences.showWallets !== false);
+          setShowInventory(preferences.showInventory !== false);
+        } else {
+          setShowWallets(true);
+          setShowInventory(true);
+        }
+      } catch {
+        setShowWallets(true);
+        setShowInventory(true);
+      }
+    }
   }, [business?.id]);
+
+  React.useEffect(() => {
+    setBusinessDeliveryFeeCUP(String(business?.deliveryFeeCUP ?? 0));
+  }, [business?.id, business?.deliveryFeeCUP, business?.deliveryEnabled]);
+
+  const saveSectionPreferences = (next) => {
+    if (!business?.id || typeof window === 'undefined') return;
+    try {
+      const current = {
+        showWallets,
+        showInventory,
+        ...next
+      };
+      window.localStorage.setItem(
+        `ubik-seller-sections-${business.id}`,
+        JSON.stringify(current)
+      );
+    } catch {}
+  };
+
+  const refreshIdentityVerification = async () => {
+    if (!token || identityBusy) return;
+    setIdentityBusy(true);
+    setIdentityMessage('');
+    try {
+      const result = await api('/auth/me', { token, retries: 0 });
+      const latest = result?.user?.identityVerification
+        || result?.business?.identityVerification
+        || null;
+      setIdentityVerification(latest);
+      setIdentityMessage(
+        latest?.status === 'approved'
+          ? 'Tu identidad está verificada.'
+          : 'Estado de verificación actualizado.'
+      );
+    } catch (error) {
+      setIdentityMessage(error?.message || 'No se pudo consultar el estado.');
+    } finally {
+      setIdentityBusy(false);
+    }
+  };
+
+  const startIdentityVerification = async () => {
+    if (!token || identityBusy) return;
+    setIdentityBusy(true);
+    setIdentityMessage('');
+    try {
+      const result = await api('/identity/didit/session', {
+        method: 'POST',
+        token,
+        body: {},
+        retries: 0,
+        timeout: 20000
+      });
+      if (!result?.sessionUrl) {
+        throw new Error('Didit no devolvió el enlace de verificación.');
+      }
+      setIdentityVerification({
+        provider: 'didit',
+        sessionId: result.sessionId,
+        sessionUrl: result.sessionUrl,
+        status: result.status || 'pending',
+        startedAt: new Date().toISOString()
+      });
+      setIdentityMessage('Sesión creada. Pulsa el enlace para abrir Didit.');
+    } catch (error) {
+      setIdentityMessage(error?.message || 'No se pudo iniciar la verificación.');
+    } finally {
+      setIdentityBusy(false);
+    }
+  };
+
+  const saveSellerPaymentSettings = async () => {
+    if (!business?.id || paymentSettingsSaving) return;
+
+    setPaymentSettingsSaving(true);
+    setPaymentSettingsMessage('');
+
+    try {
+      const result = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: {
+          transfermovilEnabled,
+          transfermovilNumber: transfermovilNumber.trim(),
+          transfermovilName: transfermovilName.trim(),
+          transfermovilContactPhone: transfermovilContactPhone.trim(),
+          transfermovilAccount: transfermovilAccount.trim(),
+          transfermovilVerificationPhone: transfermovilVerificationPhone.trim(),
+          enzonaEnabled,
+          enzonaRecipient: enzonaRecipient.trim(),
+          enzonaCardNumber: enzonaCardNumber.trim(),
+          enzonaPhone: enzonaPhone.trim()
+        }
+      });
+
+      if (result?.error) throw new Error(result.error);
+
+      setPaymentSettingsMessage('Configuración de pagos guardada correctamente.');
+      toast.success('Configuración de pagos actualizada');
+    } catch (error) {
+      setPaymentSettingsMessage(error?.message || 'No se pudo guardar la configuración de pagos.');
+    } finally {
+      setPaymentSettingsSaving(false);
+    }
+  };
+
+  const saveDeliveryFee = async () => {
+    if (!business?.id || businessSaving) return;
+
+    if (business?.deliveryEnabled !== true) {
+      setBusinessMessage('El administrador debe habilitar las entregas primero.');
+      return;
+    }
+
+    const fee = Number(businessDeliveryFeeCUP);
+    if (
+      businessDeliveryFeeCUP.trim() === '' ||
+      !Number.isFinite(fee) ||
+      fee < 0 ||
+      fee > 1000000
+    ) {
+      setBusinessMessage('Introduce una tarifa válida entre 0 y 1000000 CUP.');
+      return;
+    }
+
+    setBusinessSaving(true);
+    setBusinessMessage('');
+
+    try {
+      const result = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: {
+          deliveryFeeCUP: Math.round((fee + Number.EPSILON) * 100) / 100
+        }
+      });
+
+      if (result?.error) throw new Error(result.error);
+
+      setBusinessMessage('Tarifa de entrega guardada correctamente.');
+      toast.success('Tarifa de entrega actualizada');
+    } catch (error) {
+      setBusinessMessage(error?.message || 'No se pudo guardar la tarifa.');
+    } finally {
+      setBusinessSaving(false);
+    }
+  };
+
+  const saveBusinessProfile = async () => {
+    if (!business?.id || businessSaving) return;
+
+    const fee = Number(businessDeliveryFeeCUP);
+    if (
+      business?.deliveryEnabled === true &&
+      (!Number.isFinite(fee) || fee < 0 || fee > 1000000)
+    ) {
+      setBusinessMessage('La tarifa debe estar entre 0 y 1000000 CUP.');
+      return;
+    }
+
+    setBusinessSaving(true);
+    setBusinessMessage('');
+    try {
+      const result = await api(`/businesses/${business.id}`, {
+        method: 'PUT',
+        token,
+        body: {
+          description: businessDescription,
+          location: businessLocation,
+          ...(business?.deliveryEnabled === true
+            ? { deliveryFeeCUP: Math.round((fee + Number.EPSILON) * 100) / 100 }
+            : {})
+        }
+      });
+      if (result?.error) throw new Error(result.error);
+      setBusinessMessage(business?.deliveryEnabled === true ? 'Información y tarifa guardadas correctamente.' : 'Descripción y ubicación guardadas correctamente.');
+      toast.success('Información del negocio actualizada');
+    } catch (error) {
+      setBusinessMessage(error?.message || 'No se pudo guardar la información.');
+    } finally {
+      setBusinessSaving(false);
+    }
+  };
 
   const saveCryptoPayoutWallets = async () => {
     if (!business?.id || walletSaving) return;
@@ -3985,7 +6168,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         }
       } catch (error) {
         if (!cancelled) {
-          setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+          setSellerOrdersError(error?.message || t.sellerLoadingError);
         }
       } finally {
         if (!cancelled) setSellerOrdersLoading(false);
@@ -4040,7 +6223,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="font-semibold truncate">{p.name}</div>
-            <div className="text-sm text-[#00A86B] font-bold">{formatPrice(p.price, p.currency)}</div>
+            <div className="text-sm text-[#00A86B] font-bold"><PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
             <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-1 mt-1">
               <Badge variant="outline" className="text-[10px]">{p.category}</Badge>
               <span>Stock: <b className={!p.stock || p.stock <= 0 ? 'text-orange-600' : ''}>{p.stock ?? 0}</b></span>
@@ -4050,7 +6233,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         </div>
         {(!p.stock || p.stock <= 0) && (
           <p className="text-[11px] text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-900 rounded-md p-2 mt-2">
-            Este producto <b>no será visible</b> en el marketplace porque no tiene stock disponible. Edítalo y agrega stock para reactivarlo.
+            {t.productNotVisible}
           </p>
         )}
         <div className="flex gap-2 mt-3">
@@ -4090,20 +6273,28 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             <p className="text-muted-foreground text-sm">Gestiona tu catálogo y suscripción.</p>
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full md:w-auto">
           <Button
             variant="outline"
+            className="min-h-11 w-full justify-center px-3 text-sm"
+            onClick={() => document.getElementById('sellerPaymentSettings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+          >
+            Configurar pagos
+          </Button>
+          <Button
+            variant="outline"
+            className="min-h-11 w-full justify-center px-3 text-sm"
             onClick={() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
           >
-            Pedidos y entregas ({sellerOrders.length})
+            {t.sellerOrdersTitle} ({sellerOrders.length})
           </Button>
-          <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio">
+          <Button variant="outline" onClick={onShareBusiness} title="Copiar enlace público del negocio" className="min-h-11 w-full justify-center px-3 text-sm">
             <Share2 className="h-4 w-4 mr-2" /> Compartir negocio
           </Button>
-          <Button variant="outline" onClick={onPlan}>
+          <Button variant="outline" onClick={onPlan} className="min-h-11 w-full justify-center px-3 text-sm">
             <Crown className="h-4 w-4 mr-2 text-amber-500" /> {isPremium ? 'Premium activo' : 'Mejorar plan'}
           </Button>
-          <Button onClick={onNew} className="bg-[#00A86B] hover:bg-[#008F5B] text-white">
+          <Button onClick={onNew} className="col-span-2 sm:col-span-1 min-h-12 w-full sm:w-auto justify-center px-4 font-semibold shadow-sm bg-[#00A86B] hover:bg-[#008F5B] text-white">
             <Plus className="h-4 w-4 mr-2" /> Nuevo producto
           </Button>
         </div>
@@ -4117,7 +6308,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
               <div className="mb-3 flex items-start gap-2 text-sm">
                 <Sparkles className="h-4 w-4 text-[#00A86B] shrink-0 mt-0.5" />
                 <p>
-                  <b>Aún no tienes logo.</b> Súbelo ahora para que los compradores te encuentren más fácilmente y tu negocio se vea profesional. Se comprime y optimiza automáticamente.
+                  <b>{t.noLogoTitle}</b> {t.noLogoDesc}
                 </p>
               </div>
             )}
@@ -4132,11 +6323,265 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       )}
 
 
-<div className="mb-6 rounded-xl border border-gray-200 p-4">
-  <h2 className="mb-2 text-lg font-semibold">Billeteras para recibir pagos</h2>
+<div id="sellerBusinessProfile" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 className="mb-3 text-lg font-bold tracking-tight">Mi negocio: descripción y ubicación</h2>
+  <div className="grid grid-cols-1 gap-3">
+    <label className="block text-sm font-medium">
+      Descripción del negocio
+      <textarea
+        value={businessDescription}
+        onChange={(event) => setBusinessDescription(event.target.value)}
+        maxLength={1000}
+        rows={3}
+        className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+        placeholder="Describe tu negocio y lo que ofreces"
+      />
+    </label>
+    <label className="block text-sm font-medium">
+      Ubicación del negocio
+      <input
+        value={businessLocation}
+        onChange={(event) => setBusinessLocation(event.target.value)}
+        maxLength={200}
+        className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+        placeholder="La Habana, Cuba"
+      />
+    </label>
+    {business?.deliveryEnabled === true ? (
+      <div id="sellerDeliverySettings" className="scroll-mt-24 rounded-lg border border-green-200 bg-green-50 p-4 space-y-3">
+        <label className="block text-sm font-semibold">
+          Tarifa de entrega a domicilio (CUP)
+          <input
+            type="number"
+            min="0"
+            max="1000000"
+            step="0.01"
+            inputMode="decimal"
+            value={businessDeliveryFeeCUP}
+            onChange={(event) => setBusinessDeliveryFeeCUP(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-gray-300 bg-background px-3 py-3 text-base"
+            aria-describedby="delivery-fee-help"
+          />
+        </label>
+        <p id="delivery-fee-help" className="text-xs text-gray-700">
+          Introduce el costo del domicilio en CUP. Puedes usar 0 si no cobras por la entrega.
+        </p>
+        <button
+          type="button"
+          onClick={saveDeliveryFee}
+          disabled={businessSaving}
+          className="min-h-12 w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {businessSaving ? 'Guardando tarifa…' : 'Guardar tarifa de entrega'}
+        </button>
+      </div>
+    ) : (
+      <div id="sellerDeliverySettings" className="scroll-mt-24 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+        <strong>Entrega a domicilio no habilitada.</strong>
+        <p className="mt-1">
+          Solicita al administrador que autorice las entregas para tu negocio. Cuando estén habilitadas, podrás configurar aquí el costo en CUP.
+        </p>
+      </div>
+    )}
+  </div>
+  <div className="mt-3 flex flex-wrap items-center gap-3">
+    <button
+      type="button"
+      onClick={saveBusinessProfile}
+      disabled={businessSaving}
+      className="min-h-12 w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+    >
+      {businessSaving ? 'Guardando…' : 'Guardar información'}
+    </button>
+    <span role="status" aria-live="polite" className="text-sm">{businessMessage}</span>
+  </div>
+</div>
+
+<div id="sellerLocalPayments" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 id="sellerPaymentSettings" className="mb-2 scroll-mt-6 text-lg font-bold tracking-tight">Configurar pagos por Transfermóvil y EnZona</h2>
+  <p className="mb-4 text-sm text-gray-600">
+    Introduce los datos de tu negocio que verá el comprador. Comprueba que sean correctos antes de habilitar cada método.
+  </p>
+
+  <div className="space-y-4">
+    <section className="rounded-xl border border-gray-200 bg-muted/20 p-4 sm:p-5">
+      <label className="flex items-center gap-2 font-semibold">
+        <input
+          type="checkbox"
+          checked={transfermovilEnabled}
+          onChange={(event) => setTransfermovilEnabled(event.target.checked)}
+        />
+        Habilitar Transfermóvil
+      </label>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
+        <label className="block text-sm font-medium">
+          Tarjeta receptora
+          <input
+            type="text"
+            autoComplete="off"
+            value={transfermovilNumber}
+            onChange={(event) => setTransfermovilNumber(event.target.value)}
+            maxLength={40}
+            placeholder="Número de la tarjeta que recibirá el pago"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+          />
+        </label>
+
+        <label className="block text-sm font-medium">
+          Nombre del titular
+          <input
+            type="text"
+            autoComplete="name"
+            value={transfermovilName}
+            onChange={(event) => setTransfermovilName(event.target.value)}
+            maxLength={100}
+            placeholder="Nombre del titular de la cuenta"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+          />
+        </label>
+
+        <label className="block text-sm font-medium">
+          Móvil de contacto
+          <input
+            type="tel"
+            autoComplete="tel"
+            value={transfermovilContactPhone}
+            onChange={(event) => setTransfermovilContactPhone(event.target.value)}
+            maxLength={30}
+            placeholder="Número de contacto para el comprador"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+          />
+          <span className="mt-1 block text-xs text-gray-500">
+            Este número se mostrará al comprador. Puede ser el mismo que el móvil de verificación.
+          </span>
+        </label>
+
+        <label className="block text-sm font-medium md:col-span-2">
+          Móvil para verificar
+          <input
+            type="tel"
+            autoComplete="tel"
+            value={transfermovilVerificationPhone}
+            onChange={(event) => setTransfermovilVerificationPhone(event.target.value)}
+            maxLength={30}
+            placeholder="Número del móvil que recibe los SMS de Transfermóvil"
+            className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+          />
+          <span className="mt-1 block text-xs text-gray-500">
+            Indica el teléfono donde se reciben los SMS utilizados para comprobar los pagos.
+          </span>
+        </label>
+      </div>
+    </section>
+
+    <section className="rounded-xl border border-gray-200 bg-muted/20 p-4 sm:p-5">
+      <label className="flex items-center gap-2 font-semibold">
+        <input
+          type="checkbox"
+          checked={enzonaEnabled}
+          onChange={(event) => setEnzonaEnabled(event.target.checked)}
+        />
+        Habilitar EnZona
+      </label>
+
+      <label className="mt-3 block text-sm font-medium">
+        Destinatario EnZona
+        <input
+          type="text"
+          autoComplete="off"
+          value={enzonaRecipient}
+          onChange={(event) => setEnzonaRecipient(event.target.value)}
+          maxLength={150}
+          placeholder="Usuario o destinatario para recibir el pago"
+          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+        />
+      </label>
+
+      <label className="mt-3 block text-sm font-medium">
+        Número de tarjeta EnZona
+        <input
+          type="text"
+          inputMode="numeric"
+          autoComplete="off"
+          value={enzonaCardNumber}
+          onChange={(event) => setEnzonaCardNumber(event.target.value)}
+          maxLength={60}
+          placeholder="Número de tarjeta receptora"
+          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+        />
+      </label>
+
+      <label className="mt-3 block text-sm font-medium">
+        Móvil asociado a EnZona
+        <input
+          type="tel"
+          autoComplete="off"
+          value={enzonaPhone}
+          onChange={(event) => setEnzonaPhone(event.target.value)}
+          maxLength={30}
+          placeholder="Teléfono de contacto"
+          className="mt-1 min-h-11 w-full rounded-lg border border-gray-300 bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
+        />
+      </label>
+    </section>
+  </div>
+
+  <div className="mt-4 flex flex-wrap items-center gap-3">
+    <button
+      type="button"
+      onClick={saveSellerPaymentSettings}
+      disabled={paymentSettingsSaving}
+      className="min-h-12 w-full rounded-lg bg-green-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-green-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
+    >
+      {paymentSettingsSaving ? 'Guardando…' : 'Guardar configuración de pagos'}
+    </button>
+    <span role="status" aria-live="polite" className="text-sm">
+      {paymentSettingsMessage}
+    </span>
+  </div>
+</div>
+
+<div id="sellerPanelPreferences" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 className="mb-2 text-lg font-bold tracking-tight">Personalizar panel del vendedor</h2>
+  <p className="mb-4 text-sm text-muted-foreground">Elige qué secciones quieres ver mientras administras tu negocio.</p>
+  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    <button
+      type="button"
+      aria-pressed={showWallets}
+      onClick={() => {
+        const next = !showWallets;
+        setShowWallets(next);
+        saveSectionPreferences({ showWallets: next });
+      }}
+      className="min-h-12 w-full rounded-lg border border-gray-300 bg-background px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
+    >
+      {showWallets ? 'Ocultar billeteras de cobro' : 'Mostrar billeteras de cobro'}
+    </button>
+    <button
+      type="button"
+      aria-pressed={showInventory}
+      onClick={() => {
+        const next = !showInventory;
+        setShowInventory(next);
+        saveSectionPreferences({ showInventory: next });
+      }}
+      className="min-h-12 w-full rounded-lg border border-gray-300 bg-background px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
+    >
+      {showInventory ? 'Ocultar inventario' : 'Mostrar inventario'}
+    </button>
+  </div>
+  <p className="mt-2 text-xs text-muted-foreground">
+    Estas opciones solo ocultan o muestran secciones del panel. No eliminan productos ni cambian pagos o existencias.
+  </p>
+</div>
+
+{showWallets && (
+<div id="sellerCryptoWallets" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+  <h2 className="mb-2 text-lg font-bold tracking-tight">Billeteras para recibir pagos</h2>
   <p className="mb-4 text-sm text-gray-600">
     Configura las direcciones de destino de tu negocio. Deja vacío un campo para borrar esa dirección.
-    Guardar estos datos no activa transferencias automáticas.
+    {t.walletsNoTransfers}
   </p>
   <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
     {[
@@ -4156,7 +6601,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
             [network]: event.target.value
           }))}
           placeholder={`Dirección ${network}`}
-          className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2"
+          className="mt-1 min-h-12 w-full rounded-lg border border-gray-300 bg-background px-3 py-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
         />
       </label>
     ))}
@@ -4166,18 +6611,21 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       type="button"
       onClick={saveCryptoPayoutWallets}
       disabled={walletSaving}
-      className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white disabled:opacity-50"
+      className="min-h-12 w-full rounded-lg bg-blue-700 px-4 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
     >
-      {walletSaving ? 'Guardando…' : 'Guardar billeteras'}
+      {walletSaving ? 'Guardando…' : t.saveWallets}
     </button>
     <span role="status" aria-live="polite" className="text-sm">{walletMessage}</span>
   </div>
 </div>
+)}
 
+{showInventory && (
+<>
 {/* Stats — 4 cards instead of 3 */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+      <div id="sellerInventory" className="mb-6 scroll-mt-24 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <Card><CardContent className="p-4">
-          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Total productos</div>
+          <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{t.totalProducts}</div>
           <div className="text-2xl font-bold mt-1">{stats.total}</div>
           <div className="text-[10px] text-muted-foreground mt-1">{isPremium ? 'Plan Premium ∞' : `Plan Básico — ${stats.total}/10`}</div>
         </CardContent></Card>
@@ -4200,18 +6648,18 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="mb-4">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-          <TabsList className="flex flex-wrap h-auto">
-            <TabsTrigger value="all">Todos ({stats.total})</TabsTrigger>
-            <TabsTrigger value="active">Activos ({stats.active})</TabsTrigger>
-            <TabsTrigger value="out">
-              Agotados {stats.outOfStock > 0 && <span className="ml-1 text-orange-600 font-bold">({stats.outOfStock})</span>}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 p-1 sm:grid-cols-4 lg:w-auto">
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="all">Todos ({stats.total})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="active">Activos ({stats.active})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="out">
+              Agotados {stats.outOfStock > 0 && <span className="ml-1 font-bold text-orange-600">({stats.outOfStock})</span>}
             </TabsTrigger>
-            <TabsTrigger value="featured">Destacados ({stats.featured})</TabsTrigger>
+            <TabsTrigger className="min-h-11 px-2 text-xs sm:text-sm" value="featured">Destacados ({stats.featured})</TabsTrigger>
           </TabsList>
           <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
             <input type="checkbox" checked={groupByCategory} onChange={(e) => setGroupByCategory(e.target.checked)} />
-            Agrupar por categoría
+            {t.groupByCategory}
           </label>
         </div>
       </Tabs>
@@ -4221,13 +6669,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           <CardContent>
             <ShoppingBag className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
             <p className="text-muted-foreground mb-4">
-              {tab === 'out' ? '¡No tienes productos agotados! 🎉' :
-               tab === 'featured' ? 'No tienes productos destacados.' :
-               tab === 'active' ? 'No tienes productos activos.' :
-               'Aún no tienes productos publicados.'}
+              {tab === 'out' ? t.noOutOfStock :
+               tab === 'featured' ? t.noFeaturedProducts :
+               tab === 'active' ? t.noActiveProducts :
+               t.noPublishedProducts}
             </p>
             <Button onClick={onNew} className="bg-[#00A86B] hover:bg-[#008F5B] text-white">
-              <Plus className="h-4 w-4 mr-2" /> {tab === 'all' ? 'Publica el primero' : 'Crear producto'}
+              <Plus className="h-4 w-4 mr-2" /> {tab === 'all' ? t.publishFirst : t.createProduct}
             </Button>
           </CardContent>
         </Card>
@@ -4250,17 +6698,20 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
         </div>
       )}
 
+</>
+)}
+
       {/* Seguimiento de pedidos del vendedor - Fase 5 */}
-      <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-4">
+      <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-5 scroll-mt-4">
         <div>
-          <h2 className="text-xl font-bold">Pedidos y entregas</h2>
+          <h2 className="text-xl font-bold tracking-tight sm:text-2xl">{t.sellerOrdersTitle}</h2>
           <p className="text-sm text-muted-foreground">
-            Actualiza el envío de los pedidos de tu comercio. Solo puedes gestionar pedidos con el pago confirmado.
+            {t.sellerOrdersDesc}
           </p>
         </div>
 
         {sellerOrdersLoading && (
-          <Card><CardContent className="p-4 text-sm">Cargando pedidos...</CardContent></Card>
+          <Card><CardContent className="p-4 text-sm">{t.loadingSellerOrders}</CardContent></Card>
         )}
 
         {sellerOrdersError && (
@@ -4275,7 +6726,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     const result = await api('/seller/orders', { token });
                     setSellerOrders(Array.isArray(result?.orders) ? result.orders.filter((order) => order && typeof order === 'object') : []);
                   } catch (error) {
-                    setSellerOrdersError(error?.message || 'No se pudieron cargar los pedidos.');
+                    setSellerOrdersError(error?.message || t.sellerLoadingError);
                   } finally {
                     setSellerOrdersLoading(false);
                   }
@@ -4288,11 +6739,11 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
         {!sellerOrdersLoading && !sellerOrdersError && sellerOrders.length === 0 && (
           <Card><CardContent className="p-5 text-sm text-muted-foreground">
-            Todavía no hay pedidos para este comercio.
+            {t.noSellerOrders}
           </CardContent></Card>
         )}
 
-        <div className="space-y-4">
+        <div className="space-y-5">
           {sellerOrders.map((order) => {
             const form = sellerOrderForms[order.id] || {};
             const saving = Boolean(sellerOrderSaving[order.id]);
@@ -4311,27 +6762,72 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                 : (currentStatus === 'processing' ? ['processing', 'shipped'] : ['shipped', 'delivered']);
 
             return (
-              <Card key={order.id}>
-                <CardContent className="p-4 space-y-4">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
+              <Card key={order.id} className="overflow-hidden border-border/80 shadow-sm">
+                <CardContent className="space-y-4 p-4 sm:p-5">
+                  <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
                     <div>
-                      <h3 className="font-bold">Pedido #{String(order.id || 'Sin identificador')}</h3>
+                      <h3 className="font-bold">{t.orderLabel} #{order.ubikCode || 'Código pendiente'}</h3>
+                      <p className="text-xs text-muted-foreground break-all">
+                        Referencia técnica: {order.publicInvoiceId || order.id}
+                      </p>
                       <p className="text-xs text-muted-foreground">
-                        {order.createdAt ? new Date(order.createdAt).toLocaleString() : 'Fecha no disponible'}
+                        {order.createdAt ? new Date(order.createdAt).toLocaleString(({ es: 'es-ES', en: 'en-US', it: 'it-IT', ru: 'ru-RU' })[lang] || 'es-ES') : t.dateUnavailable}
                       </p>
                     </div>
                     <Badge variant={paid ? 'default' : 'outline'}>
-                      {paid ? 'Pago confirmado' : 'Pago pendiente'}
+                      {paid ? t.paymentConfirmedLabel : t.paymentPendingLabel}
                     </Badge>
+                  </div>
+
+                  <div className="space-y-2 rounded-xl border border-border/80 bg-muted/30 p-3 text-sm sm:p-4">
+                    <h4 className="font-semibold tracking-tight">Datos de entrega</h4>
+                    <p>
+                      <span className="font-medium">Destinatario:</span>{" "}
+                      {order.shipping?.name || order.buyerName || "No indicado"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Teléfono:</span>{" "}
+                      {order.shipping?.phone || order.buyerPhone || "No indicado"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Carnet/ID:</span>{" "}
+                      {order.shipping?.recipientId || "No indicado"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Dirección:</span>{" "}
+                      {order.shipping?.address || "No indicada"}
+                    </p>
+                    <p>
+                      <span className="font-medium">Método:</span>{" "}
+                      {{
+                        pickup: "Recogida",
+                        delivery: "Entrega a domicilio",
+                      }[order.deliveryMethod || order.shipping?.deliveryMethod] ||
+                        order.deliveryMethod ||
+                        order.shipping?.deliveryMethod ||
+                        "No indicado"}
+                    </p>
+                  </div>
+
+                  <div className="flex">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 w-full sm:w-auto"
+                      size="sm"
+                      onClick={() => downloadOrderInvoice(order)}
+                    >
+                      Descargar factura PDF
+                    </Button>
                   </div>
 
                   {order.buyerReceiptConfirmation?.confirmedAt ? (
                     <p className="text-sm font-medium text-green-700">
-                      El comprador confirmó la recepción.
+                      {t.buyerConfirmedReceipt}
                     </p>
                   ) : currentStatus === 'delivered' ? (
                     <p className="text-sm text-amber-700">
-                      Entrega marcada. Pendiente de confirmación del comprador.
+                      {t.awaitingBuyerReceipt}
                     </p>
                   ) : null}
 
@@ -4342,13 +6838,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       </div>
                     ))}
                     <div className="font-semibold pt-1">
-                      Total: {formatPrice(Number(order.total || order.totalCUP || 0), order.currency || 'CUP')}
+                      Total: <PriceWithCurrencyIcon value={Number(order.total || order.totalCUP || 0)} currency={order.currency || 'CUP'} />
                     </div>
                   </div>
 
                   {order.trackingNumber && (
                     <p className="text-sm">
-                      Seguimiento actual: <b>{order.trackingCarrier || 'Transportista no indicado'}</b>
+                      Seguimiento actual: <b>{order.trackingCarrier || t.carrierNotSpecified}</b>
                       {' · '}{order.trackingNumber}
                     </p>
                   )}
@@ -4359,11 +6855,11 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     </p>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1">
-                      <Label>Estado del envío</Label>
+                      <Label>{t.shippingStatus}</Label>
                       <select
-                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                        className="min-h-12 w-full rounded-lg border border-input bg-background px-3 py-2 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         value={form.status || currentStatus}
                         disabled={!paid || saving}
                         onChange={(e) => setSellerOrderForms((old) => ({
@@ -4374,9 +6870,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                         {availableStatuses.map((statusOption) => (
                           <option key={statusOption} value={statusOption}>
                             {{
-                              processing: 'En preparación',
-                              shipped: 'Enviado',
-                              delivered: 'Entregado',
+                              processing: t.preparingOrder,
+                              shipped: t.shipped,
+                              delivered: t.delivered,
                             }[statusOption] || statusOption}
                           </option>
                         ))}
@@ -4385,6 +6881,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     <div className="space-y-1">
                       <Label>Transportista</Label>
                       <Input
+                        className="min-h-12 text-base focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         maxLength={50}
                         placeholder="Ej. transportista local"
                         value={form.trackingCarrier ?? order.trackingCarrier ?? ''}
@@ -4396,8 +6893,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       />
                     </div>
                     <div className="space-y-1 sm:col-span-2">
-                      <Label>Número de seguimiento</Label>
+                      <Label>{t.trackingNumber}</Label>
                       <Input
+                        className="min-h-12 text-base focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         maxLength={100}
                         placeholder="Código o referencia del envío"
                         value={form.trackingNumber ?? order.trackingNumber ?? ''}
@@ -4409,9 +6907,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       />
                     </div>
                     <div className="space-y-1 sm:col-span-2">
-                      <Label>Notas para el comprador</Label>
+                      <Label>{t.buyerNotes}</Label>
                       <textarea
-                        className="w-full min-h-20 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                        className="min-h-24 w-full rounded-lg border border-input bg-background px-3 py-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1"
                         maxLength={1000}
                         placeholder="Información sobre la preparación o entrega"
                         value={form.notes ?? ''}
@@ -4423,8 +6921,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       />
                     </div>
                     <div className="space-y-1 sm:col-span-2">
-                      <Label>Fotos de entrega (máximo 4 por actualización)</Label>
+                      <Label>{t.deliveryPhotos}</Label>
                       <Input
+                        className="min-h-12 cursor-pointer py-2 text-sm focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1 file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-semibold"
                         type="file"
                         accept="image/jpeg,image/png,image/webp"
                         multiple
@@ -4452,8 +6951,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                           }
                         }}
                       />
-                      <p className="text-xs text-muted-foreground">
-                        Las fotos seleccionadas se subirán al guardar. Fotos ya registradas: {photos.length}/12.
+                      <p className="rounded-lg bg-muted/50 p-3 text-sm leading-relaxed text-muted-foreground">
+                        Puedes seleccionar hasta 4 fotos por actualización. Se subirán al guardar.
+                        Fotos registradas: <span className="font-semibold text-foreground">{photos.length}/12</span>.
                       </p>
                       {(form.deliveryPhotos || []).length > 0 && (
                         <p className="text-xs">{form.deliveryPhotos.length} foto(s) nuevas seleccionadas.</p>
@@ -4462,13 +6962,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                   </div>
 
                   {message && (
-                    <p className={`text-sm ${message.type === 'error' ? 'text-destructive' : 'text-green-600'}`}>
+                    <p role="status" aria-live="polite" className={`rounded-lg border p-3 text-sm font-medium ${message.type === 'error' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-green-600/30 bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-300'}`}>
                       {message.text}
                     </p>
                   )}
 
                   <Button
-                    className="bg-[#00A86B] hover:bg-[#008F5B] text-white"
+                    className="min-h-12 w-full bg-[#00A86B] px-5 py-3 font-semibold text-white shadow-sm transition-colors hover:bg-[#008F5B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                     disabled={!paid || saving}
                     onClick={async () => {
                       setSellerOrderSaving((old) => ({ ...old, [order.id]: true }));
@@ -4500,24 +7000,72 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       } catch (error) {
                         setSellerOrderMessage((old) => ({
                           ...old,
-                          [order.id]: { type: 'error', text: error?.message || 'No se pudo guardar el seguimiento.' }
+                          [order.id]: { type: 'error', text: error?.message || t.trackingSaveError }
                         }));
                       } finally {
                         setSellerOrderSaving((old) => ({ ...old, [order.id]: false }));
                       }
                     }}
                   >
-                    {saving ? 'Guardando...' : 'Guardar seguimiento'}
+                    {saving ? t.saving : t.saveTracking}
                   </Button>
+
+                  <div className="space-y-2">
+                      {order.sellerDeliveryConfirmation?.confirmedAt ? (
+                        <p className="text-sm font-medium text-green-700">
+                          {t.deliveryConfirmSuccess}
+                        </p>
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-12 w-full border-green-700 px-4 py-3 font-semibold text-green-800 transition-colors hover:bg-green-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2 dark:text-green-300 dark:hover:bg-green-950/30 sm:w-auto"
+                          disabled={!paid || saving || !order.publicInvoiceId}
+                          onClick={async () => {
+                            setSellerOrderSaving((old) => ({ ...old, [order.id]: true }));
+                            setSellerOrderMessage((old) => ({ ...old, [order.id]: null }));
+                            try {
+                              await api(`/seller/orders/${encodeURIComponent(order.id)}/confirm-delivery`, {
+                                method: 'POST',
+                                token,
+                                body: { publicInvoiceId: order.publicInvoiceId },
+                              });
+                              const result = await api('/seller/orders', { token });
+                              setSellerOrders(
+                                Array.isArray(result?.orders)
+                                  ? result.orders.filter((item) => item && typeof item === 'object')
+                                  : []
+                              );
+                              setSellerOrderMessage((old) => ({
+                                ...old,
+                                [order.id]: { type: 'success', text: t.deliveryConfirmSuccess },
+                              }));
+                            } catch (error) {
+                              setSellerOrderMessage((old) => ({
+                                ...old,
+                                [order.id]: {
+                                  type: 'error',
+                                  text: error?.message || t.deliveryConfirmError,
+                                },
+                              }));
+                            } finally {
+                              setSellerOrderSaving((old) => ({ ...old, [order.id]: false }));
+                            }
+                          }}
+                        >
+                          {saving ? t.saving : t.confirmDelivery}
+                        </Button>
+                      )}
+                  </div>
 
                   {photos.length > 0 && (
                     <div className="space-y-2">
-                      <h4 className="text-sm font-semibold">Fotos registradas</h4>
+                      <h4 className="text-sm font-semibold">{t.registeredPhotos}</h4>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         {photos.map((photo, index) => (
                           <a key={`${photo}-${index}`} href={photo} target="_blank" rel="noreferrer">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={photo} alt={`Foto de entrega ${index + 1}`}
+                            <img src={photo} alt={`${t.deliveryPhotoAlt} ${index + 1}`}
                               className="w-full h-24 object-cover rounded-md border" loading="lazy" />
                           </a>
                         ))}
@@ -4526,13 +7074,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                   )}
 
                   {history.length > 0 && (
-                    <details>
-                      <summary className="cursor-pointer text-sm font-semibold">Historial de estados</summary>
+                    <details className="rounded-lg border border-border/80 p-3">
+                      <summary className="min-h-11 cursor-pointer py-2 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700">{t.shippingHistory}</summary>
                       <div className="mt-2 space-y-2">
                         {history.map((entry, index) => (
                           <div key={`${entry.at || index}-${index}`} className="border-l-2 pl-3 py-1 text-sm">
                             <div className="font-medium">
-                              {entry.status || 'Actualización'}
+                              {getOrderStatusLabel(entry.status || 'processing')}
                               {entry.at ? ` · ${new Date(entry.at).toLocaleString()}` : ''}
                             </div>
                             {entry.notes && <p className="text-muted-foreground">{entry.notes}</p>}
@@ -4553,16 +7101,24 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason }) => {
+const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel, onReviewCarrier }) => {
   const [editBiz, setEditBiz] = useState(null);
-  const payments = Array.isArray(data?.payments) ? data.payments : [];
-  const users = Array.isArray(data?.users) ? data.users : [];
-  const products = Array.isArray(data?.products) ? data.products : [];
+  const [showBusinessEditControls, setShowBusinessEditControls] = useState(false);
+  const payments = Array.isArray(data?.payments) ? data.payments.filter(Boolean) : [];
+  const users = Array.isArray(data?.users) ? data.users.filter(Boolean) : [];
+  const products = Array.isArray(data?.products) ? data.products.filter(Boolean) : [];
+  const orders = Array.isArray(data?.orders) ? data.orders.filter(Boolean) : [];
   const stats = data?.stats ?? null;
-  const reports = Array.isArray(data?.reports) ? data.reports : [];
+  const reports = Array.isArray(data?.reports) ? data.reports.filter(Boolean) : [];
   const pending = payments.filter((p) => p?.status === 'pending');
   const pendingReports = reports.filter((r) => r?.status === 'pending');
-  const cryptoInvoices = data.cryptoInvoices || [];
+  const cryptoInvoices = Array.isArray(data?.cryptoInvoices) ? data.cryptoInvoices.filter(Boolean) : [];
+  const transfermovilEvents = Array.isArray(data?.transfermovilEvents) ? data.transfermovilEvents.filter(Boolean) : [];
+  const carriers = Array.isArray(data?.carriers) ? data.carriers.filter(Boolean) : [];
+  const pendingCarriers = carriers.filter((c) => c.status === 'pending');
+  const transfermovilPending = transfermovilEvents.filter((event) =>
+    ['pending_review', 'matching_reference', 'paid_reconciliation_error'].includes(event?.status)
+  ).length;
   const cryptoPending = cryptoInvoices.filter((i) => i.status === 'submitted' || i.status === 'pending').length;
   return (
     <section className="container mx-auto px-4 py-8">
@@ -4593,15 +7149,52 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
         </div>
       )}
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
+        <TabsList className="flex h-auto flex-wrap gap-1">
+          <TabsTrigger value="overview">Resumen</TabsTrigger>
           <TabsTrigger value="payments">Pagos {pending.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pending.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="crypto-invoices">Crypto Invoices {cryptoPending > 0 && <Badge className="ml-2 bg-blue-500 text-white border-0">{cryptoPending}</Badge>}</TabsTrigger>
-          <TabsTrigger value="orders">Pedidos ({(data.orders || []).length})</TabsTrigger>
+          <TabsTrigger value="transfermovil">
+            Transfermóvil {transfermovilPending > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{transfermovilPending}</Badge>}
+          </TabsTrigger>
+          <TabsTrigger value="orders">Pedidos ({orders.length})</TabsTrigger>
           <TabsTrigger value="reports">Reportes {pendingReports.length > 0 && <Badge className="ml-2 bg-red-500 text-white border-0">{pendingReports.length}</Badge>}</TabsTrigger>
           <TabsTrigger value="users">Usuarios</TabsTrigger>
           <TabsTrigger value="products">Productos</TabsTrigger>
           <TabsTrigger value="settings">Configuración</TabsTrigger>
+          <TabsTrigger value="carriers">Transportistas {pendingCarriers.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pendingCarriers.length}</Badge>}</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="mt-4 space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            {[
+              { label: 'Productos', value: stats?.products ?? products.length, tab: 'products', icon: Store },
+              { label: 'Negocios', value: stats?.businesses ?? '—', tab: 'users', icon: LayoutDashboard },
+              { label: 'Usuarios', value: stats?.users ?? users.length, tab: 'users', icon: ShieldCheck },
+              { label: 'Pagos pendientes', value: pending.length, tab: 'payments', icon: CreditCard },
+              { label: 'Facturas cripto pendientes', value: cryptoPending, tab: 'crypto-invoices', icon: Wallet },
+              { label: 'Transfermóvil por revisar', value: transfermovilPending, tab: 'transfermovil', icon: CheckCircle },
+              { label: 'Pedidos', value: orders.length, tab: 'orders', icon: ShoppingBag },
+              { label: 'Reportes pendientes', value: pendingReports.length, tab: 'reports', icon: AlertCircle },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.label}
+                  type="button"
+                  onClick={() => setTab(item.tab)}
+                  className="min-h-24 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                >
+                  <span className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    {item.label}
+                  </span>
+                  <span className="mt-2 block text-2xl font-bold">{item.value}</span>
+                  <span className="mt-1 block text-xs text-primary">Abrir sección →</span>
+                </button>
+              );
+            })}
+          </div>
+        </TabsContent>
 
         <TabsContent value="payments" className="mt-4 space-y-3">
           {payments.length === 0 ? <p className="text-muted-foreground text-center py-12">No hay pagos.</p> : payments.map((p) => (
@@ -4659,7 +7252,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                     }>{inv.status}</Badge>
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">
-                    {inv.currency} {inv.network} · {Number(inv.expectedAmount).toLocaleString('es-ES', {minimumFractionDigits: 2})} {inv.currency} · {inv.txHash ? inv.txHash.slice(0, 16) + '...' : 'sin hash'}
+                    {inv.currency} {inv.network} · {Number(inv.expectedAmount).toLocaleString('es-ES', {minimumFractionDigits: 2, maximumFractionDigits: 4})} {inv.currency} · {inv.txHash ? inv.txHash.slice(0, 16) + '...' : 'sin hash'}
                   </div>
                   {inv.txHash && (
                     <a
@@ -4719,10 +7312,54 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
           )}
         </TabsContent>
 
+        <TabsContent value="transfermovil" className="mt-4 space-y-3">
+          <div className="rounded-md border p-3 text-sm">
+            <p className="font-semibold">Revisión manual de SMS</p>
+            <p className="text-muted-foreground">
+              Recibir un mensaje no confirma el pago. Comprueba el importe,
+              el destinatario y la referencia antes de gestionar cualquier pedido.
+            </p>
+          </div>
+          {transfermovilEvents.length === 0 ? (
+            <p className="text-muted-foreground text-center py-12">
+              No hay SMS registrados para revisar.
+            </p>
+          ) : transfermovilEvents.map((event) => (
+            <Card key={event._id}>
+              <CardContent className="p-4 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant={event.status === 'pending_review' ? 'default' : 'secondary'}>
+                    {event.status || 'sin estado'}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    Recibido: {event.receivedAt ? new Date(event.receivedAt).toLocaleString('es-ES') : 'fecha no disponible'}
+                  </span>
+                </div>
+                <p className="text-sm">
+                  <span className="font-semibold">Remitente:</span> {event.sender || 'No indicado'}
+                </p>
+                <div className="rounded-md bg-muted p-3 text-sm whitespace-pre-wrap break-words">
+                  {event.smsText || 'Mensaje vacío'}
+                </div>
+                {event.matchedOrderId && (
+                  <p className="text-sm">
+                    <span className="font-semibold">Pedido relacionado:</span> {event.matchedOrderId}
+                  </p>
+                )}
+                {event.reviewNotes && (
+                  <p className="text-sm text-muted-foreground">
+                    <span className="font-semibold">Notas:</span> {event.reviewNotes}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
+
         <TabsContent value="orders" className="mt-4 space-y-3">
-          {(data.orders || []).length === 0 ? (
+          {orders.length === 0 ? (
             <p className="text-muted-foreground text-center py-12">Todavía no hay pedidos.</p>
-          ) : (data.orders || []).map((order) => (
+          ) : orders.map((order) => (
             <Card key={order.id}>
               <CardContent className="p-4 space-y-3">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
@@ -4736,7 +7373,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                     <p className="text-sm">Teléfono: {order.shipping?.phone || '—'}</p>
                   </div>
                   <div className="space-y-2 md:text-right">
-                    <Badge>{order.status || 'pending_payment'}</Badge>
+                    <Badge>{typeof getOrderStatusLabel === 'function' ? getOrderStatusLabel(order.status || 'pending_payment') : (order.status || 'Pendiente')}</Badge>
                     <p className="font-bold text-lg">
                       {order.currency || 'USD'} {Number(order.total ?? order.subtotal ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
@@ -4752,11 +7389,11 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
 
                 <div>
                   <h4 className="font-semibold mb-2">Productos comprados</h4>
-                  {(order.items || []).length === 0 ? (
+                  {(Array.isArray(order.items) ? order.items.filter(Boolean) : []).length === 0 ? (
                     <p className="text-sm text-muted-foreground">El pedido no contiene artículos visibles.</p>
                   ) : (
                     <div className="space-y-2">
-                      {order.items.map((item, index) => (
+                      {(Array.isArray(order.items) ? order.items.filter(Boolean) : []).map((item, index) => (
                         <div key={item.productId || index} className="flex justify-between gap-3 text-sm border-b pb-2">
                           <span>{item.productName || 'Producto'} × {Number(item.quantity || 0)}</span>
                           <span className="font-medium">
@@ -4770,7 +7407,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
 
                 {(order.trackingNumber || order.trackingCarrier) && (
                   <p className="text-sm">
-                    Seguimiento: {order.trackingCarrier || 'Transportista no indicado'} · {order.trackingNumber || 'Número pendiente'}
+                    {t.trackingLabel}: {order.trackingCarrier || t.carrierNotSpecified} · {order.trackingNumber || t.numberPending}
                   </p>
                 )}
                 {order.adminNotes && <p className="text-sm text-muted-foreground">Notas: {order.adminNotes}</p>}
@@ -4803,6 +7440,28 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
         </TabsContent>
 
         <TabsContent value="users" className="mt-4 space-y-2">
+          <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+            <div>
+              <h3 className="font-semibold">Editar negocios</h3>
+              <p className="text-sm text-muted-foreground">
+                Los controles de edición permanecen ocultos hasta que los necesites.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant={showBusinessEditControls ? "default" : "outline"}
+              aria-label={showBusinessEditControls ? "Ocultar edición de negocios" : "Mostrar edición de negocios"}
+              aria-expanded={showBusinessEditControls}
+              onClick={() => {
+                if (showBusinessEditControls) setEditBiz(null);
+                setShowBusinessEditControls((visible) => !visible);
+              }}
+            >
+              <Pencil className="mr-2 h-4 w-4" />
+              {showBusinessEditControls ? "Ocultar" : "Editar negocios"}
+            </Button>
+          </div>
           {users.map((u) => (
             <Card key={u.id}>
               <CardContent className="p-4 flex flex-col md:flex-row gap-3 md:items-center">
@@ -4841,7 +7500,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                       <SelectItem value="premium">Premium</SelectItem>
                     </SelectContent>
                   </Select>
-                  {u.business && (
+                  {showBusinessEditControls && u.business && (
                     <Button size="sm" variant="outline" onClick={() => setEditBiz(u.business)}>
                       <Pencil className="h-3 w-3 mr-1" /> Editar negocio
                     </Button>
@@ -4863,7 +7522,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
               </CardContent>
             </Card>
           ))}
-          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={(id, patch) => { onUpdateBusiness(id, patch); setEditBiz(null); }} compressLogo={compressLogo} businessTypes={businessTypes} />
+          <BusinessEditDialog biz={editBiz} onClose={() => setEditBiz(null)} onSave={async (id, patch) => { const saved = await onUpdateBusiness(id, patch); if (saved) setEditBiz(null); return saved; }} compressLogo={compressLogo} businessTypes={businessTypes} />
         </TabsContent>
 
         <TabsContent value="products" className="mt-4">
@@ -4875,7 +7534,7 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
                 </div>
                 <CardContent className="p-3">
                   <div className="font-semibold truncate">{p.name}</div>
-                  <div className="text-xs text-muted-foreground truncate">{p.business?.name} · {formatPrice(p.price, p.currency)}</div>
+                  <div className="text-xs text-muted-foreground truncate">{p.business?.name} · <PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
                   <Button size="sm" variant="outline" onClick={() => onDeleteProduct(p.id)} className="mt-2 w-full text-destructive border-destructive/40">
                     <Trash2 className="h-3 w-3 mr-1" /> Eliminar
                   </Button>
@@ -4885,17 +7544,108 @@ const AdminDashboard = ({ data, settings, setSettings, onApprove, onReject, onUp
           </div>
         </TabsContent>
 
+        <TabsContent value="carriers" className="mt-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-bold">Solicitudes de transportistas</h2>
+              <p className="text-sm text-muted-foreground">
+                {pendingCarriers.length} pendientes · {carriers.length} registros en total
+              </p>
+            </div>
+            <Button size="sm" variant="outline" onClick={onRefresh}>Actualizar</Button>
+          </div>
+
+          {carriers.length === 0 ? (
+            <Card><CardContent className="p-6 text-center text-muted-foreground">
+              No hay solicitudes de transportistas.
+            </CardContent></Card>
+          ) : carriers.map((c) => (
+            <Card key={c.id} className="overflow-hidden">
+              <CardContent className="p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-bold">{c.fullName || 'Sin nombre'}</div>
+                  <Badge variant={c.status === 'approved' ? 'default' : c.status === 'rejected' || c.status === 'suspended' ? 'destructive' : 'secondary'}>
+                    {({
+                      pending: 'Pendiente',
+                      approved: 'Aprobado',
+                      active: 'Activo',
+                      rejected: 'Rechazado',
+                      suspended: 'Suspendido',
+                    })[c.status] || c.status || 'Sin estado'}
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                  <div><span className="text-muted-foreground">Correo:</span> {c.userEmail || '—'}</div>
+                  <div><span className="text-muted-foreground">Teléfono:</span> {c.phone || '—'}</div>
+                  <div><span className="text-muted-foreground">Vehículo:</span> {c.vehicleType || '—'}</div>
+                  <div><span className="text-muted-foreground">Matrícula:</span> {c.vehiclePlate || '—'}</div>
+                  <div><span className="text-muted-foreground">Provincia:</span> {c.province || '—'}</div>
+                  <div><span className="text-muted-foreground">Modalidad:</span> {c.transportMode || '—'}</div>
+                </div>
+
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Municipios:</span>{' '}
+                  {Array.isArray(c.municipalities) ? c.municipalities.join(', ') : '—'}
+                </div>
+
+                {c.experience && <p className="text-sm"><span className="text-muted-foreground">Experiencia:</span> {c.experience}</p>}
+                {c.availability && <p className="text-sm"><span className="text-muted-foreground">Disponibilidad:</span> {c.availability}</p>}
+                {c.reviewNotes && <p className="text-sm text-muted-foreground">Observaciones administrativas: {c.reviewNotes}</p>}
+
+                <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
+                  {c.status === 'pending' && (
+                    <>
+                      <Button size="sm" onClick={() => onReviewCarrier?.(c.id, 'approved', '')}>
+                        <Check className="h-4 w-4 mr-1" /> Aprobar
+                      </Button>
+                      <Button size="sm" variant="outline" className="text-destructive" onClick={() => {
+                        const reason = window.prompt('Motivo del rechazo:');
+                        if (reason !== null) onReviewCarrier?.(c.id, 'rejected', reason.trim());
+                      }}>
+                        <XCircle className="h-4 w-4 mr-1" /> Rechazar
+                      </Button>
+                    </>
+                  )}
+
+                  {(c.status === 'suspended' || c.status === 'rejected') && (
+                    <Button size="sm" onClick={() => onReviewCarrier?.(c.id, 'approved', '')}>
+                      <Check className="h-4 w-4 mr-1" /> Aprobar / Reactivar
+                    </Button>
+                  )}
+
+                  {c.status === 'approved' && (
+                    <Button size="sm" variant="outline" className="text-destructive" onClick={() => {
+                      const reason = window.prompt('Motivo de la suspensión:');
+                      if (reason !== null) onReviewCarrier?.(c.id, 'suspended', reason.trim());
+                    }}>
+                      <AlertCircle className="h-4 w-4 mr-1" /> Suspender
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </TabsContent>
+
         <TabsContent value="settings" className="mt-4">
           {settings && (
             <Card>
               <CardContent className="p-6 space-y-3 max-w-2xl">
+                <div className="rounded-md border border-border p-3 space-y-2">
+                  <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
+                    <input type="checkbox" checked={settings.sellerSalesEnabled !== false} onChange={(e) => setSettings({ ...settings, sellerSalesEnabled: e.target.checked })} />
+                    Permitir ventas en el marketplace
+                  </label>
+                  <p className="text-xs text-muted-foreground">Si se desactiva, se bloquean el catálogo público y la creación de pedidos. La autorización individual de cada negocio se configura en Editar negocio.</p>
+                </div>
                 <div>
                   <Label>Wallet USDC</Label>
                   <Input value={settings.usdcWallet || ''} onChange={(e) => setSettings({ ...settings, usdcWallet: e.target.value })} className="font-mono" />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><Label>Red USDC</Label><Input value={settings.usdcNetwork || ''} onChange={(e) => setSettings({ ...settings, usdcNetwork: e.target.value })} /></div>
-                  <div><Label>Tasa de cambio (CUP por 1 USD)</Label><Input type="number" min="0.01" max="10000" step="0.01" value={settings.usdRate ?? 120} onChange={(e) => setSettings({ ...settings, usdRate: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Ej: 120" /><p className="text-xs text-muted-foreground">Se utiliza para convertir precios en CUP a USDT/USDC.</p></div>
+                  <div><Label>Tasa de cambio (CUP por 1 USD)</Label><Input type="number" min="0.01" max="10000" step="0.01" value={settings.usdRate ?? 120} onChange={(e) => setSettings({ ...settings, usdRate: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Ej: 120" /><p className="text-xs text-muted-foreground">Se utiliza para calcular el equivalente en CUP de precios en USD, USDT y USDC, y los pagos locales.</p></div>
                   <div><Label>Precio Premium (USD)</Label><Input type="number" step="0.01" value={settings.premiumPriceUSD ?? 0} onChange={(e) => setSettings({ ...settings, premiumPriceUSD: Number(e.target.value) })} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -4964,14 +7714,14 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
           )}
         </div>
         <div>
-          <h4 className="font-semibold text-sm mb-3">Legal</h4>
+          <h4 className="font-semibold text-sm mb-3">{t.legalLabel}</h4>
           <div className="space-y-2 text-sm text-muted-foreground">
             <button onClick={() => onLegal('privacy')} className="block hover:text-foreground">{t.privacyPolicy}</button>
             <button onClick={() => onLegal('terms')} className="block hover:text-foreground">{t.terms}</button>
             <button onClick={() => onLegal('contact')} className="block hover:text-foreground">{t.officialContact}</button>
           </div>
           <div className="mt-4">
-            <div className="text-xs text-muted-foreground mb-1">Idioma</div>
+            <div className="text-xs text-muted-foreground mb-1">{t.languageLabel}</div>
             <div className="flex gap-1">
               {Object.entries(FLAGS).map(([k, f]) => (
                 <button key={k} onClick={() => setLang(k)} className={`text-xl p-1 rounded ${lang === k ? 'ring-2 ring-[#1565C0]' : 'opacity-60 hover:opacity-100'}`}>{f}</button>
@@ -4981,7 +7731,7 @@ const Footer = ({ t, settings, onLegal, setLang, lang }) => (
         </div>
       </div>
       <div className="mt-8 pt-6 border-t border-border text-xs text-muted-foreground flex flex-col md:flex-row justify-between gap-2">
-        <div>© 2025 UBIK2 YEMG · Todos los derechos reservados</div>
+        <div>© {new Date().getFullYear()} UBIK2YEMG · {t.rightsReserved}</div>
         <div className="flex gap-4">USDC · Transfermóvil · WhatsApp · Telegram · SMS</div>
       </div>
     </div>
@@ -5201,7 +7951,7 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
               <SelectContent>
                 {ALL_CURRENCIES.map((code) => (
                   <SelectItem key={code} value={code}>
-                    {CURRENCY_INFO[code].flag} {code}
+                    <CurrencyIcon currency={code} /> {code}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -5234,6 +7984,47 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
             </div>
           );
         })()}
+        <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3">
+          <div>
+            <Label className="text-sm font-semibold">Métodos de pago para este producto</Label>
+            <p className="text-xs text-muted-foreground mt-1">
+              Selecciona entre los métodos habilitados y configurados en tu negocio.
+            </p>
+          </div>
+          {getAvailableBusinessPaymentMethods(business).length === 0 ? (
+            <p className="text-sm text-amber-700">
+              No hay métodos de pago configurados en este negocio.
+            </p>
+          ) : (
+            getAvailableBusinessPaymentMethods(business).map((method) => {
+              const labels = {
+                crypto: 'Criptomonedas (USDT/USDC)',
+                transfermovil: 'Transfermóvil',
+                enzona: 'EnZona',
+              };
+              const selected = Array.isArray(form.allowedPaymentMethods)
+                ? form.allowedPaymentMethods
+                : getAvailableBusinessPaymentMethods(business);
+
+              return (
+                <label key={method} className="flex items-center gap-3 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-[#1565C0]"
+                    checked={selected.includes(method)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...selected.filter((item) => item !== method), method]
+                        : selected.filter((item) => item !== method);
+                      setForm({ ...form, allowedPaymentMethods: next });
+                    }}
+                  />
+                  <span>{labels[method]}</span>
+                </label>
+              );
+            })
+          )}
+        </div>
         <div><Label>Ubicación</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
         <div>
           <Label>Imagen del producto</Label>
@@ -5385,7 +8176,7 @@ const PlanDialog = ({ open, onOpenChange, settings, payment, setPayment, onSubmi
         </div>
         {payment.method === 'usdc' && settings && (
           <div className="rounded-lg border bg-amber-50 dark:bg-amber-950/30 p-3 text-xs">
-            <div className="font-semibold text-amber-700 dark:text-amber-300 mb-1">Wallet USDC ({settings.usdcNetwork || 'TRC20'})</div>
+            <div className="font-semibold text-amber-700 dark:text-amber-300 mb-1">Wallet USDC ({settings.usdcNetwork || 'BASE'})</div>
             <div className="font-mono break-all">{settings.usdcWallet || '— sin configurar —'}</div>
             {priceUSD ? <div className="mt-2">Monto a transferir: <b>${Number(priceUSD).toFixed(2)} USDC</b></div> : null}
           </div>
@@ -5512,7 +8303,7 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
                 <SelectTrigger><SelectValue placeholder="Todas" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">Todas</SelectItem>
-                  {ALL_CURRENCIES.map((code) => (<SelectItem key={code} value={code}>{CURRENCY_INFO[code].flag} {code}</SelectItem>))}
+                  {ALL_CURRENCIES.map((code) => (<SelectItem key={code} value={code}><CurrencyIcon currency={code} /> {code}</SelectItem>))}
                 </SelectContent>
               </Select>
             </div>
@@ -5553,6 +8344,248 @@ const FiltersSheet = ({ open, onOpenChange, t, filters, setFilters, onApply, onC
   );
 };
 
+const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }) => {
+  const method = order?.paymentMethod;
+  const details = order?.paymentDetails || {};
+
+  // Priorizar el importe CUP calculado por el servidor.
+  // Compatibilidad con pedidos antiguos que no guardaron ese campo.
+  const savedLocalAmount = Number(order?.localPaymentAmountCUP);
+  const orderCurrency = String(order?.currency || 'CUP').toUpperCase();
+  const originalSubtotal = Number(order?.subtotal);
+  const deliveryFeeCUP = Number(order?.deliveryFeeCUP ?? 0);
+  // No usar la tasa actual para reconstruir importes de pedidos antiguos.
+  const conversionRate = Number(order?.deliveryFeeUsdRate);
+
+  const derivedLocalAmountCUP = orderCurrency === 'CUP'
+    ? (Number.isFinite(Number(order?.total)) && Number(order.total) > 0
+        ? Number(order.total)
+        : null)
+    : ['USD', 'USDT', 'USDC'].includes(orderCurrency) &&
+      Number.isFinite(originalSubtotal) &&
+      originalSubtotal > 0 &&
+      Number.isFinite(conversionRate) &&
+      conversionRate > 0 &&
+      Number.isFinite(deliveryFeeCUP) &&
+      deliveryFeeCUP >= 0
+        ? Math.round((originalSubtotal * conversionRate + deliveryFeeCUP + Number.EPSILON) * 100) / 100
+        : null;
+
+  const localPaymentAmountCUP =
+    Number.isFinite(savedLocalAmount) && savedLocalAmount > 0
+      ? savedLocalAmount
+      : derivedLocalAmountCUP;
+  const [transactionReference, setTransactionReference] = useState(
+    order?.buyerTransactionReference || ''
+  );
+  const [submittingReference, setSubmittingReference] = useState(false);
+  const [editingReference, setEditingReference] = useState(
+    !order?.buyerTransactionReference
+  );
+
+  const submitTransactionReference = async (event) => {
+    event.preventDefault();
+
+    const reference = transactionReference.trim();
+
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(reference)) {
+      return toast.error('Introduce la referencia real de la operación: entre 4 y 100 letras, números, guiones o guiones bajos.');
+    }
+
+    if (!token) {
+      return toast.error('Inicia sesión para registrar la referencia del pago.');
+    }
+
+    if (order?.paymentStatus !== 'pending_payment') {
+      return toast.error('Este pedido ya no está pendiente de pago.');
+    }
+
+    setSubmittingReference(true);
+
+    try {
+      const result = await api(
+        `/orders/${encodeURIComponent(order.id)}/submit-payment-reference`,
+        {
+          method: 'POST',
+          body: { transactionReference: reference },
+          token,
+        }
+      );
+
+      const isPaid = ['paid', 'auto_approved'].includes(result.status);
+
+      onOrderUpdate?.({
+        ...order,
+        buyerTransactionReference: reference,
+        ...(isPaid ? { paymentStatus: 'paid', status: 'paid' } : {}),
+      });
+
+      setEditingReference(false);
+
+      if (isPaid) {
+        toast.success(result.message || 'El pago figura como confirmado.');
+      } else {
+        toast.success(result.message || 'Referencia guardada. El pedido sigue pendiente de verificación.');
+      }
+    } catch (error) {
+      toast.error(error?.message || 'No se pudo registrar la referencia.');
+    } finally {
+      setSubmittingReference(false);
+    }
+  };
+
+  const formatTotal = (value, currency) => {
+    const amount = Number(value);
+    return Number.isFinite(amount)
+      ? `${amount.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || ''}`
+      : '—';
+  };
+
+  return (
+    <section className="container mx-auto max-w-2xl px-4 py-8">
+      <Button variant="ghost" onClick={onBack} className="mb-4">
+        <ArrowLeft className="mr-2 h-4 w-4" /> Volver
+      </Button>
+      <Card className="overflow-hidden shadow-xl">
+        <div className="brand-gradient p-6 text-center text-white">
+          <h1 className="mb-2 text-2xl font-bold">
+            {method === 'transfermovil' ? 'Pago por Transfermóvil' : 'Pago por EnZona'}
+          </h1>
+          <p>Pedido #{String(order.id || '').slice(0, 8).toUpperCase()}</p>
+        </div>
+        <CardContent className="space-y-5 p-6">
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <p className="font-semibold">Estado: pendiente de pago y revisión</p>
+            <p className="mt-1 text-sm">
+              Realiza la transferencia con los datos que aparecen abajo. El pedido no se confirmará automáticamente.
+            </p>
+          </div>
+          <div className="space-y-2 rounded-lg border p-4">
+            <p className="text-sm text-muted-foreground">
+              {localPaymentAmountCUP != null
+                ? 'Importe exacto a transferir (CUP)'
+                : 'Importe no disponible'}
+            </p>
+            {localPaymentAmountCUP != null ? (
+              <p className="text-2xl font-bold">
+                {formatTotal(localPaymentAmountCUP, 'CUP')}
+              </p>
+            ) : (
+              <p className="text-sm font-semibold text-red-600">
+                No se puede calcular el importe en CUP de forma segura.
+                No realices la transferencia. Vuelve atrás e intenta crear el pedido nuevamente.
+              </p>
+            )}
+            {localPaymentAmountCUP != null &&
+              orderCurrency !== 'CUP' && (
+                <p className="text-sm text-muted-foreground">
+                  Importe original del pedido: {formatTotal(order.total, order.currency)}
+                </p>
+              )}
+            {method === 'transfermovil' ? (
+              <>
+                <p><strong>Tarjeta receptora:</strong> {details.recipientNumber || 'No disponible'}</p>
+                <p><strong>Titular:</strong> {details.recipientName || 'No disponible'}</p>
+                <p><strong>Móvil de contacto:</strong> {details.recipientContactPhone || 'No configurado por el vendedor'}</p>
+              </>
+            ) : (
+              <>
+                <p><strong>Destinatario de EnZona:</strong> {details.recipient || 'No disponible'}</p>
+                <p><strong>Tarjeta receptora:</strong> {details.cardNumber || 'No disponible'}</p>
+                <p><strong>Móvil de contacto:</strong> {details.phone || 'No disponible'}</p>
+              </>
+            )}
+            <p><strong>Referencia del pedido:</strong> {order.publicInvoiceId || order.id}</p>
+          </div>
+          <div className="space-y-3 rounded-lg border p-4">
+            {order?.buyerTransactionReference && !editingReference ? (
+              <div className="space-y-3">
+                <p className="text-sm font-semibold">Referencia enviada</p>
+                <p className="break-all rounded-md bg-muted p-3 font-mono text-sm">
+                  {order.buyerTransactionReference}
+                </p>
+                {order.paymentStatus === 'pending_payment' && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    disabled={submittingReference}
+                    onClick={() => {
+                      setTransactionReference(order.buyerTransactionReference || '');
+                      setEditingReference(true);
+                    }}
+                  >
+                    ✏️ Corregir número de transacción
+                  </Button>
+                )}
+              </div>
+            ) : order.paymentStatus === 'pending_payment' ? (
+              <form onSubmit={submitTransactionReference} className="space-y-3">
+                <label htmlFor="transfer-transaction-reference" className="block text-sm font-semibold">
+                  {order?.buyerTransactionReference
+                    ? 'Introduce la referencia correcta'
+                    : 'Referencia real de la transferencia'}
+                </label>
+                <input
+                  id="transfer-transaction-reference"
+                  type="text"
+                  value={transactionReference}
+                  onChange={(event) => setTransactionReference(event.target.value)}
+                  maxLength={100}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Ej.: número de transacción del comprobante"
+                  disabled={submittingReference}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Introduce el número de transacción del comprobante, no el número de pedido.
+                </p>
+                <Button
+                  type="submit"
+                  disabled={submittingReference || !transactionReference.trim()}
+                  className="w-full"
+                >
+                  {submittingReference
+                    ? 'Comprobando referencia…'
+                    : order?.buyerTransactionReference
+                      ? 'Actualizar referencia'
+                      : 'Enviar referencia de pago'}
+                </Button>
+                {order?.buyerTransactionReference && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="w-full"
+                    disabled={submittingReference}
+                    onClick={() => {
+                      setTransactionReference(order.buyerTransactionReference || '');
+                      setEditingReference(false);
+                    }}
+                  >
+                    Cancelar corrección
+                  </Button>
+                )}
+              </form>
+            ) : (
+              <p className="text-sm font-semibold text-green-700">
+                El sistema registra este pedido como pagado. La referencia ya no se puede modificar.
+              </p>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Conserva el comprobante. La referencia se comparará con el SMS recibido por el sistema. Si falta información o hay discrepancias, el pedido seguirá pendiente de revisión. Un SMS por sí solo no constituye una prueba bancaria criptográfica.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={onCancel}>Volver al inicio</Button>
+          </div>
+        </CardContent>
+      </Card>
+    </section>
+  );
+};
+
 const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit, onCancel, submitting, onBack }) => {
   if (!order || !invoice) return null;
 
@@ -5568,11 +8601,18 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
     const padded = raw.padStart(decimals + 1, '0');
     const integerPart = decimals > 0 ? padded.slice(0, -decimals) : padded;
     let fractionalPart = decimals > 0
-      ? padded.slice(-decimals).replace(/0+$/, '')
+      ? padded.slice(-decimals)
       : '';
 
-    if (fractionalPart.length < 2) {
-      fractionalPart = fractionalPart.padEnd(2, '0');
+    if (String(invoice.originalOrderCurrency || '').toUpperCase() === 'CUP') {
+      // Los pedidos CUP convertidos a cripto se generan con 4 decimales.
+      fractionalPart = fractionalPart.slice(0, 4).padEnd(4, '0');
+    } else {
+      // Monedas distintas de CUP y facturas antiguas: formato anterior.
+      fractionalPart = fractionalPart.replace(/0+$/, '');
+      if (fractionalPart.length < 2) {
+        fractionalPart = fractionalPart.padEnd(2, '0');
+      }
     }
 
     const groupedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -5655,7 +8695,7 @@ const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit
               </div>
               <div>
                 <p className="text-muted-foreground">En unidades mínimas</p>
-                <p className="font-mono text-xs break-all">{invoice.expectedAmountRaw}</p>
+                <p className="font-mono text-xs break-all [overflow-wrap:anywhere] leading-relaxed">{invoice.expectedAmountRaw}</p>
               </div>
             </div>
           </div>
@@ -5827,11 +8867,13 @@ const LegalDialog = ({ open, onOpenChange, kind, settings }) => {
 
 const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes = [] }) => {
   const [form, setForm] = useState(null);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (biz) {
       // Pre-load existing values, defaulting new fields safely so admin can edit without losing data
       setForm({
         showContactsPublicly: true, // default visible
+        cryptoEnabled: false, // requiere activación administrativa
         province: '', municipality: '', address: '', openingHours: '', closingHours: '', messenger: '',
         commissionRateBps: 300,
         ...biz,
@@ -5847,7 +8889,8 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
     !form.openingHours && 'horario apertura',
     !form.closingHours && 'horario cierre',
   ].filter(Boolean) : [];
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (saving) return;
     if (!Number.isInteger(Number(form.commissionRateBps)) || Number(form.commissionRateBps) < 0 || Number(form.commissionRateBps) > 3000) {
       toast.error('La comisión debe estar entre 0 % y 30 %.');
       return;
@@ -5856,7 +8899,14 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
       toast.error(`Si ocultas los contactos debes agregar dirección física y horarios. Faltan: ${missing.join(', ')}.`);
       return;
     }
-    onSave(biz.id, form);
+    setSaving(true);
+    try {
+      await onSave(biz.id, form);
+    } catch (e) {
+      toast.error(e?.message || 'No se pudo guardar el negocio.');
+    } finally {
+      setSaving(false);
+    }
   };
   return (
     <Dialog open={!!biz} onOpenChange={(v) => !v && onClose()}>
@@ -5882,6 +8932,13 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             <div><Label>País</Label><Input value={form.country || ''} onChange={(e) => setForm({ ...form, country: e.target.value })} placeholder="Cuba" /></div>
           </div>
           <div><Label>Descripción</Label><Textarea value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} /></div>
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
+              <input type="checkbox" checked={form.sellingApproved === true} onChange={(e) => setForm({ ...form, sellingApproved: e.target.checked })} />
+              Autorizar este negocio para vender
+            </label>
+            <p className="text-xs text-muted-foreground">Si está desactivado, el negocio no puede publicar productos ni recibir pedidos, aunque haya configurado métodos de pago.</p>
+          </div>
 
           {/* === Privacy toggle === */}
           <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
@@ -5907,9 +8964,9 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             )}
           </div>
 
-          {/* === Contact channels (hidden if showContactsPublicly === false) === */}
-          {!hidingContacts && (
-            <>
+          {/* El administrador siempre puede consultar y editar los contactos. */}
+          <div className="rounded-md border border-border p-3 space-y-2">
+            <p className="text-xs text-muted-foreground">Estos datos permanecen visibles para administración aunque los contactos estén ocultos a los compradores.</p>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label>WhatsApp</Label><Input value={form.whatsapp || ''} onChange={(e) => setForm({ ...form, whatsapp: e.target.value })} placeholder="+5355..." /></div>
                 <div><Label>Telegram</Label><Input value={form.telegram || ''} onChange={(e) => setForm({ ...form, telegram: e.target.value })} placeholder="@usuario" /></div>
@@ -5922,8 +8979,7 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
                 <div><Label>Instagram</Label><Input value={form.instagram || ''} onChange={(e) => setForm({ ...form, instagram: e.target.value })} /></div>
                 <div><Label>Facebook</Label><Input value={form.facebook || ''} onChange={(e) => setForm({ ...form, facebook: e.target.value })} /></div>
               </div>
-            </>
-          )}
+          </div>
 
           {/* === Physical location (mandatory when hiding contacts) === */}
           <div className="grid grid-cols-2 gap-2">
@@ -5936,6 +8992,116 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
             <div><Label>Hora cierre {hidingContacts && '*'}</Label><Input type="time" value={form.closingHours || ''} onChange={(e) => setForm({ ...form, closingHours: e.target.value })} /></div>
           </div>
           <div><Label>Ubicación / Ciudad (visible)</Label><Input value={form.location || ''} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
+
+          <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
+            <label className="flex items-center justify-between gap-3 cursor-pointer">
+              <span className="text-sm font-semibold">Aceptar pagos en criptomonedas</span>
+              <input
+                type="checkbox"
+                checked={form.cryptoEnabled === true}
+                onChange={(e) => setForm({ ...form, cryptoEnabled: e.target.checked })}
+                className="h-4 w-4"
+              />
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              Permite pagar con USDT o USDC si la plataforma tiene redes habilitadas.
+            </p>
+          </div>
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <h3 className="font-semibold">Pago por Transfermóvil</h3>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.transfermovilEnabled === true}
+                onChange={(e) => setForm({ ...form, transfermovilEnabled: e.target.checked })}
+              />
+              Habilitar Transfermóvil
+            </label>
+            <div>
+              <Label>Tarjeta receptora</Label>
+              <Input
+                value={form.transfermovilNumber || ''}
+                maxLength={40}
+                onChange={(e) => setForm({ ...form, transfermovilNumber: e.target.value })}
+                placeholder="Número de la tarjeta que recibirá el pago"
+              />
+            </div>
+            <div>
+              <Label>Nombre del titular</Label>
+              <Input
+                value={form.transfermovilName || ''}
+                maxLength={100}
+                onChange={(e) => setForm({ ...form, transfermovilName: e.target.value })}
+                placeholder="Nombre del titular"
+              />
+            </div>
+            <div>
+              <Label>Cuenta Transfermóvil (si corresponde)</Label>
+              <Input value={form.transfermovilAccount || ""} maxLength={100} onChange={(e) => setForm({ ...form, transfermovilAccount: e.target.value })} placeholder="Cuenta receptora" />
+            </div>
+            <div>
+              <Label>Móvil de contacto</Label>
+              <Input
+                type="tel"
+                value={form.transfermovilContactPhone || ''}
+                maxLength={30}
+                onChange={(e) => setForm({ ...form, transfermovilContactPhone: e.target.value })}
+                placeholder="Número de contacto visible para el comprador"
+              />
+            </div>
+            <div>
+              <Label>Móvil para verificar</Label>
+              <Input
+                type="tel"
+                value={form.transfermovilVerificationPhone || ''}
+                maxLength={30}
+                onChange={(e) => setForm({ ...form, transfermovilVerificationPhone: e.target.value })}
+                placeholder="Teléfono que recibe los SMS de Transfermóvil"
+              />
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border p-3 space-y-3">
+            <h3 className="font-semibold">Pago por EnZona</h3>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.enzonaEnabled === true}
+                onChange={(e) => setForm({ ...form, enzonaEnabled: e.target.checked })}
+              />
+              Habilitar EnZona
+            </label>
+            <div>
+              <Label>Destinatario EnZona</Label>
+              <Input
+                value={form.enzonaRecipient || ''}
+                maxLength={150}
+                onChange={(e) => setForm({ ...form, enzonaRecipient: e.target.value })}
+                placeholder="Teléfono, cuenta o identificador receptor"
+              />
+            </div>
+            <div>
+              <Label>Número de tarjeta EnZona</Label>
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={form.enzonaCardNumber || ''}
+                maxLength={60}
+                onChange={(e) => setForm({ ...form, enzonaCardNumber: e.target.value })}
+                placeholder="Número de tarjeta receptora"
+              />
+            </div>
+            <div>
+              <Label>Móvil asociado a EnZona</Label>
+              <Input
+                type="tel"
+                value={form.enzonaPhone || ''}
+                maxLength={30}
+                onChange={(e) => setForm({ ...form, enzonaPhone: e.target.value })}
+                placeholder="Teléfono de contacto"
+              />
+            </div>
+          </div>
 
           <div className="rounded-md border border-border bg-muted/30 p-3 space-y-2">
             <Label>Comisión por venta (%)</Label>
@@ -5962,15 +9128,19 @@ const BusinessEditDialog = ({ biz, onClose, onSave, compressLogo, businessTypes 
               />
             </label>
             <p className="text-[11px] text-muted-foreground">
-              Activa las entregas para este negocio. El vendedor necesita un plan Premium.
+              Solo habilita entregas si el negocio está verificado. El vendedor configura su tarifa en CUP; el comprador necesita plan Premium.
             </p>
           </div>
 
+          <div>
+            <Label>Tarifa de entrega (CUP)</Label>
+            <Input type="number" min="0" max="1000000" step="1" value={form.deliveryFeeCUP ?? 0} onChange={(e) => setForm({ ...form, deliveryFeeCUP: e.target.value === "" ? "" : Number(e.target.value) })} />
+          </div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={!!form.verified} onChange={(e) => setForm({ ...form, verified: e.target.checked })} />
             <ShieldCheck className="h-4 w-4 text-[#1565C0]" /> Marcar como verificado
           </label>
-          <Button onClick={handleSave} className="w-full brand-gradient text-white">Guardar cambios</Button>
+          <Button onClick={handleSave} disabled={saving} className="w-full brand-gradient text-white">{saving ? 'Guardando…' : 'Guardar cambios'}</Button>
         </div>
       </DialogContent>
     </Dialog>

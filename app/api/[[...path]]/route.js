@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto';
 import { MongoClient } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -11,6 +12,7 @@ import { z } from 'zod';
 import { parseUnits, formatUnits, isAddress } from 'viem';
 
 import { verifyCryptoInvoice, verifyPendingInvoices, isValidTronAddress } from '@/lib/crypto-verify';
+import { isValidCubanLocation } from '@/lib/cuba-locations';
 import { checkPrivyConnection } from '@/lib/privy-server';
 
 // Defensive: an undefined MONGO_URL makes the Mongo driver throw the cryptic
@@ -126,7 +128,7 @@ function getCryptoConfig() {
 
 function normalizeTxHash(txHash) {
   if (!txHash) return '';
-  return txHash.toLowerCase().replace(/^0x/, '');
+  return txHash.trim().toLowerCase().replace(/^0x/, '');
 }
 
 // Upload base64/data-URL or raw URL to Cloudinary; return secure URL.
@@ -206,18 +208,47 @@ const productSchema = z.object({
   category: z.string().min(1).max(50),
   subcategory: z.string().max(50).optional(),
   stock: z.number().int().min(0).optional(),
-  image: z.string().url().or(z.string().startsWith('data:')).optional(),
+  image: z.string().url().or(z.string().startsWith('data:')).or(z.literal('')).optional(),
   available: z.boolean().optional(),
   featured: z.boolean().optional(),
   location: z.string().max(200).optional(),
   currency: z.enum(['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC']).default('CUP'),
   showPublicContact: z.boolean().optional(),
+  allowedPaymentMethods: z.array(z.enum(['crypto', 'transfermovil', 'enzona'])).max(3).optional(),
   province: z.string().max(100).optional(),
   municipality: z.string().max(100).optional(),
   address: z.string().max(300).optional(),
   openingHours: z.string().max(50).optional(),
   closingHours: z.string().max(50).optional(),
 });
+
+const PAYMENT_METHODS = ['crypto', 'transfermovil', 'enzona'];
+
+const getAvailableBusinessPaymentMethods = (business) => {
+  if (!business) return [];
+  const methods = [];
+
+  if (business.cryptoEnabled === true) methods.push('crypto');
+
+  const tmReady = business.transfermovilEnabled === true
+    && [
+      business.transfermovilNumber,
+      business.transfermovilName,
+      business.transfermovilContactPhone,
+      business.transfermovilVerificationPhone,
+    ].every((value) => typeof value === 'string' && value.trim());
+  if (tmReady) methods.push('transfermovil');
+
+  const enzonaReady = business.enzonaEnabled === true
+    && [
+      business.enzonaRecipient,
+      business.enzonaCardNumber,
+      business.enzonaPhone,
+    ].every((value) => typeof value === 'string' && value.trim());
+  if (enzonaReady) methods.push('enzona');
+
+  return methods;
+};
 
 const businessSchema = z.object({
   name: z.string().min(1).max(100),
@@ -254,6 +285,7 @@ const settingsSchema = z.object({
   premiumPriceUSD: z.number().min(0).optional(),
   premiumPriceCUP: z.number().min(0).optional(),
   plansEnabled: z.boolean().optional(),
+  sellerSalesEnabled: z.boolean().optional(),
   contactPhone: z.string().max(30).optional(),
   contactEmail: z.string().email().optional(),
   usdRate: z.number().min(0.01).max(10000).optional(), // CUP per USD
@@ -266,10 +298,13 @@ const orderItemSchema = z.object({
 });
 
 const createOrderSchema = z.object({
+  paymentMethod: z.enum(['crypto', 'transfermovil', 'enzona']).optional(),
   items: z.array(orderItemSchema).min(1, 'Al menos un producto requerido'),
   shippingName: z.string().min(1).max(100),
   shippingPhone: z.string().min(8).max(20),
   shippingAddress: z.string().min(5).max(500),
+  shippingProvince: z.string().trim().min(2).max(80).optional(),
+  shippingMunicipality: z.string().trim().min(2).max(80).optional(),
   deliveryMethod: z.enum(['pickup', 'delivery']).optional(),
   shippingRecipientId: z.string().max(50).optional(),
   shippingEmail: z.string().email().max(254).optional(),
@@ -294,6 +329,57 @@ const sellerOrderUpdateSchema = z.object({
   ).max(4).optional(),
 });
 
+
+// ===== CARRIER APPLICATION SCHEMA =====
+const carrierApplicationSchema = z.object({
+  identityNumber: z.string().trim().regex(/^\d{11}$/, 'El carnet debe tener 11 dígitos'),
+  fullName: z.string().trim().min(3).max(100),
+  phone: z.string().trim().min(8).max(20),
+
+  // Domicilio particular: información privada.
+  addressProvince: z.string().trim().min(2).max(80),
+  addressMunicipality: z.string().trim().min(2).max(80),
+  addressLocality: z.string().trim().min(2).max(100),
+  addressStreet: z.string().trim().min(3).max(150),
+  addressReference: z.string().trim().max(200).optional().default(''),
+
+  vehicleType: z.enum(['motorcycle', 'car', 'van', 'truck', 'bicycle', 'other']),
+  vehiclePlate: z.string().trim().max(30).optional().default(''),
+
+  // Zona donde desea prestar servicios.
+  province: z.string().trim().min(2).max(80),
+  municipalities: z.array(z.string().trim().min(2).max(80)).min(1).max(30),
+  coverageAreas: z.array(z.object({
+    province: z.string().trim().min(2).max(80),
+    municipalities: z.array(
+      z.string().trim().min(2).max(80)
+    ).min(1).max(30),
+  })).min(1).max(16).optional(),
+  transportMode: z.enum(['local', 'provincial', 'interprovincial']),
+  experience: z.string().trim().max(1000).optional().default(''),
+  availability: z.string().trim().max(300).optional().default(''),
+});
+
+async function generateCarrierApplicationNumber(db) {
+  const year = new Date().getUTCFullYear();
+  const counter = await db.collection('counters').findOneAndUpdate(
+    { _id: `carrier_applications_${year}` },
+    { $inc: { sequence: 1 } },
+    { upsert: true, returnDocument: 'after' }
+  );
+
+  if (!counter || !Number.isSafeInteger(counter.sequence) || counter.sequence < 1) {
+    throw new Error('No se pudo generar el número de solicitud del transportista.');
+  }
+
+  return `TR-CUB-${year}-${String(counter.sequence).padStart(5, '0')}`;
+}
+
+const carrierReviewSchema = z.object({
+  status: z.enum(['approved', 'rejected', 'suspended']),
+  reviewNotes: z.string().trim().max(1000).optional().default(''),
+});
+
 // ===== CRYPTO INVOICE SCHEMAS =====
 const createOrderCryptoSchema = createOrderSchema.extend({
   shippingPhone: z.string().min(1).max(20),
@@ -305,7 +391,10 @@ const createOrderCryptoSchema = createOrderSchema.extend({
 });
 
 const submitTxSchema = z.object({
-  txHash: z.string().min(32).max(130), // hex with or without 0x
+  txHash: z.string().trim().regex(
+    /^(?:0x)?[0-9a-fA-F]{64}$/,
+    'El hash debe contener exactamente 64 caracteres hexadecimales, con o sin prefijo 0x'
+  ),
 });
 
 const approveInvoiceSchema = z.object({
@@ -462,15 +551,18 @@ async function sendOrderConfirmationEmail(toEmail, name, order) {
   }
   const safeName = (name || '').toString().split(' ')[0] || 'usuario';
   const orderUrl = `${BASE_URL}/?order=${order.id}`;
+  const commercialCode = order.ubikCode || String(order.id || '').slice(0, 8).toUpperCase();
+  const technicalReference = order.publicInvoiceId || order.id;
   const itemsHtml = orderItemsHtml(order.items);
   const shipping = shippingHtml(order.shipping);
 
   const content = `
     <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} 👋</h1>
     <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
-      Gracias por tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong> en <strong>${order.businessName}</strong>.
+      Gracias por tu pedido <strong>#${commercialCode}</strong> en <strong>${order.businessName}</strong>.
       Lo hemos recibido y está <span style="color:#1565C0;font-weight:600;">pendiente de pago</span>.
     </p>
+    <p style="margin:0 0 16px;font-size:12px;color:#6b7280;">Referencia técnica: ${technicalReference}</p>
     <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
       <thead>
         <tr style="background:#f9fafb;">
@@ -499,7 +591,7 @@ async function sendOrderConfirmationEmail(toEmail, name, order) {
   `;
 
   const html = emailWrapper({
-    title: `Pedido confirmado #${order.id.slice(0, 8)}`,
+    title: `Pedido confirmado #${commercialCode}`,
     preheader: `Tu pedido en ${order.businessName} por ${Number(order.total).toLocaleString('es-ES')} ${order.currency} está pendiente de pago.`,
     content,
     footerNote: 'Si no realizaste este pedido, por favor contacta a soporte.',
@@ -509,7 +601,7 @@ async function sendOrderConfirmationEmail(toEmail, name, order) {
     const { data, error } = await resend.emails.send({
       from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
       to: [toEmail],
-      subject: `✅ Pedido confirmado #${order.id.slice(0, 8).toUpperCase()} - ${order.businessName}`,
+      subject: `✅ Pedido confirmado #${commercialCode} - ${order.businessName}`,
       html,
     });
     if (error) {
@@ -656,13 +748,16 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
   }
   const safeName = (name || '').toString().split(' ')[0] || 'usuario';
   const orderUrl = `${BASE_URL}/?order=${order.id}`;
+  const commercialCode = order.ubikCode || String(order.id || '').slice(0, 8).toUpperCase();
+  const technicalReference = order.publicInvoiceId || order.id;
 
   const content = `
     <h1 style="margin:0 0 12px;font-size:20px;font-weight:700;">Hola ${safeName} ✅</h1>
     <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
-      ¡Tu pedido <strong>#${order.id.slice(0, 8).toUpperCase()}</strong> de <strong>${order.businessName}</strong>
+      ¡Tu pedido <strong>#${commercialCode}</strong> de <strong>${order.businessName}</strong>
       ha sido <span style="color:#166534;font-weight:700;">entregado</span>!
     </p>
+    <p style="margin:0 0 16px;font-size:12px;color:#6b7280;">Referencia técnica: ${technicalReference}</p>
     <p style="margin:0 0 16px;font-size:15px;line-height:22px;color:#374151;">
       Esperamos que disfrutes tu compra. Tu opinión nos ayuda a mejorar.
     </p>
@@ -677,8 +772,8 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
   `;
 
   const html = emailWrapper({
-    title: `Pedido entregado #${order.id.slice(0, 8)}`,
-    preheader: `Tu pedido #${order.id.slice(0, 8)} de ${order.businessName} ha sido entregado.`,
+    title: `Pedido entregado #${commercialCode}`,
+    preheader: `Tu pedido #${commercialCode} de ${order.businessName} ha sido entregado.`,
     content,
     footerNote: 'Gracias por confiar en UBIK2 YEMG. ¡Vuelve pronto!',
   });
@@ -687,7 +782,7 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
     const { data, error } = await resend.emails.send({
       from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
       to: [toEmail],
-      subject: `✅ Pedido entregado #${order.id.slice(0, 8).toUpperCase()} - ${order.businessName}`,
+      subject: `✅ Pedido entregado #${commercialCode} - ${order.businessName}`,
       html,
     });
     if (error) {
@@ -699,6 +794,64 @@ async function sendOrderDeliveredEmail(toEmail, name, order) {
   } catch (e) {
     console.error('[Resend] excepción enviando entrega:', e?.message || e);
     return { error: e };
+  }
+}
+
+// Notificar la entrega al comprador y al destinatario registrado.
+// Si ambas direcciones coinciden, enviar un solo correo.
+async function sendOrderDeliveredNotifications(order) {
+  const recipients = new Map();
+
+  const buyerEmail = String(order?.buyerEmail || '').trim();
+  const shippingEmail = String(order?.shipping?.email || '').trim();
+
+  if (buyerEmail) {
+    recipients.set(buyerEmail.toLowerCase(), {
+      email: buyerEmail,
+      name: '',
+    });
+  }
+
+  if (shippingEmail) {
+    const key = shippingEmail.toLowerCase();
+    if (!recipients.has(key)) {
+      recipients.set(key, {
+        email: shippingEmail,
+        name: order?.shipping?.name || '',
+      });
+    }
+  }
+
+  if (recipients.size === 0) {
+    console.warn('[Email] Pedido entregado sin correos de destinatarios:', order?.id);
+    return;
+  }
+
+  const results = await Promise.all(
+    [...recipients.values()].map(async (recipient) => {
+      try {
+        return await sendOrderDeliveredEmail(
+          recipient.email,
+          recipient.name,
+          order
+        );
+      } catch (error) {
+        console.error(
+          '[Email] Error notificando entrega:',
+          order?.id,
+          error?.message || error
+        );
+        return { error };
+      }
+    })
+  );
+
+  const failed = results.filter((result) => result?.error || result?.skipped).length;
+  if (failed) {
+    console.error(
+      '[Email] Resultado de notificaciones de entrega:',
+      { orderId: order?.id, attempted: results.length, failed }
+    );
   }
 }
 
@@ -766,6 +919,33 @@ let _client = null;
 let _connectPromise = null;
 let _indexesEnsured = false;
 let _indexesPromise = null;
+
+const UBIK_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function generateUbikCode() {
+  const bytes = randomBytes(8);
+  let code = 'UBIK2-';
+  for (const byte of bytes) {
+    code += UBIK_CODE_ALPHABET[byte & 31];
+  }
+  return code;
+}
+
+async function generateUniqueUbikCode(orders, excludeId = null) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const candidate = generateUbikCode();
+    const filter = { ubikCode: candidate };
+    if (excludeId !== null) filter._id = { $ne: excludeId };
+
+    const existing = await orders.findOne(
+      filter,
+      { projection: { _id: 1 } }
+    );
+    if (!existing) return candidate;
+  }
+  throw new Error('[Orders] No se pudo generar un código UBIK2 único');
+}
+
 async function ensureIndexes(db) {
   if (_indexesEnsured) return;
   try {
@@ -830,6 +1010,73 @@ async function ensureIndexes(db) {
       throw err;
     });
 
+    // Código comercial UBIK2: completar pedidos antiguos y corregir duplicados.
+    const ordersForUbikCodes = db.collection('orders');
+
+    const missingUbikCodes = await ordersForUbikCodes.find({
+      $or: [
+        { ubikCode: { $exists: false } },
+        { ubikCode: null },
+        { ubikCode: '' }
+      ]
+    }, { projection: { _id: 1 } }).toArray();
+
+    let migratedUbikCodes = 0;
+    for (const doc of missingUbikCodes) {
+      const candidate = await generateUniqueUbikCode(ordersForUbikCodes);
+      const result = await ordersForUbikCodes.updateOne(
+        {
+          _id: doc._id,
+          $or: [
+            { ubikCode: { $exists: false } },
+            { ubikCode: null },
+            { ubikCode: '' }
+          ]
+        },
+        { $set: { ubikCode: candidate } }
+      );
+      migratedUbikCodes += result.modifiedCount;
+    }
+
+    const duplicateUbikCodes = await ordersForUbikCodes.aggregate([
+      { $match: { ubikCode: { $type: 'string', $ne: '' } } },
+      { $group: { _id: '$ubikCode', ids: { $push: '$_id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } }
+    ]).toArray();
+
+    let correctedUbikDuplicates = 0;
+    for (const group of duplicateUbikCodes) {
+      for (const duplicateId of group.ids.slice(1)) {
+        const candidate = await generateUniqueUbikCode(
+          ordersForUbikCodes,
+          duplicateId
+        );
+        const result = await ordersForUbikCodes.updateOne(
+          { _id: duplicateId, ubikCode: group._id },
+          { $set: { ubikCode: candidate } }
+        );
+        correctedUbikDuplicates += result.modifiedCount;
+      }
+    }
+
+    await ordersForUbikCodes.createIndex(
+      { ubikCode: 1 },
+      {
+        unique: true,
+        name: 'orders_ubikCode_unique',
+        partialFilterExpression: { ubikCode: { $type: 'string' } }
+      }
+    ).catch((err) => {
+      err.criticalUbikCodeIndex = true;
+      throw err;
+    });
+
+    if (migratedUbikCodes || correctedUbikDuplicates) {
+      console.log(
+        `[MongoDB] Códigos UBIK2: asignados=${migratedUbikCodes}, duplicados corregidos=${correctedUbikDuplicates}`
+      );
+    }
+
     if (missingInvoiceIds.length || duplicateInvoiceIds.length) {
       console.log(`[MongoDB] Facturas migradas: faltantes=${missingInvoiceIds.length}, grupos duplicados=${duplicateInvoiceIds.length}`);
     }
@@ -862,6 +1109,19 @@ async function ensureIndexes(db) {
       db.collection('orders').createIndex({ businessId: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ status: 1, createdAt: -1 }),
       db.collection('orders').createIndex({ idempotencyKey: 1 }, { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }).catch((err) => { console.error('[MongoDB] Error creando índice idempotencyKey:', err); throw err; }),
+      // SMS de pagos: una referencia solo puede registrarse una vez por proveedor.
+      db.collection('transfer_payment_events').createIndex(
+        { provider: 1, transactionReference: 1 },
+        {
+          unique: true,
+          name: 'transfer_payment_provider_reference_unique',
+          partialFilterExpression: { transactionReference: { $type: 'string' } },
+        }
+      ).catch((err) => {
+        console.error('[MongoDB] No se pudo crear el índice único de referencias SMS:', err?.message || err);
+        err.criticalTransferPaymentReferenceIndex = true;
+        throw err;
+      }),
       // Crypto Invoices (own wallet payments)
       db.collection('crypto_invoices').createIndex({ id: 1 }, { unique: true }).catch(() => {}),
       db.collection('crypto_invoices').createIndex({ orderId: 1 }, { unique: true }).catch(() => {}),
@@ -890,7 +1150,13 @@ async function ensureIndexes(db) {
       console.warn('[MongoDB] Backfill negocios falló (no crítico):', e?.message);
     }
   } catch (e) {
-    if (e?.criticalTxHashIndex || e?.criticalInvoiceIdIndex || e?.criticalSettlementLedgerIndex) throw e;
+    if (
+      e?.criticalTxHashIndex ||
+      e?.criticalInvoiceIdIndex ||
+      e?.criticalSettlementLedgerIndex ||
+      e?.criticalTransferPaymentReferenceIndex ||
+      e?.criticalUbikCodeIndex
+    ) throw e;
     console.warn('[MongoDB] Error creando índices (no crítico):', e?.message);
   }
 }
@@ -939,9 +1205,6 @@ function jsonCached(data, status = 200, maxAge = 60) {
   return NextResponse.json(data, {
     status,
     headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
       'Cache-Control': `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 2}`,
     },
   });
@@ -1087,14 +1350,7 @@ const CURRENCIES = [
 ];
 
 function json(data, status = 200) {
-  return NextResponse.json(data, {
-    status,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    },
-  });
+  return NextResponse.json(data, { status });
 }
 
 function getUserFromToken(request) {
@@ -1140,6 +1396,7 @@ async function getSettings(db) {
       transfermovilNumber: '+5355000000',
       transfermovilName: 'UBIK2 YEMG',
       premiumPriceUSD: 9.99,
+      sellerSalesEnabled: true,
       contactPhone: '+5359195051',
       contactEmail: 'UBIK2YEMG@gmail.com',
       usdRate: 120, // CUP per USD for crypto payment conversion
@@ -1160,11 +1417,987 @@ async function route(request, method, path) {
   const db = await getDb();
   const url = new URL(request.url);
 
+  // ===== TRANSFERMOVIL SMS FORWARDER: recepción segura, nunca confirma pagos =====
+  if (path[0] === 'payments' && path[1] === 'transfermovil' &&
+      path[2] === 'sms' && method === 'POST' && path.length === 3) {
+    const secret = process.env.SMS_FORWARDER_WEBHOOK_SECRET;
+    if (!secret || secret.length < 32) {
+      console.error('[Transfermóvil] Falta SMS_FORWARDER_WEBHOOK_SECRET o es demasiado corta.');
+      return json({ error: 'Webhook no configurado.' }, 503);
+    }
+
+    const supplied = request.headers.get('x-webhook-secret') ||
+      (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+
+    const expectedBuffer = Buffer.from(secret, 'utf8');
+    const suppliedBuffer = Buffer.from(supplied, 'utf8');
+    if (
+      expectedBuffer.length !== suppliedBuffer.length ||
+      !timingSafeEqual(expectedBuffer, suppliedBuffer)
+    ) {
+      return json({ error: 'No autorizado.' }, 401);
+    }
+
+    let payload;
+    let rawBody;
+    try {
+      rawBody = await request.text();
+      if (rawBody.length > 20000) {
+        return json({ error: 'Mensaje demasiado grande.' }, 413);
+      }
+      payload = JSON.parse(rawBody);
+    } catch {
+      return json({ error: 'JSON inválido.' }, 400);
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return json({ error: 'Formato de evento inválido.' }, 400);
+    }
+
+    const smsText = [payload.message, payload.text, payload.body, payload.sms]
+      .find(value => typeof value === 'string' && value.trim());
+
+    if (!smsText || smsText.length > 10000) {
+      return json({ error: 'Falta el texto del SMS o excede el límite.' }, 400);
+    }
+
+    // Aceptar exclusivamente los dos formatos SMS autorizados.
+    const text = smsText.trim();
+    let parsed = null;
+    let match = text.match(
+      /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})$/i
+    );
+
+    if (match) {
+      parsed = {
+        provider: 'transfermovil',
+        receiverAccount: match[2],
+        amountText: match[3],
+        transactionReference: match[4],
+        senderPhone: match[1],
+        transactionDate: null,
+      };
+    } else {
+      match = text.match(
+        /^ENZONA\s+transferencia recibida\s+Importe:\s*([\d.,]+)\s+CUP\s+No\.:\s*([A-Z0-9_-]{4,100})$/i
+      );
+
+      if (match) {
+        parsed = {
+          provider: 'enzona',
+          receiverAccount: null,
+          amountText: match[1],
+          transactionReference: match[2],
+          senderPhone: null,
+          transactionDate: null,
+        };
+      }
+    }
+
+    let amount = null;
+    if (parsed) {
+      let value = parsed.amountText.replace(/\s/g, '');
+      if (value.includes(',') && value.includes('.')) {
+        value = value.replace(/,/g, '');
+      } else if (value.includes(',')) {
+        value = value.replace(',', '.');
+      }
+      const n = Number(value);
+      if (Number.isFinite(n) && n > 0 && n < 1e12) {
+        amount = Math.round(n * 100) / 100;
+      } else {
+        parsed = null;
+      }
+    }
+
+    // No almacenar SMS que no coincidan exactamente con un formato autorizado.
+    if (!parsed || amount === null) {
+      return json({ error: 'Formato de SMS no admitido.' }, 422);
+    }
+
+    // Un hash del cuerpo permite reconocer reintentos idénticos.
+    const eventId = createHmac('sha256', secret).update(rawBody).digest('hex');
+    const receivedAt = new Date().toISOString();
+
+    try {
+      await db.collection('transfer_payment_events').insertOne({
+        _id: eventId,
+        provider: parsed?.provider || 'transfermovil',
+        transactionReference: parsed?.transactionReference || null,
+        amount,
+        currency: parsed ? 'CUP' : null,
+        receiverAccount: parsed?.receiverAccount || null,
+        senderPhone: parsed?.senderPhone || null,
+        transactionDate: parsed?.transactionDate || null,
+        smsText: text,
+        sender: typeof payload.sender === 'string' ? payload.sender.slice(0, 100) : '',
+        deviceReceivedAt: typeof payload.receivedAt === 'string'
+          ? payload.receivedAt.slice(0, 100) : null,
+        receivedAt,
+        status: 'pending_review',
+        matchedOrderId: null,
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNotes: parsed
+          ? 'SMS reconocido; pendiente de revisión del pedido.'
+          : 'Formato SMS no reconocido; requiere revisión manual.',
+      });
+    } catch (e) {
+      if (e?.code === 11000) {
+        return json({ ok: true, duplicate: true, status: 'pending_review' });
+      }
+      console.error('[Transfermóvil] No se pudo guardar el evento:', e?.message || e);
+      return json({ error: 'No se pudo registrar el SMS.' }, 500);
+    }
+
+    // Confirmación automática estricta: únicamente una coincidencia inequívoca.
+    // El SMS por sí solo no es una verificación criptográfica bancaria.
+    let finalStatus = 'pending_review';
+    let matchedOrderId = null;
+    let reviewNotes = !parsed
+      ? 'Formato SMS no reconocido; requiere revisión manual.'
+      : 'No existe una coincidencia inequívoca; requiere revisión manual.';
+
+    if (parsed && amount !== null) {
+      try {
+        const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+        const businesses = await db.collection('businesses').find(
+          parsed.provider === 'transfermovil'
+            ? { transfermovilEnabled: true }
+            : { enzonaEnabled: true }
+        ).toArray();
+
+        // La conciliación automática exige referencia e importe exactos.
+        // No exige coincidencia adicional de la cuenta receptora.
+        const eligibleBusinesses = businesses;
+
+        const businessIds = [
+          ...new Set(
+            eligibleBusinesses
+              .map((business) => business.id)
+              .filter((id) => typeof id === 'string' && id.length > 0)
+          ),
+        ];
+
+        if (businessIds.length > 0) {
+          // La referencia debe coincidir exactamente; el importe por sí solo no basta.
+          const candidates = await db.collection('orders').find({
+            businessId: { $in: businessIds },
+            paymentMethod: parsed.provider,
+            paymentStatus: 'pending_payment',
+            $or: [
+              { currency: 'CUP', total: amount },
+              { localPaymentAmountCUP: amount },
+            ],
+            buyerTransactionReference: parsed.transactionReference,
+            createdAt: { $gte: cutoff },
+          }).limit(2).toArray();
+
+          if (candidates.length === 1) {
+            const candidate = candidates[0];
+            const confirmedAt = new Date().toISOString();
+
+            // Reservar el evento antes de modificar el pedido.
+            const claimResult = await db.collection('transfer_payment_events').updateOne(
+              { _id: eventId, status: 'pending_review' },
+              {
+                $set: {
+                  status: 'matching_reference',
+                  matchingOrderId: candidate.id,
+                },
+              }
+            );
+
+            if (claimResult.modifiedCount !== 1) {
+              reviewNotes = 'El evento SMS ya está siendo procesado o revisado; no se confirmó otro pedido.';
+            } else {
+              const updateResult = await db.collection('orders').updateOne(
+                {
+                  id: candidate.id,
+                  businessId: candidate.businessId,
+                  paymentMethod: parsed.provider,
+                  paymentStatus: 'pending_payment',
+                  $or: [
+                    { currency: 'CUP', total: amount },
+                    { localPaymentAmountCUP: amount },
+                  ],
+                  buyerTransactionReference: parsed.transactionReference,
+                  createdAt: { $gte: cutoff },
+                },
+                {
+                  $set: {
+                    paymentStatus: 'paid',
+                    status: 'paid',
+                    paymentRef: {
+                      provider: parsed.provider,
+                      transactionReference: parsed.transactionReference,
+                      amount,
+                      currency: 'CUP',
+                      receiverAccount: parsed.receiverAccount,
+                      senderPhone: parsed.senderPhone,
+                      transactionDate: parsed.transactionDate,
+                      receivedAt,
+                      confirmedAt,
+                      verificationMethod: 'auto-sms-verification',
+                    },
+                    updatedAt: confirmedAt,
+                  },
+                  $push: {
+                    statusHistory: {
+                      status: 'paid',
+                      at: confirmedAt,
+                      by: 'auto-sms-verification',
+                      notes: `Referencia ${parsed.transactionReference} recibida por SMS (${parsed.provider}).`,
+                    },
+                  },
+                }
+              );
+
+              if (updateResult.modifiedCount === 1) {
+                finalStatus = 'auto_approved';
+                matchedOrderId = candidate.id;
+                reviewNotes = 'Pedido confirmado automáticamente por coincidencia exacta. La recepción del SMS no constituye verificación bancaria criptográfica.';
+
+                const finalizeResult = await db.collection('transfer_payment_events').updateOne(
+                  {
+                    _id: eventId,
+                    status: 'matching_reference',
+                    matchingOrderId: candidate.id,
+                  },
+                  {
+                    $set: {
+                      status: 'auto_approved',
+                      matchedOrderId: candidate.id,
+                      reviewedAt: confirmedAt,
+                      reviewNotes,
+                    },
+                    $unset: { matchingOrderId: '' },
+                  }
+                );
+
+                if (finalizeResult.modifiedCount !== 1) {
+                  console.error(
+                    '[Transfermóvil] CRÍTICO: pedido pagado, pero no se pudo finalizar el evento SMS.',
+                    { eventId, orderId: candidate.id }
+                  );
+                  finalStatus = 'paid_reconciliation_error';
+                  reviewNotes = 'El pedido quedó pagado, pero el evento SMS no se finalizó. Requiere revisión administrativa.';
+
+                  try {
+                    await db.collection('transfer_payment_events').updateOne(
+                      {
+                        _id: eventId,
+                        status: 'matching_reference',
+                        matchingOrderId: candidate.id,
+                      },
+                      {
+                        $set: {
+                          status: 'paid_reconciliation_error',
+                          matchedOrderId: candidate.id,
+                          reviewNotes,
+                          reviewedAt: confirmedAt,
+                        },
+                      }
+                    );
+                  } catch (finalizeRecoveryError) {
+                    console.error(
+                      '[Transfermóvil] No se pudo marcar el evento para revisión administrativa:',
+                      finalizeRecoveryError?.message || finalizeRecoveryError
+                    );
+                  }
+                }
+
+                if (finalizeResult.modifiedCount === 1 && typeof candidate.buyerEmail === 'string' && candidate.buyerEmail.trim()) {
+                  sendPaymentConfirmedEmail(
+                    candidate.buyerEmail,
+                    candidate.shipping?.name || '',
+                    {
+                      ...candidate,
+                      paymentStatus: 'paid',
+                      status: 'paid',
+                    },
+                    null
+                  ).catch((e) => {
+                    console.error('[Email] Error enviando confirmación de pago por SMS:', e?.message || e);
+                  });
+                }
+              } else {
+                reviewNotes = 'El pedido dejó de estar pendiente antes de actualizarse; requiere revisión manual.';
+
+                await db.collection('transfer_payment_events').updateOne(
+                  {
+                    _id: eventId,
+                    status: 'matching_reference',
+                    matchingOrderId: candidate.id,
+                  },
+                  {
+                    $set: {
+                      status: 'pending_review',
+                      matchedOrderId: null,
+                      reviewNotes,
+                    },
+                    $unset: { matchingOrderId: '' },
+                  }
+                );
+              }
+            }
+          } else if (candidates.length > 1) {
+            reviewNotes = 'Hay varios pedidos pendientes con el mismo importe; no se confirmó ninguno.';
+          } else {
+            reviewNotes = 'No se encontró un pedido pendiente compatible dentro de las últimas 48 horas.';
+          }
+        } else {
+          reviewNotes = parsed.provider === 'transfermovil'
+            ? 'No hay negocios con Transfermóvil habilitado para asociar este pago.'
+            : 'No hay negocios con EnZona habilitado para asociar este pago.';
+        }
+      } catch (e) {
+        console.error('[Transfermóvil] Error durante la coincidencia automática:', e?.message || e);
+        reviewNotes = 'Error al comprobar coincidencias; requiere revisión manual.';
+
+        // Recuperación conservadora: nunca liberar un evento sin comprobar el pedido.
+        try {
+          const claimedEvent = await db.collection('transfer_payment_events').findOne({
+            _id: eventId,
+            status: 'matching_reference',
+          });
+
+          if (claimedEvent?.matchingOrderId) {
+            const claimedOrder = await db.collection('orders').findOne({
+              id: claimedEvent.matchingOrderId,
+            });
+
+            if (
+              claimedOrder &&
+              claimedOrder.paymentStatus === 'pending_payment' &&
+              claimedOrder.buyerTransactionReference === parsed.transactionReference
+            ) {
+              await db.collection('transfer_payment_events').updateOne(
+                {
+                  _id: eventId,
+                  status: 'matching_reference',
+                  matchingOrderId: claimedEvent.matchingOrderId,
+                },
+                {
+                  $set: {
+                    status: 'pending_review',
+                    matchedOrderId: null,
+                    reviewNotes: 'La conciliación falló antes de confirmar el pedido; requiere revisión manual.',
+                  },
+                  $unset: { matchingOrderId: '' },
+                }
+              );
+            } else {
+              await db.collection('transfer_payment_events').updateOne(
+                { _id: eventId, status: 'matching_reference' },
+                {
+                  $set: {
+                    reviewNotes: 'La conciliación falló y el estado del pedido no permite una recuperación automática segura; requiere revisión manual.',
+                  },
+                }
+              );
+            }
+          }
+        } catch (recoveryError) {
+          console.error(
+            '[Transfermóvil] Falló la recuperación segura del evento:',
+            recoveryError?.message || recoveryError
+          );
+        }
+      }
+    }
+
+    if (finalStatus !== 'auto_approved') {
+      await db.collection('transfer_payment_events').updateOne(
+        { _id: eventId, status: 'pending_review' },
+        {
+          $set: {
+            status: 'pending_review',
+            matchedOrderId: null,
+            reviewNotes,
+          },
+        }
+      );
+    }
+
+    return json({
+      ok: true,
+      status: finalStatus,
+      recognized: Boolean(parsed),
+      provider: parsed?.provider || null,
+      amount,
+      transactionReference: parsed?.transactionReference || null,
+      matchedOrderId,
+    }, finalStatus === 'paid_reconciliation_error' ? 500 : (finalStatus === 'auto_approved' ? 200 : 202));
+  }
+
+  // ===== DIDIT IDENTITY VERIFICATION: signed webhook =====
+  if (path[0] === 'identity' && path[1] === 'didit' &&
+      path[2] === 'webhook' && method === 'POST' && path.length === 3) {
+    const secret = process.env.DIDIT_WEBHOOK_SECRET;
+    if (!secret) {
+      console.error('[Didit] DIDIT_WEBHOOK_SECRET no está configurada.');
+      return json({ error: 'Webhook no configurado.' }, 503);
+    }
+
+    let rawBody;
+    let payload;
+    let exactPayload;
+
+    try {
+      rawBody = await request.text();
+
+      payload = JSON.parse(rawBody);
+
+      class DiditNumber {
+        constructor(source) {
+          this.source = source;
+        }
+      }
+
+      exactPayload = JSON.parse(rawBody, (key, value, context) => {
+        if (typeof value === 'number' && context) {
+          return new DiditNumber(context.source);
+        }
+        return value;
+      });
+
+      const canonicalNumber = (source) => {
+        // Preserve exact integer tokens; Number() can lose precision.
+        if (/^-?\d+$/.test(source)) {
+          return BigInt(source).toString();
+        }
+
+        const number = Number(source);
+
+        if (!Number.isFinite(number)) {
+          throw new Error('Número JSON no válido.');
+        }
+
+        // Didit canonicalization converts whole-valued floats to integers.
+        if (Number.isInteger(number)) {
+          return BigInt(number).toString();
+        }
+
+        // Use the shortest round-trip digits, then apply Python-style
+        // exponent thresholds and formatting used by Didit's V2 examples.
+        const [rawMantissa, exponentText] = number.toExponential().split('e');
+        const exponent = Number(exponentText);
+        const negative = rawMantissa.startsWith('-');
+        const mantissa = negative ? rawMantissa.slice(1) : rawMantissa;
+
+        if (exponent < -4 || exponent >= 16) {
+          const expSign = exponent < 0 ? '-' : '+';
+          return `${negative ? '-' : ''}${mantissa}e${expSign}${String(Math.abs(exponent)).padStart(2, '0')}`;
+        }
+
+        const digits = mantissa.replace('.', '');
+        const decimalPosition = exponent + 1;
+        let decimal;
+
+        if (decimalPosition <= 0) {
+          decimal = '0.' + '0'.repeat(-decimalPosition) + digits;
+        } else if (decimalPosition >= digits.length) {
+          decimal = digits + '0'.repeat(decimalPosition - digits.length);
+        } else {
+          decimal = digits.slice(0, decimalPosition) + '.' + digits.slice(decimalPosition);
+        }
+
+        return (negative ? '-' : '') + decimal;
+      };
+
+      const compareUnicodeCodePoints = (a, b) => {
+        const left = Array.from(a, (char) => char.codePointAt(0));
+        const right = Array.from(b, (char) => char.codePointAt(0));
+        const length = Math.min(left.length, right.length);
+
+        for (let i = 0; i < length; i++) {
+          if (left[i] !== right[i]) return left[i] - right[i];
+        }
+
+        return left.length - right.length;
+      };
+
+      const canonicalize = (value) => {
+        if (value instanceof DiditNumber) {
+          return canonicalNumber(value.source);
+        }
+
+        if (Array.isArray(value)) {
+          return '[' + value.map(canonicalize).join(',') + ']';
+        }
+
+        if (value !== null && typeof value === 'object') {
+          return '{' + Object.keys(value)
+            .sort(compareUnicodeCodePoints)
+            .map((key) => JSON.stringify(key) + ':' + canonicalize(value[key]))
+            .join(',') + '}';
+        }
+
+        return JSON.stringify(value);
+      };
+
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return json({ error: 'Payload inválido.' }, 400);
+      }
+
+      const timestamp = Number(payload.timestamp);
+      const timestampHeader = request.headers.get('x-timestamp') || '';
+      const signature = request.headers.get('x-signature-v2') || '';
+
+      if (
+        !Number.isFinite(timestamp) ||
+        timestamp <= 0 ||
+        String(timestamp) !== timestampHeader ||
+        Math.abs(Date.now() / 1000 - timestamp) > 300
+      ) {
+        return json({ error: 'Marca de tiempo inválida o caducada.' }, 401);
+      }
+
+      if (!/^[a-f0-9]{64}$/i.test(signature)) {
+        return json({ error: 'Firma inválida.' }, 401);
+      }
+
+      const expectedSignature = createHmac('sha256', secret)
+        .update(canonicalize(exactPayload), 'utf8')
+        .digest();
+
+      const receivedSignature = Buffer.from(signature, 'hex');
+
+      if (
+        receivedSignature.length !== expectedSignature.length ||
+        !timingSafeEqual(receivedSignature, expectedSignature)
+      ) {
+        return json({ error: 'Firma no válida.' }, 401);
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        return json({ error: 'JSON inválido.' }, 400);
+      }
+
+      console.error('[Didit] Error validando el webhook:', e?.message);
+      return json({ error: 'No se pudo validar la firma.' }, 400);
+    }
+
+    // Rechazar eventos incompletos o distintos del evento configurado.
+    if (payload.webhook_type !== 'status.updated') {
+      return json({ error: 'Tipo de evento no admitido.' }, 400);
+    }
+
+    // Didit event_id permite reconocer los reintentos del mismo webhook.
+    const eventId = typeof payload.event_id === 'string'
+      ? payload.event_id.trim()
+      : '';
+
+    if (!eventId || eventId.length > 200) {
+      return json({ error: 'Falta un identificador de evento válido.' }, 400);
+    }
+
+    const sessionId = typeof payload.session_id === 'string'
+      ? payload.session_id
+      : '';
+    const diditStatus = typeof payload.status === 'string'
+      ? payload.status
+      : '';
+
+    if (!sessionId || !diditStatus) {
+      return json({ error: 'Faltan session_id o status.' }, 400);
+    }
+
+    const expectedWorkflowId = process.env.DIDIT_WORKFLOW_ID;
+    if (
+      !expectedWorkflowId ||
+      typeof payload.workflow_id !== 'string' ||
+      payload.workflow_id !== expectedWorkflowId
+    ) {
+      return json({ error: 'Flujo de verificación inesperado.' }, 401);
+    }
+
+    const user = await db.collection('users').findOne({
+      'identityVerification.provider': 'didit',
+      'identityVerification.sessionId': sessionId,
+    });
+
+    if (!user) {
+      // No aceptar una sesión que no esté vinculada a un usuario local.
+      return json({ error: 'Sesión no reconocida.' }, 404);
+    }
+
+    if (
+      typeof payload.vendor_data !== 'string' ||
+      payload.vendor_data !== user.id
+    ) {
+      return json({ error: 'La sesión no corresponde al usuario.' }, 401);
+    }
+
+    const statusMap = {
+      'Not Started': 'not_started',
+      'In Progress': 'in_progress',
+      'Awaiting User': 'awaiting_user',
+      'In Review': 'in_review',
+      'Approved': 'approved',
+      'Declined': 'declined',
+      'Resubmitted': 'resubmitted',
+      'Abandoned': 'abandoned',
+      'Expired': 'expired',
+      'Kyc Expired': 'kyc_expired',
+    };
+
+    const mappedStatus = statusMap[diditStatus];
+    if (!mappedStatus) {
+      // Nunca interpretar un estado desconocido como aprobado.
+      console.warn('[Didit] Estado no reconocido:', diditStatus);
+      return json({ ok: true, ignored: true });
+    }
+
+    const now = new Date().toISOString();
+    const isVerified = diditStatus === 'Approved';
+
+    const verificationUpdate = {
+      'identityVerification.status': mappedStatus,
+      'identityVerification.diditStatus': diditStatus,
+      'identityVerification.verified': isVerified,
+      'identityVerification.updatedAt': now,
+      'identityVerification.lastWebhookType': payload.webhook_type || 'status.updated',
+    };
+
+    if (isVerified) {
+      verificationUpdate['identityVerification.verifiedAt'] = now;
+    } else {
+      verificationUpdate['identityVerification.verifiedAt'] = null;
+    }
+
+    // Actualizar usuario y negocio de forma atómica.
+    const mongoSession = _client.startSession();
+    try {
+      await mongoSession.withTransaction(async () => {
+        // El _id de MongoDB impone unicidad sin requerir un índice adicional.
+        // Este registro se confirma o revierte junto con la actualización KYC.
+        await db.collection('didit_webhook_events').insertOne({
+          _id: eventId,
+          sessionId,
+          userId: user.id,
+          webhookType: payload.webhook_type,
+          status: diditStatus,
+          receivedAt: now,
+        }, { session: mongoSession });
+
+        const updateUser = await db.collection('users').updateOne(
+          {
+            id: user.id,
+            'identityVerification.sessionId': sessionId,
+          },
+          { $set: verificationUpdate },
+          { session: mongoSession }
+        );
+
+        if (!updateUser.matchedCount) {
+          throw new Error('DIDIT_SESSION_CHANGED');
+        }
+
+        if (user.businessId) {
+          const updateBusiness = await db.collection('businesses').updateOne(
+            {
+              id: user.businessId,
+              userId: user.id,
+              'identityVerification.sessionId': sessionId,
+            },
+            { $set: verificationUpdate },
+            { session: mongoSession }
+          );
+
+          if (!updateBusiness.matchedCount) {
+            throw new Error('DIDIT_BUSINESS_SYNC_FAILED');
+          }
+        }
+      });
+    } catch (e) {
+      if (e?.code === 11000) {
+        const existingEvent = await db.collection('didit_webhook_events')
+          .findOne({ _id: eventId })
+          .catch(() => null);
+
+        if (existingEvent) {
+          return json({ ok: true, duplicate: true });
+        }
+      }
+
+      if (e?.message === 'DIDIT_SESSION_CHANGED') {
+        return json(
+          { error: 'La sesión cambió; no se aplicó el resultado.' },
+          409
+        );
+      }
+
+      if (e?.message === 'DIDIT_BUSINESS_SYNC_FAILED') {
+        console.error('[Didit] No se encontró el negocio para sincronizar.');
+        return json(
+          { error: 'No se pudo sincronizar la verificación del negocio.' },
+          409
+        );
+      }
+
+      console.error('[Didit] Falló la transacción del webhook:', e?.message);
+      return json(
+        { error: 'No se pudo guardar el resultado de verificación.' },
+        500
+      );
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    return json({ ok: true, status: mappedStatus });
+  }
+
+  // ===== DIDIT IDENTITY VERIFICATION: create hosted session =====
+  if (path[0] === 'identity' && path[1] === 'didit' && path[2] === 'session' && method === 'POST') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    if (user.role === 'admin') {
+      return json({ error: 'La verificación de identidad de vendedor no se inicia desde una cuenta administradora.' }, 400);
+    }
+
+    if (user.accountType !== 'seller' || !user.businessId) {
+      return json({ error: 'Necesitas una cuenta de vendedor y un negocio asociado para verificar tu identidad.' }, 400);
+    }
+
+    const diditApiKey = process.env.DIDIT_API_KEY;
+    const diditWorkflowId = process.env.DIDIT_WORKFLOW_ID;
+
+    if (!diditApiKey || !diditWorkflowId) {
+      console.error('[Didit] Faltan DIDIT_API_KEY o DIDIT_WORKFLOW_ID.');
+      return json({ error: 'La verificación de identidad no está configurada todavía.' }, 503);
+    }
+
+    const business = await db.collection('businesses').findOne({
+      id: user.businessId,
+      userId: user.id
+    });
+
+    if (!business) {
+      return json({ error: 'No se encontró el negocio asociado a tu cuenta.' }, 403);
+    }
+
+    const now = new Date().toISOString();
+
+    const diditResponse = await fetch('https://verification.didit.me/v3/session/', {
+      method: 'POST',
+      headers: {
+        'x-api-key': diditApiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        workflow_id: diditWorkflowId,
+        vendor_data: user.id,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    let diditData = null;
+    try {
+      diditData = await diditResponse.json();
+    } catch {}
+
+    if (!diditResponse.ok) {
+      console.error('[Didit] Error creando sesión. HTTP:', diditResponse.status);
+      return json({ error: 'Didit no pudo iniciar la verificación. Inténtalo de nuevo más tarde.' }, 502);
+    }
+
+    const sessionId = typeof diditData?.session_id === 'string'
+      ? diditData.session_id
+      : '';
+
+    const sessionUrl = typeof diditData?.url === 'string'
+      ? diditData.url
+      : (typeof diditData?.session_url === 'string' ? diditData.session_url : '');
+
+    let parsedSessionUrl;
+    try {
+      let candidateUrl = sessionUrl;
+
+      // Algunas respuestas/documentaciones muestran el dominio sin esquema.
+      if (candidateUrl.startsWith('verify.didit.me/')) {
+        candidateUrl = 'https://' + candidateUrl;
+      }
+
+      parsedSessionUrl = new URL(candidateUrl);
+    } catch {}
+
+    if (
+      !sessionId ||
+      !parsedSessionUrl ||
+      parsedSessionUrl.protocol !== 'https:' ||
+      parsedSessionUrl.hostname !== 'verify.didit.me' ||
+      parsedSessionUrl.username !== '' ||
+      parsedSessionUrl.password !== '' ||
+      parsedSessionUrl.port !== ''
+    ) {
+      console.error('[Didit] Respuesta de sesión incompleta o URL no permitida.');
+      return json({ error: 'Didit devolvió una respuesta de sesión no válida.' }, 502);
+    }
+
+    const identityVerification = {
+      provider: 'didit',
+      sessionId,
+      sessionUrl: parsedSessionUrl.toString(),
+      status: 'pending',
+      verified: false,
+      startedAt: now,
+      updatedAt: now,
+    };
+
+    // Guardar la sesión en usuario y negocio de forma atómica.
+    const mongoSession = _client.startSession();
+    try {
+      await mongoSession.withTransaction(async () => {
+        const userUpdate = await db.collection('users').updateOne(
+          { id: user.id, businessId: business.id },
+          { $set: { identityVerification } },
+          { session: mongoSession }
+        );
+
+        if (!userUpdate.matchedCount) {
+          throw new Error('DIDIT_USER_SESSION_SAVE_FAILED');
+        }
+
+        const businessUpdate = await db.collection('businesses').updateOne(
+          { id: business.id, userId: user.id },
+          { $set: { identityVerification } },
+          { session: mongoSession }
+        );
+
+        if (!businessUpdate.matchedCount) {
+          throw new Error('DIDIT_BUSINESS_SESSION_SAVE_FAILED');
+        }
+      });
+    } catch (e) {
+      console.error('[Didit] No se pudo guardar la sesión:', e?.message);
+      return json(
+        { error: 'No se pudo guardar la verificación. Inténtalo de nuevo.' },
+        500
+      );
+    } finally {
+      await mongoSession.endSession();
+    }
+
+    return json({
+      sessionId,
+      sessionUrl: parsedSessionUrl.toString(),
+      status: 'pending'
+    }, 201);
+  }
+
   // Health
   if (path.length === 0) {
     return json({ ok: true, app: 'UBIK2 YEMG API', version: '1.0' });
   }
 
+
+
+  // Consulta autenticada de acciones disponibles para una factura QR.
+  // Solo devuelve el ID interno al comprador o vendedor autorizado.
+  if (
+    path[0] === 'invoices' &&
+    path[1] &&
+    path[2] === 'actions' &&
+    path.length === 3 &&
+    method === 'GET'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const publicInvoiceId = String(path[1]);
+    if (!/^[0-9a-f-]{36}$/i.test(publicInvoiceId)) {
+      return json({ error: 'Factura no encontrada.' }, 404);
+    }
+
+    const order = await db.collection('orders').findOne(
+      { publicInvoiceId },
+      {
+        projection: {
+          _id: 0,
+          id: 1,
+          publicInvoiceId: 1,
+          buyerId: 1,
+          businessId: 1,
+          paymentStatus: 1,
+          status: 1,
+          shippingStatus: 1,
+          sellerDeliveryConfirmation: 1,
+          buyerReceiptConfirmation: 1,
+        },
+      }
+    );
+
+    if (!order) return json({ error: 'Factura no encontrada.' }, 404);
+
+    const isBuyer = String(order.buyerId || '') === String(user.id || '');
+
+    let isSeller = false;
+    if (order.businessId) {
+      const businesses = db.collection('businesses');
+      let business = user.businessId
+        ? await businesses.findOne({ id: user.businessId, userId: user.id })
+        : null;
+
+      if (!business) {
+        business = await businesses.findOne({
+          id: order.businessId,
+          userId: user.id,
+        });
+      }
+
+      if (!business) {
+        business = await businesses.findOne({ userId: user.id });
+      }
+
+      isSeller = Boolean(
+        business && String(business.id || '') === String(order.businessId)
+      );
+    }
+
+    if (!isBuyer && !isSeller) {
+      return json({ error: 'No tienes permiso para consultar las acciones de esta factura.' }, 403);
+    }
+
+    const paid =
+      order.paymentStatus === 'paid' ||
+      (
+        ['paid', 'processing', 'shipped', 'delivered'].includes(order.status) &&
+        (
+          order.paymentStatus === undefined ||
+          order.paymentStatus === null ||
+          order.paymentStatus === ''
+        )
+      );
+
+    const delivered =
+      order.shippingStatus === 'delivered' ||
+      order.status === 'delivered';
+
+    const sellerConfirmed =
+      Boolean(order.sellerDeliveryConfirmation?.confirmedAt);
+
+    const buyerConfirmed =
+      Boolean(order.buyerReceiptConfirmation?.confirmedAt);
+
+    return json({
+      invoiceNumber: publicInvoiceId.toUpperCase(),
+      role: isBuyer && isSeller ? 'buyer_and_seller' : isBuyer ? 'buyer' : 'seller',
+      actions: {
+        confirmDelivery: isSeller && paid && !sellerConfirmed,
+        confirmReceipt: isBuyer && paid && delivered && sellerConfirmed && !buyerConfirmed,
+      },
+      state: {
+        paid,
+        delivered,
+        sellerConfirmed,
+        buyerConfirmed,
+      },
+      orderId: order.id,
+    });
+  }
 
   // Factura pública: solo expone información comercial no sensible.
   if (path[0] === 'public' && path[1] === 'invoices' &&
@@ -1177,9 +2410,10 @@ async function route(request, method, path) {
     const order = await db.collection('orders').findOne(
       { publicInvoiceId: token },
       { projection: {
-        _id: 0, publicInvoiceId: 1, businessName: 1, items: 1,
+        _id: 0, publicInvoiceId: 1, ubikCode: 1, businessName: 1, items: 1,
         subtotal: 1, total: 1, currency: 1, createdAt: 1,
-        paymentStatus: 1, status: 1, cryptoInvoiceId: 1
+        paymentStatus: 1, status: 1, cryptoInvoiceId: 1,
+        paymentMethod: 1, localPaymentAmountCUP: 1
       }}
     );
     if (!order) return json({ error: 'Factura no encontrada' }, 404);
@@ -1209,10 +2443,17 @@ async function route(request, method, path) {
     return json({
       valid: true,
       invoiceNumber: token.toUpperCase(),
+      ubikCode: order.ubikCode || null,
       businessName: String(order.businessName || 'Negocio').slice(0, 160),
       items,
       total: Number(order.total ?? order.subtotal ?? 0) || 0,
       currency: String(order.currency || 'CUP').slice(0, 12),
+      paymentMethod: String(order.paymentMethod || '').toLowerCase(),
+      localPaymentAmountCUP:
+        Number.isFinite(Number(order.localPaymentAmountCUP)) &&
+        Number(order.localPaymentAmountCUP) > 0
+          ? Number(order.localPaymentAmountCUP)
+          : null,
       createdAt: order.createdAt || null,
       paymentStatus: String(order.paymentStatus || order.status || 'unknown'),
       crypto: cryptoStatus
@@ -1280,7 +2521,7 @@ async function route(request, method, path) {
   if (path[0] === 'auth') {
     if (path[1] === 'register' && method === 'POST') {
       const body = await request.json();
-      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook, businessType, country } = body || {};
+      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook, businessType, country, province, municipality, address } = body || {};
       const type = accountType === 'buyer' ? 'buyer' : 'seller';
       if (!email || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
       if (type === 'seller' && (!businessName || !whatsapp)) {
@@ -1316,6 +2557,10 @@ async function route(request, method, path) {
           facebook: facebook || '',
           businessType: businessType || 'tienda',
           country: country || 'Cuba',
+          province: typeof province === 'string' ? province.trim() : '',
+          municipality: typeof municipality === 'string' ? municipality.trim() : '',
+          address: typeof address === 'string' ? address.trim() : '',
+          sellingApproved: false,
           verified: false,
           createdAt: now,
         };
@@ -1390,6 +2635,7 @@ async function route(request, method, path) {
         whatsapp, telegram: telegram || '', sms: sms || whatsapp || '',
         location: location || '', instagram: instagram || '', facebook: facebook || '',
         businessType: businessType || 'tienda', country: country || 'Cuba',
+        sellingApproved: false,
         verified: false, createdAt: now,
       };
       await db.collection('businesses').insertOne(business);
@@ -1455,11 +2701,34 @@ async function route(request, method, path) {
     // Helper: strip private contact fields when business has showContactsPublicly === false
     const sanitizeBusiness = (biz, viewerUser) => {
       if (!biz) return biz;
-      const isOwner = viewerUser && (viewerUser.id === biz.userId || viewerUser.role === 'admin');
-      if (biz.showContactsPublicly === false && !isOwner) {
-        return { ...biz, whatsapp: '', telegram: '', sms: '', messenger: '', instagram: '', facebook: '', contactsHidden: true };
+
+      const isOwner = Boolean(
+        viewerUser && (viewerUser.id === biz.userId || viewerUser.role === 'admin')
+      );
+
+      // El vendedor y el administrador conservan acceso a la configuración interna.
+      if (isOwner) return biz;
+
+      // Nunca exponer públicamente la cuenta utilizada para contrastar los SMS.
+      const safeBiz = { ...biz };
+      delete safeBiz.transfermovilAccount;
+      delete safeBiz.transfermovilVerificationPhone;
+
+      // Respetar también la privacidad de los contactos del negocio.
+      if (biz.showContactsPublicly === false) {
+        return {
+          ...safeBiz,
+          whatsapp: '',
+          telegram: '',
+          sms: '',
+          messenger: '',
+          instagram: '',
+          facebook: '',
+          contactsHidden: true
+        };
       }
-      return biz;
+
+      return safeBiz;
     };
     if (path[1] && method === 'GET') {
       const business = await db.collection('businesses').findOne({ id: path[1] });
@@ -1521,9 +2790,79 @@ async function route(request, method, path) {
       const body = await request.json();
       const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook',
         'showContactsPublicly', 'province', 'municipality', 'address', 'openingHours', 'closingHours', 'messenger',
-        'businessType', 'country'];
+        'businessType', 'country',
+        'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName', 'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
+        'enzonaEnabled', 'enzonaRecipient', 'enzonaCardNumber', 'enzonaPhone'];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      // Validar configuración de Transfermóvil y EnZona.
+      for (const key of ['transfermovilEnabled', 'enzonaEnabled']) {
+        if (key in body && typeof body[key] !== 'boolean') {
+          return json({ error: `El campo ${key} debe ser verdadero o falso.` }, 400);
+        }
+      }
+
+      const paymentTextLimits = {
+        transfermovilNumber: 40,
+        transfermovilName: 100,
+        transfermovilAccount: 60,
+        transfermovilContactPhone: 30,
+        transfermovilVerificationPhone: 30,
+        enzonaRecipient: 150,
+        enzonaCardNumber: 60,
+        enzonaPhone: 30,
+      };
+
+      for (const [key, maxLength] of Object.entries(paymentTextLimits)) {
+        if (!(key in body)) continue;
+        if (typeof body[key] !== 'string') {
+          return json({ error: `El campo ${key} debe ser texto.` }, 400);
+        }
+        const value = body[key].trim();
+        if (value.length > maxLength) {
+          return json({ error: `El campo ${key} supera la longitud permitida.` }, 400);
+        }
+        if (value && value.length < 3) {
+          return json({ error: `El campo ${key} es demasiado corto.` }, 400);
+        }
+        update[key] = value;
+      }
+
+      const mergedPayment = { ...business, ...update };
+      if (mergedPayment.transfermovilEnabled === true &&
+          !String(mergedPayment.transfermovilNumber || '').trim()) {
+        return json({ error: 'Introduce el número o tarjeta receptora antes de habilitar Transfermóvil.' }, 400);
+      }
+      if (mergedPayment.transfermovilEnabled === true &&
+          !String(mergedPayment.transfermovilName || '').trim()) {
+        return json({ error: 'Introduce el nombre del titular antes de habilitar Transfermóvil.' }, 400);
+      }
+      if (mergedPayment.transfermovilEnabled === true &&
+          !String(mergedPayment.transfermovilContactPhone || '').trim()) {
+        return json({ error: 'Introduce el móvil de contacto antes de habilitar Transfermóvil.' }, 400);
+      }
+      if (mergedPayment.transfermovilEnabled === true) {
+        const verificationPhone = String(
+          mergedPayment.transfermovilVerificationPhone || ''
+        ).trim() || String(mergedPayment.transfermovilContactPhone || '').trim();
+        if (!verificationPhone) {
+          return json({ error: 'Introduce el móvil de contacto o el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+        }
+        update.transfermovilVerificationPhone = verificationPhone;
+        mergedPayment.transfermovilVerificationPhone = verificationPhone;
+      }
+      if (mergedPayment.enzonaEnabled === true) {
+        if (!String(mergedPayment.enzonaRecipient || '').trim()) {
+          return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(mergedPayment.enzonaCardNumber || '').trim()) {
+          return json({ error: 'Introduce la tarjeta receptora antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(mergedPayment.enzonaPhone || '').trim()) {
+          return json({ error: 'Introduce el móvil receptor antes de habilitar EnZona.' }, 400);
+        }
+      }
 
       if ('cryptoPayoutWallets' in body) {
         const wallets = body.cryptoPayoutWallets;
@@ -1554,13 +2893,33 @@ async function route(request, method, path) {
 
 
       if ('deliveryEnabled' in body) {
-        if (typeof body.deliveryEnabled !== 'boolean') {
-          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+        if (user.role !== 'admin') {
+          return json({ error: 'Solo un administrador puede autorizar o revocar las entregas.' }, 403);
         }
-        if (body.deliveryEnabled && user.role !== 'admin' && user.plan !== 'premium') {
-          return json({ error: 'Se requiere un plan Premium para activar las entregas' }, 403);
+        if (typeof body.deliveryEnabled !== 'boolean') {
+          return json({ error: 'El estado de entregas debe ser verdadero o falso.' }, 400);
+        }
+        if (body.deliveryEnabled && business.verified !== true) {
+          return json({ error: 'Solo se pueden habilitar entregas para negocios verificados.' }, 400);
         }
         update.deliveryEnabled = body.deliveryEnabled;
+      }
+
+      if ('deliveryFeeCUP' in body) {
+        if (business.deliveryEnabled !== true && user.role !== 'admin') {
+          return json({ error: 'El administrador debe habilitar las entregas antes de configurar la tarifa.' }, 403);
+        }
+        if (
+          typeof body.deliveryFeeCUP !== 'number' ||
+          !Number.isFinite(body.deliveryFeeCUP) ||
+          body.deliveryFeeCUP < 0 ||
+          body.deliveryFeeCUP > 1000000
+        ) {
+          return json({ error: 'La tarifa debe ser un número entre 0 y 1000000 CUP.' }, 400);
+        }
+        update.deliveryFeeCUP = Math.round(
+          (body.deliveryFeeCUP + Number.EPSILON) * 100
+        ) / 100;
       }
 
       // Validation: if hiding contacts, require physical presence info
@@ -1785,19 +3144,50 @@ async function route(request, method, path) {
       const limit = Math.min(60, Math.max(1, parseInt(url.searchParams.get('limit') || '20', 10)));
       const skip = (page - 1) * limit;
 
+      // Las ventas globales y la aprobación administrativa controlan
+      // qué negocios pueden aparecer en el catálogo público.
+      const marketplaceSettings = await getSettings(db);
+      if (marketplaceSettings.sellerSalesEnabled === false) {
+        return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 5);
+      }
+
       const filter = { available: true };
       // Smart stock: hide products with stock === 0 from public marketplace
       // (sellers still see them in their dashboard via /my/products)
-      filter.$and = [{ $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] }];
+      filter.$and = [
+        { $or: [{ stock: { $gt: 0 } }, { stock: { $exists: false } }] },
+      ];
       // Escape regex special chars so users can search with parens, dots, dashes, etc.
       const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      if (q) {
+      if (q.trim()) {
         const safeQ = escapeRe(q.trim());
-        filter.$or = [
+
+        const matchingBusinesses = await db.collection('businesses')
+          .find(
+            { name: { $regex: safeQ, $options: 'i' } },
+            { projection: { id: 1 } }
+          )
+          .limit(500)
+          .toArray();
+
+        const matchingBusinessIds = matchingBusinesses
+          .map((business) => business.id)
+          .filter(Boolean);
+
+        const searchConditions = [
           { name: { $regex: safeQ, $options: 'i' } },
           { description: { $regex: safeQ, $options: 'i' } },
           { category: { $regex: safeQ, $options: 'i' } },
         ];
+
+        if (matchingBusinessIds.length) {
+          searchConditions.push({
+            businessId: { $in: matchingBusinessIds },
+          });
+        }
+
+        // Mantener el filtro de stock y combinar correctamente la búsqueda.
+        filter.$and.push({ $or: searchConditions });
       }
       if (category) filter.category = category;
       if (subcategory) filter.subcategory = subcategory;
@@ -1806,26 +3196,47 @@ async function route(request, method, path) {
       if (excludeFeatured) filter.featured = { $ne: true };
       if (businessId) filter.businessId = businessId;
       // Filter by business name OR by business type / country (regex on businesses, then narrow by businessId)
-      if (businessName || businessType || country) {
+      if (businessName || businessType || country || province || municipality) {
         const bizFilter = {};
-        if (businessName) bizFilter.name = { $regex: escapeRe(businessName), $options: 'i' };
+        const bizAnd = [];
+        if (businessName) bizFilter.name = { $regex: escapeRe(businessName.trim()), $options: 'i' };
         if (businessType) bizFilter.businessType = businessType;
-        if (country) bizFilter.country = { $regex: escapeRe(country), $options: 'i' };
+        if (country) bizFilter.country = { $regex: escapeRe(country.trim()), $options: 'i' };
+
+        if (province) {
+          const re = { $regex: escapeRe(province.trim()), $options: 'i' };
+          bizAnd.push({ $or: [{ province: re }, { location: re }, { address: re }] });
+        }
+        if (municipality) {
+          const re = { $regex: escapeRe(municipality.trim()), $options: 'i' };
+          bizAnd.push({ $or: [{ municipality: re }, { location: re }, { address: re }] });
+        }
+        if (bizAnd.length) bizFilter.$and = bizAnd;
+
         const matchingBiz = await db.collection('businesses')
           .find(bizFilter, { projection: { id: 1 } })
           .limit(500)
           .toArray();
-        const ids = matchingBiz.map((b) => b.id);
+        const ids = matchingBiz.map((b) => b.id).filter(Boolean);
+
         if (ids.length === 0) {
           return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 30);
         }
-        filter.businessId = filter.businessId
-          ? (ids.includes(filter.businessId) ? filter.businessId : '__no_match__')
-          : { $in: ids };
+
+        const businessMatch = { businessId: { $in: ids } };
+        if (filter.businessId) {
+          if (!ids.includes(filter.businessId)) {
+            return jsonCached({ products: [], total: 0, page, limit, hasMore: false }, 200, 30);
+          }
+        } else {
+          filter.businessId = businessMatch.businessId;
+        }
+
+        // La provincia y el municipio se verifican en el negocio asociado.
+        // No exigir que también estén duplicados en cada producto.
       }
       if (location) filter.location = { $regex: escapeRe(location), $options: 'i' };
-      if (province) filter.$and.push({ $or: [{ province: { $regex: escapeRe(province), $options: 'i' } }, { location: { $regex: escapeRe(province), $options: 'i' } }] });
-      if (municipality) filter.$and.push({ $or: [{ municipality: { $regex: escapeRe(municipality), $options: 'i' } }, { location: { $regex: escapeRe(municipality), $options: 'i' } }] });
+
       if (physicalOnly) filter.showPublicContact = false;
       if (priceMin || priceMax) {
         filter.price = {};
@@ -1850,10 +3261,24 @@ async function route(request, method, path) {
             .toArray()
         : [];
       const bizMap = Object.fromEntries(businesses.map((b) => {
-        // Strip private contacts when business opted out of public contacts
-        let safe = b;
-        if (b.showContactsPublicly === false) {
-          const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = b;
+        // Nunca exponer datos internos de verificación en respuestas públicas.
+        const { transfermovilAccount, transfermovilVerificationPhone, ...publicBizFields } = b;
+        // Publicar los métodos disponibles sin revelar datos privados de verificación.
+        const canAcceptOrders =
+          marketplaceSettings.sellerSalesEnabled !== false &&
+          b.sellingApproved === true;
+
+        const publicBiz = {
+          ...publicBizFields,
+          canAcceptOrders,
+          availablePaymentMethods: canAcceptOrders
+            ? getAvailableBusinessPaymentMethods(b)
+            : [],
+        };
+        let safe = publicBiz;
+        // Respetar la privacidad de los contactos públicos del negocio.
+        if (publicBiz.showContactsPublicly === false) {
+          const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = safe;
           safe = { ...rest, contactsHidden: true };
         }
         if (lite) {
@@ -1882,22 +3307,39 @@ async function route(request, method, path) {
     if (path[1] && method === 'GET') {
       const product = await db.collection('products').findOne({ id: path[1] });
       if (!product) return json({ error: 'Producto no encontrado' }, 404);
+
+      const marketplaceSettings = await getSettings(db);
       const business = await db.collection('businesses').findOne({ id: product.businessId });
+      const canAcceptOrders =
+        marketplaceSettings.sellerSalesEnabled !== false &&
+        business?.sellingApproved === true;
+
+      // Nunca exponer datos internos de verificación en respuestas públicas.
+      const { transfermovilAccount, transfermovilVerificationPhone, ...publicBusinessFields } = business || {};
+      const publicBusiness = business ? {
+        ...publicBusinessFields,
+        canAcceptOrders,
+        // Los negocios no autorizados no exponen métodos de pago.
+        availablePaymentMethods: canAcceptOrders
+          ? getAvailableBusinessPaymentMethods(business)
+          : [],
+      } : null;
       // Per-product privacy: optionally hide business contacts for THIS product
       const productHidesContacts = product.showPublicContact === false;
-      let safeBiz = business;
+      let safeBiz = business ? publicBusiness : null;
       if (business && productHidesContacts) {
-        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = business;
+        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = publicBusiness;
         safeBiz = { ...rest, contactsHidden: true };
       } else if (business && business.showContactsPublicly === false) {
         // business-level privacy still respected
-        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = business;
+        const { whatsapp, telegram, sms, messenger, instagram, facebook, ...rest } = publicBusiness;
         safeBiz = { ...rest, contactsHidden: true };
       }
       return json({
         product: {
           ...product,
           contactsHidden: productHidesContacts || (business && business.showContactsPublicly === false),
+          canAcceptOrders,
           business: safeBiz,
         },
       });
@@ -1912,14 +3354,41 @@ async function route(request, method, path) {
         return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
       }
       const { name, price, description, category, subcategory, stock, image, available, featured, location, currency,
-        showPublicContact, province, municipality, address, openingHours, closingHours } = parsed.data;
+        allowedPaymentMethods, showPublicContact, province, municipality, address, openingHours, closingHours } = parsed.data;
+
+      const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId });
+      const marketplaceSettings = await getSettings(db);
+
+      if (marketplaceSettings.sellerSalesEnabled === false) {
+        return json({ error: 'Las ventas están desactivadas temporalmente por administración.' }, 403);
+      }
+      if (!businessForLoc || businessForLoc.sellingApproved !== true) {
+        return json({ error: 'Tu negocio necesita la autorización de administración para publicar productos.' }, 403);
+      }
 
       const count = await db.collection('products').countDocuments({ businessId: user.businessId });
       const isPremium = user.plan === 'premium';
       if (!isPremium && count >= 10) {
         return json({ error: 'Límite del plan Básico (10 productos) alcanzado. Actualiza a Premium.' }, 403);
       }
-      const businessForLoc = await db.collection('businesses').findOne({ id: user.businessId });
+      const availablePaymentMethods = getAvailableBusinessPaymentMethods(businessForLoc);
+      const selectedPaymentMethods = allowedPaymentMethods === undefined
+        ? availablePaymentMethods
+        : [...new Set(allowedPaymentMethods)];
+
+      const unavailableMethods = selectedPaymentMethods.filter(
+        (method) => !availablePaymentMethods.includes(method)
+      );
+      if (unavailableMethods.length) {
+        return json({
+          error: 'El negocio no tiene habilitados todos los métodos de pago seleccionados.',
+          unavailableMethods,
+        }, 400);
+      }
+      if (availablePaymentMethods.length > 0 && selectedPaymentMethods.length === 0) {
+        return json({ error: 'Selecciona al menos un método de pago para este producto.' }, 400);
+      }
+
 
       // Per-product privacy validation: if hiding contacts, require physical info (product OR business)
       if (showPublicContact === false) {
@@ -1961,6 +3430,7 @@ async function route(request, method, path) {
         featured: isPremium ? !!featured : false,
         // Per-product privacy
         showPublicContact: showPublicContact !== false,
+        allowedPaymentMethods: selectedPaymentMethods,
         province: province || '',
         municipality: municipality || '',
         address: address || '',
@@ -1979,12 +3449,46 @@ async function route(request, method, path) {
       const product = await db.collection('products').findOne({ id: path[1] });
       if (!product) return json({ error: 'No encontrado' }, 404);
       if (product.businessId !== user.businessId && user.role !== 'admin') return json({ error: 'Sin permiso' }, 403);
+
+      if (user.role !== 'admin') {
+        const marketplaceSettings = await getSettings(db);
+        const ownerBusiness = await db.collection('businesses').findOne({ id: product.businessId });
+        if (marketplaceSettings.sellerSalesEnabled === false || ownerBusiness?.sellingApproved !== true) {
+          return json({ error: 'Tu negocio no está autorizado para gestionar productos en este momento.' }, 403);
+        }
+      }
+
       const body = await request.json();
       const parsed = productSchema.partial().safeParse(body);
       if (!parsed.success) {
         return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
       }
       const update = parsed.data;
+
+      if (Array.isArray(update.allowedPaymentMethods)) {
+        const businessForPayments = await db.collection('businesses').findOne({
+          id: product.businessId,
+        });
+        const availablePaymentMethods = getAvailableBusinessPaymentMethods(businessForPayments);
+        const selectedPaymentMethods = [...new Set(update.allowedPaymentMethods)];
+        const unavailableMethods = selectedPaymentMethods.filter(
+          (method) => !availablePaymentMethods.includes(method)
+        );
+
+        if (unavailableMethods.length) {
+          return json({
+            error: 'El negocio no tiene habilitados todos los métodos de pago seleccionados.',
+            unavailableMethods,
+          }, 400);
+        }
+
+        if (availablePaymentMethods.length > 0 && selectedPaymentMethods.length === 0) {
+          return json({ error: 'Selecciona al menos un método de pago para este producto.' }, 400);
+        }
+
+        update.allowedPaymentMethods = selectedPaymentMethods;
+      }
+
       if (update.price != null) update.price = Number(update.price);
       if (update.stock != null) update.stock = Number(update.stock);
       if (update.currency) update.currency = ['CUP','MLC','USD','EUR','GBP','CAD','MXN','USDT','USDC'].includes(update.currency) ? update.currency : 'CUP';
@@ -2088,14 +3592,14 @@ return json({ payments: out });
     if (!parsed.success) {
       return json({ error: 'Datos inválidos', details: parsed.error.flatten().fieldErrors }, 400);
     }
-    const { items, shippingName, shippingPhone, shippingAddress, shippingRecipientId, shippingEmail, shippingNotes, idempotencyKey } = parsed.data;
+    const { items, shippingName, shippingPhone, shippingAddress, shippingProvince, shippingMunicipality, shippingRecipientId, shippingEmail, shippingNotes, idempotencyKey } = parsed.data;
     const deliveryMethod = parsed.data.deliveryMethod || 'pickup';
 
     // Idempotency: if key provided and order exists, return existing
     if (idempotencyKey) {
       const existing = await db.collection('orders').findOne({ idempotencyKey, buyerId: user.id });
       if (existing) {
-        return json({ order: existing, duplicate: true });
+        return json({ order: sanitizeBuyerOrder(existing), duplicate: true });
       }
     }
 
@@ -2149,27 +3653,200 @@ return json({ payments: out });
     }
     const businessId = businessIds[0];
     const business = await db.collection('businesses').findOne({ id: businessId });
+    const marketplaceSettings = await getSettings(db);
 
-    // Enforce delivery eligibility on the server, never trust the client.
-    if (deliveryMethod === 'delivery' && (user.plan !== 'premium' || business?.deliveryEnabled !== true)) {
-      return json({ error: 'La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.' }, 403);
+    if (marketplaceSettings.sellerSalesEnabled === false) {
+      return json({ error: 'Las ventas están desactivadas temporalmente por administración.' }, 403);
     }
+    if (!business || business.sellingApproved !== true) {
+      return json({ error: 'Este negocio todavía no está autorizado para recibir pedidos.' }, 403);
+    }
+
+    const paymentMethod = parsed.data.paymentMethod || 'crypto';
+    const availableBusinessPaymentMethods = getAvailableBusinessPaymentMethods(business);
+
+    for (const item of parsed.data.items) {
+      const product = productMap[item.productId];
+      if (!product) {
+        return json({ error: 'Uno de los productos del pedido ya no está disponible.' }, 400);
+      }
+
+      // Productos antiguos sin lista propia heredan los métodos del negocio.
+      const allowedMethods = Array.isArray(product.allowedPaymentMethods)
+        ? product.allowedPaymentMethods
+        : availableBusinessPaymentMethods;
+
+      if (!allowedMethods.includes(paymentMethod)) {
+        return json({
+          error: `El producto "${product.name}" no admite el método de pago seleccionado.`,
+          productId: product.id,
+          paymentMethod,
+        }, 403);
+      }
+    }
+
+    if (paymentMethod === 'crypto' && business?.cryptoEnabled !== true) {
+      return json({ error: 'Este negocio no tiene habilitados los pagos en criptomonedas.' }, 403);
+    }
+    let paymentDetails = null;
+
+    if (paymentMethod === 'transfermovil') {
+      const number = typeof business?.transfermovilNumber === 'string'
+        ? business.transfermovilNumber.trim() : '';
+      const name = typeof business?.transfermovilName === 'string'
+        ? business.transfermovilName.trim() : '';
+      const contactPhone = typeof business?.transfermovilContactPhone === 'string'
+        ? business.transfermovilContactPhone.trim() : '';
+      const verificationPhone = typeof business?.transfermovilVerificationPhone === 'string'
+        ? business.transfermovilVerificationPhone.trim() : '';
+
+      if (business?.transfermovilEnabled !== true || !number || !name || !contactPhone || !verificationPhone) {
+        return json({ error: 'Transfermóvil no está habilitado o faltan los datos del destinatario.' }, 400);
+      }
+
+      paymentDetails = {
+        provider: 'transfermovil',
+        recipientNumber: number,
+        recipientName: name,
+        recipientContactPhone: contactPhone,
+      };
+    } else if (paymentMethod === 'enzona') {
+      const recipient = typeof business?.enzonaRecipient === 'string'
+        ? business.enzonaRecipient.trim() : '';
+      const cardNumber = typeof business?.enzonaCardNumber === 'string'
+        ? business.enzonaCardNumber.trim() : '';
+      const phone = typeof business?.enzonaPhone === 'string'
+        ? business.enzonaPhone.trim() : '';
+
+      if (business?.enzonaEnabled !== true || !recipient || !cardNumber || !phone) {
+        return json({
+          error: 'EnZona no está habilitado o faltan el destinatario, la tarjeta o el móvil.'
+        }, 400);
+      }
+
+      paymentDetails = { provider: 'enzona', recipient, cardNumber, phone };
+    } else if (paymentMethod !== 'crypto') {
+      return json({ error: 'Método de pago no válido.' }, 400);
+    }
+
+    // Validar modalidad y elegibilidad exclusivamente en el servidor.
+    if (!['pickup', 'delivery'].includes(deliveryMethod)) {
+      return json({ error: 'Método de entrega no válido.' }, 400);
+    }
+
+    if (
+      deliveryMethod === 'delivery' &&
+      (user.plan !== 'premium' || business?.deliveryEnabled !== true)
+    ) {
+      return json({
+        error: 'La entrega a domicilio requiere un comprador Premium y un negocio con entregas habilitadas.'
+      }, 403);
+    }
+
+    if (deliveryMethod === 'delivery') {
+      if (!shippingProvince || !shippingMunicipality) {
+        return json({ error: 'Selecciona la provincia y el municipio de entrega.' }, 400);
+      }
+
+      if (!isValidCubanLocation(shippingProvince, shippingMunicipality)) {
+        return json({ error: 'La combinación de provincia y municipio no es válida.' }, 400);
+      }
+    }
+
     const finalShippingAddress = deliveryMethod === 'pickup'
       ? `Recogida en el negocio: ${String(business?.name || 'negocio')}`.slice(0, 500)
       : shippingAddress;
 
+    const roundMoney = (value) =>
+      Math.round((value + Number.EPSILON) * 100) / 100;
+
+    const settings = await getSettings(db);
+    const configuredRate = Number(settings.usdRate);
+    const usdRate = Number.isFinite(configuredRate) && configuredRate > 0
+      ? configuredRate
+      : 120;
+
+    const orderCurrency = String(currency || 'CUP').toUpperCase();
+    const orderSubtotal = roundMoney(Number(subtotal));
+
+    if (!Number.isFinite(orderSubtotal) || orderSubtotal <= 0) {
+      return json({ error: 'El subtotal del pedido no es válido.' }, 400);
+    }
+
+    let deliveryFeeCUP = 0;
+    let deliveryFee = 0;
+
+    if (deliveryMethod === 'delivery') {
+      deliveryFeeCUP = Number(business.deliveryFeeCUP ?? 0);
+
+      if (
+        !Number.isFinite(deliveryFeeCUP) ||
+        deliveryFeeCUP < 0 ||
+        deliveryFeeCUP > 1000000
+      ) {
+        return json({ error: 'La tarifa configurada por el negocio no es válida.' }, 400);
+      }
+
+      if (!['CUP', 'USD', 'USDT', 'USDC'].includes(orderCurrency)) {
+        return json({
+          error: `No hay una conversión configurada para la tarifa de entrega en ${orderCurrency}.`
+        }, 400);
+      }
+
+      deliveryFee = orderCurrency === 'CUP'
+        ? deliveryFeeCUP
+        : deliveryFeeCUP / usdRate;
+
+      deliveryFee = roundMoney(deliveryFee);
+    }
+
+    // Guardar el importe calculado por el servidor; nunca aceptar la tarifa del cliente.
+    const total = roundMoney(orderSubtotal + deliveryFee);
+
+    let localPaymentAmountCUP = null;
+
+    if (paymentMethod === 'transfermovil' || paymentMethod === 'enzona') {
+      if (orderCurrency === 'CUP') {
+        localPaymentAmountCUP = total;
+      } else if (['USD', 'USDT', 'USDC'].includes(orderCurrency)) {
+        // Convertir los productos directamente desde su subtotal original.
+        // Sumar el domicilio en CUP sin redondearlo previamente en USDT/USDC.
+        localPaymentAmountCUP = roundMoney(
+          orderSubtotal * usdRate + deliveryFeeCUP
+        );
+      } else {
+        return json({
+          error: `No hay una conversión configurada de ${orderCurrency} a CUP para pagos locales.`
+        }, 400);
+      }
+
+      if (!Number.isFinite(localPaymentAmountCUP) || localPaymentAmountCUP <= 0) {
+        return json({ error: 'No se pudo calcular un importe válido en CUP.' }, 400);
+      }
+    }
+
     const now = new Date().toISOString();
+    const orderId = uuidv4();
+    const ubikCode = await generateUniqueUbikCode(db.collection('orders'));
     const order = {
-      id: uuidv4(),
-      publicInvoiceId: uuidv4(),
+      id: orderId,
+      publicInvoiceId: orderId,
+      ubikCode,
       buyerId: user.id,
       buyerEmail: user.email,
       businessId,
       businessName: business?.name || '',
       items: orderItems,
-      subtotal,
-      total: subtotal, // no tax/shipping for now
+      subtotal: orderSubtotal,
+      total,
+      deliveryFeeCUP,
+      deliveryFee,
+      deliveryFeeCurrency: currency,
+      deliveryFeeUsdRate: usdRate,
       currency,
+      ...(localPaymentAmountCUP !== null ? { localPaymentAmountCUP } : {}),
+      paymentMethod,
+      paymentDetails,
       deliveryMethod,
       shipping: {
         deliveryMethod,
@@ -2178,6 +3855,8 @@ return json({ payments: out });
         email: shippingEmail || '',
         phone: shippingPhone,
         address: finalShippingAddress,
+        province: deliveryMethod === 'delivery' ? shippingProvince : '',
+        municipality: deliveryMethod === 'delivery' ? shippingMunicipality : '',
         notes: shippingNotes || '',
       },
       paymentStatus: 'pending_payment',
@@ -2192,7 +3871,6 @@ return json({ payments: out });
 
     // If paymentMethod is crypto, create crypto_invoice
     let invoice = null;
-    const paymentMethod = body.paymentMethod || 'crypto'; // default to crypto for now
     if (paymentMethod === 'crypto') {
       const cryptoCurrency = body.cryptoCurrency;
       const cryptoNetwork = body.cryptoNetwork;
@@ -2210,9 +3888,12 @@ return json({ payments: out });
 
       // Convertir según la moneda original del pedido.
       // usdRate representa CUP por 1 USD; USD, USDT y USDC usan paridad 1:1.
+      const configuredOrderRate = Number(order.deliveryFeeUsdRate);
       const settings = await getSettings(db);
       const configuredUsdRate = Number(settings.usdRate);
-      const usdRate = Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120;
+      const usdRate = Number.isFinite(configuredOrderRate) && configuredOrderRate > 0
+        ? configuredOrderRate
+        : (Number.isFinite(configuredUsdRate) && configuredUsdRate > 0 ? configuredUsdRate : 120);
       const orderCurrency = String(order.currency || 'CUP').toUpperCase();
       let amountInCrypto;
 
@@ -2234,8 +3915,15 @@ return json({ payments: out });
       // el importe visible del mismo valor entero usado para verificar la cadena.
       // Convertir a unidades enteras sin multiplicaciones imprecisas.
       // El importe de origen ya puede tener precisión limitada por Number.
-      const amountDecimal = amountInCrypto.toFixed(networkConfig.decimals);
+      const amountDecimal = orderCurrency === 'CUP'
+        ? amountInCrypto.toFixed(4)
+        : amountInCrypto.toFixed(2);
       const expectedAmountRaw = parseUnits(amountDecimal, networkConfig.decimals).toString();
+
+      if (BigInt(expectedAmountRaw) <= 0n) {
+        return json({ error: 'El importe convertido es demasiado pequeño para pagarlo con criptomonedas.' }, 400);
+      }
+
       const expectedAmount = Number(formatUnits(BigInt(expectedAmountRaw), networkConfig.decimals));
 
       const expiresAt = new Date();
@@ -2249,6 +3937,7 @@ return json({ payments: out });
       invoice = {
         id: uuidv4(),
         orderId: order.id,
+        originalOrderCurrency: orderCurrency,
         buyerId: user.id,
         businessId: order.businessId,
         commissionRateBps,
@@ -2328,7 +4017,34 @@ return json({ payments: out });
       if (invoice) {
         await db.collection('crypto_invoices').insertOne(invoice);
       }
-      await db.collection('orders').insertOne(order);
+      const ordersCollection = db.collection('orders');
+      let orderInserted = false;
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          await ordersCollection.insertOne(order);
+          orderInserted = true;
+          break;
+        } catch (insertError) {
+          const isUbikCodeCollision =
+            insertError?.code === 11000 &&
+            (
+              insertError?.keyPattern?.ubikCode === 1 ||
+              insertError?.keyValue?.ubikCode ||
+              String(insertError?.message || '').includes('orders_ubikCode_unique')
+            );
+
+          if (!isUbikCodeCollision || attempt === 4) {
+            throw insertError;
+          }
+
+          order.ubikCode = await generateUniqueUbikCode(ordersCollection);
+        }
+      }
+
+      if (!orderInserted) {
+        throw new Error('[Orders] No se pudo insertar el pedido con un código UBIK2 único');
+      }
     } catch (creationError) {
       if (invoice) {
         try {
@@ -2354,7 +4070,7 @@ return json({ payments: out });
           idempotencyKey,
           buyerId: user.id
         });
-        if (existing) return json({ order: existing, duplicate: true });
+        if (existing) return json({ order: sanitizeBuyerOrder(existing), duplicate: true });
       }
 
       throw creationError;
@@ -2365,10 +4081,169 @@ return json({ payments: out });
       console.error('[Email] failed to send order confirmation:', e?.message || e)
     );
 
-    return json({ order, invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
+    return json({ order: sanitizeBuyerOrder(order), invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
   }
 
-  // Seller order management: only the verified owner of the business.
+
+  // POST /api/seller/orders/:id/carrier-request
+  // Solicitud de transporte sin modificar el flujo de pagos ni confirmaciones.
+  if (
+    path[0] === 'seller' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'carrier-request' &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    const orders = db.collection('orders');
+    const order = await orders.findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu comercio.' }, 404);
+    }
+
+    const effectivePaymentStatus =
+      order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
+
+    if (effectivePaymentStatus !== 'paid') {
+      return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
+    }
+
+    const deliveryMethod =
+      order.deliveryMethod || order.shipping?.deliveryMethod || 'pickup';
+
+    if (deliveryMethod !== 'delivery') {
+      return json({ error: 'El transporte solo se puede solicitar para pedidos con entrega a domicilio.' }, 409);
+    }
+
+    if (order.shippingStatus === 'delivered' || order.status === 'delivered') {
+      return json({ error: 'El pedido ya figura como entregado.' }, 409);
+    }
+
+    const originProvince = String(business.province || '').trim();
+    const originMunicipality = String(business.municipality || '').trim();
+    const originAddress = String(business.address || '').trim();
+
+    const destinationProvince = String(order.shipping?.province || '').trim();
+    const destinationMunicipality = String(order.shipping?.municipality || '').trim();
+
+    if (
+      !isValidCubanLocation(originProvince, originMunicipality)
+    ) {
+      return json({
+        error: 'La ubicación del comercio no está completa o no es válida. Actualiza la provincia y el municipio en los datos de tu negocio.',
+      }, 409);
+    }
+
+    if (!originAddress) {
+      return json({
+        error: 'Debes completar la dirección de recogida en los datos de tu negocio.',
+      }, 409);
+    }
+
+    if (!isValidCubanLocation(destinationProvince, destinationMunicipality)) {
+      return json({
+        error: 'El pedido no tiene una provincia y municipio de destino válidos.',
+      }, 409);
+    }
+
+    const routeType =
+      originProvince !== destinationProvince
+        ? 'interprovincial'
+        : originMunicipality !== destinationMunicipality
+          ? 'provincial'
+          : 'local';
+
+    const now = new Date().toISOString();
+
+    const carrierService = {
+      status: 'requested',
+      requestedAt: now,
+      requestedBy: user.id,
+      origin: {
+        province: originProvince,
+        municipality: originMunicipality,
+        address: originAddress,
+      },
+      destination: {
+        province: destinationProvince,
+        municipality: destinationMunicipality,
+      },
+      routeType,
+      declinedCarrierIds: [],
+    };
+
+    const updateResult = await orders.updateOne(
+      {
+        id: order.id,
+        businessId: business.id,
+        $and: [
+          {
+            $or: [
+              { paymentStatus: 'paid' },
+              { status: 'paid', paymentStatus: { $exists: false } },
+              { status: 'paid', paymentStatus: null },
+              { status: 'paid', paymentStatus: '' },
+            ],
+          },
+          {
+            $or: [
+              { deliveryMethod: 'delivery' },
+              { 'shipping.deliveryMethod': 'delivery' },
+            ],
+          },
+          {
+            'carrierService.status': { $in: [null, 'cancelled'] },
+          },
+        ],
+      },
+      {
+        $set: {
+          carrierService,
+          updatedAt: now,
+        },
+        $push: {
+          statusHistory: {
+            status: 'carrier_requested',
+            at: now,
+            by: user.id,
+          },
+        },
+      }
+    );
+
+    if (updateResult.modifiedCount !== 1) {
+      return json({
+        error: 'No se pudo registrar la solicitud. El pedido pudo cambiar o ya tiene un servicio de transporte activo.',
+      }, 409);
+    }
+
+    return json({
+      ok: true,
+      carrierService,
+      message: 'Solicitud de transporte registrada correctamente.',
+    }, 201);
+  }
+
+// Seller order management: only the verified owner of the business.
   if (path[0] === 'seller' && path[1] === 'orders' &&
       (method === 'GET' || (method === 'PUT' && path[2]))) {
     const { user, error } = await requireUser(request);
@@ -2449,6 +4324,16 @@ return json({ payments: out });
           ? ['shipped', 'delivered']
           : [currentShippingStatus];
     }
+    if (
+      parsed.data.status === 'delivered' &&
+      order.carrierService?.carrierId &&
+      order.carrierService.status !== 'delivered'
+    ) {
+      return json({
+        error: 'El transportista asignado debe confirmar la entrega antes de que puedas marcar el pedido como entregado.',
+      }, 409);
+    }
+
     if (!allowedStatuses.includes(parsed.data.status)) {
       return json({
         error: effectiveDeliveryMethod === 'pickup'
@@ -2536,6 +4421,15 @@ return json({ payments: out });
           { status: 'paid', paymentStatus: null },
           { status: 'paid', paymentStatus: '' },
         ],
+        ...(status === 'delivered' ? {
+          $and: [{
+            $or: [
+              { 'carrierService.carrierId': { $exists: false } },
+              { 'carrierService.carrierId': null },
+              { 'carrierService.status': 'delivered' },
+            ],
+          }],
+        } : {}),
       },
       updateDoc
     );
@@ -2553,6 +4447,12 @@ return json({ payments: out });
 
     if (!updated) {
       return json({ error: 'No se pudo recuperar el pedido actualizado.' }, 500);
+    }
+
+    if (status === 'delivered' && currentShippingStatus !== 'delivered') {
+      sendOrderDeliveredNotifications(updated).catch((error) =>
+        console.error('[Email] Error notificando entrega del vendedor:', error?.message || error)
+      );
     }
 
     return json({ order: updated });
@@ -2618,8 +4518,13 @@ return json({ payments: out });
       return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
     }
 
-    if (order.shippingStatus !== 'delivered' && order.status !== 'delivered') {
-      return json({ error: 'Primero debes marcar el pedido como entregado.' }, 409);
+    if (
+      order.carrierService?.carrierId &&
+      order.carrierService.status !== 'delivered'
+    ) {
+      return json({
+        error: 'El transportista asignado debe confirmar la entrega antes de la confirmación QR del vendedor.',
+      }, 409);
     }
 
     if (order.sellerDeliveryConfirmation?.confirmedAt) {
@@ -2654,20 +4559,23 @@ return json({ payments: out });
           },
           {
             $or: [
-              { shippingStatus: 'delivered' },
-              { status: 'delivered' },
+              { 'sellerDeliveryConfirmation.confirmedAt': { $exists: false } },
+              { 'sellerDeliveryConfirmation.confirmedAt': null },
             ],
           },
           {
             $or: [
-              { 'sellerDeliveryConfirmation.confirmedAt': { $exists: false } },
-              { 'sellerDeliveryConfirmation.confirmedAt': null },
+              { 'carrierService.carrierId': { $exists: false } },
+              { 'carrierService.carrierId': null },
+              { 'carrierService.status': 'delivered' },
             ],
           },
         ],
       },
       {
         $set: {
+          status: 'delivered',
+          shippingStatus: 'delivered',
           sellerDeliveryConfirmation: confirmation,
           updatedAt: now,
         },
@@ -2702,6 +4610,12 @@ return json({ payments: out });
 
     if (!updated?.sellerDeliveryConfirmation?.confirmedAt) {
       return json({ error: 'No se pudo verificar la confirmación guardada.' }, 500);
+    }
+
+    if (result.matchedCount === 1) {
+      sendOrderDeliveredNotifications(updated).catch((error) =>
+        console.error('[Email] Error notificando entrega por QR:', error?.message || error)
+      );
     }
 
     return json({
@@ -2978,6 +4892,12 @@ return json({ payments: out });
             ],
           },
           {
+            'sellerDeliveryConfirmation.confirmedAt': {
+              $exists: true,
+              $nin: [null, ''],
+            },
+          },
+          {
             $or: [
               { 'buyerReceiptConfirmation.confirmedAt': { $exists: false } },
               { 'buyerReceiptConfirmation.confirmedAt': null },
@@ -3036,7 +4956,34 @@ return json({ payments: out });
     });
   }
 
-  // GET /api/my/orders - List buyer's orders
+  // Quita datos internos de verificación de los pedidos entregados a compradores.
+function sanitizeBuyerOrder(order) {
+  if (!order || typeof order !== 'object') return order;
+  const safe = { ...order };
+
+  // Nunca entregar datos internos del transportista al comprador.
+  if (safe.carrierService && typeof safe.carrierService === 'object') {
+    const service = safe.carrierService;
+    safe.carrierTracking = {
+      status: service.status || '',
+      routeType: service.routeType || '',
+      carrierName: service.carrierName || '',
+      acceptedAt: service.acceptedAt || null,
+      pickedUpAt: service.pickedUpAt || null,
+      deliveredAt: service.deliveredAt || null,
+    };
+  }
+  delete safe.carrierService;
+
+  if (safe.paymentDetails && typeof safe.paymentDetails === 'object') {
+    safe.paymentDetails = { ...safe.paymentDetails };
+    delete safe.paymentDetails.recipientVerificationPhone;
+    delete safe.paymentDetails.recipientAccount;
+  }
+  return safe;
+}
+
+// GET /api/my/orders - List buyer's orders
   if (path[0] === 'my' && path[1] === 'orders' && method === 'GET') {
     const { user, error } = await requireUser(request);
     if (error) return error;
@@ -3044,7 +4991,351 @@ return json({ payments: out });
       .find({ buyerId: user.id })
       .sort({ createdAt: -1 })
       .toArray();
-    return json({ orders });
+    return json({ orders: orders.map(sanitizeBuyerOrder) });
+  }
+
+
+  // POST /api/orders/:id/submit-payment-reference
+  // Guarda la referencia declarada por el comprador y reconcilia SMS anteriores.
+  if (
+    path[0] === 'orders' &&
+    path[1] &&
+    path[2] === 'submit-payment-reference' &&
+    path.length === 3 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'JSON inválido.' }, 400);
+    }
+
+    const reference =
+      typeof body?.transactionReference === 'string'
+        ? body.transactionReference.trim()
+        : '';
+
+    if (!/^[A-Za-z0-9_-]{4,100}$/.test(reference)) {
+      return json({
+        error: 'La referencia debe tener entre 4 y 100 letras, números, guiones o guiones bajos.',
+      }, 400);
+    }
+
+    const orders = db.collection('orders');
+    const order = await orders.findOne({ id: path[1], buyerId: user.id });
+
+    if (!order) return json({ error: 'Pedido no encontrado.' }, 404);
+
+    if (!['transfermovil', 'enzona'].includes(order.paymentMethod)) {
+      return json({ error: 'Este pedido no utiliza Transfermóvil ni EnZona.' }, 400);
+    }
+
+    if (order.paymentStatus !== 'pending_payment') {
+      return json({ error: 'El pedido ya no está pendiente de pago.' }, 409);
+    }
+
+    const hasValidLocalAmount =
+      Number.isFinite(Number(order.localPaymentAmountCUP)) &&
+      Number(order.localPaymentAmountCUP) > 0;
+
+    if (
+      String(order.currency || '').toUpperCase() !== 'CUP' &&
+      !hasValidLocalAmount
+    ) {
+      return json({
+        error: 'El pedido no tiene un importe CUP válido para la verificación por SMS.',
+      }, 409);
+    }
+
+
+    const reused = await orders.findOne({
+      id: { $ne: order.id },
+      paymentMethod: order.paymentMethod,
+      buyerTransactionReference: reference,
+    });
+
+    if (reused) {
+      return json({ error: 'Esta referencia ya está asociada a otro pedido.' }, 409);
+    }
+
+    const now = new Date().toISOString();
+    let saved;
+
+    try {
+      saved = await orders.updateOne(
+        {
+          id: order.id,
+          buyerId: user.id,
+          paymentStatus: 'pending_payment',
+          paymentMethod: order.paymentMethod,
+        },
+        {
+          $set: {
+            buyerTransactionReference: reference,
+            updatedAt: now,
+          },
+          ...(order.buyerTransactionReference &&
+          order.buyerTransactionReference !== reference
+            ? {
+                $push: {
+                  buyerTransactionReferenceHistory: {
+                    reference: order.buyerTransactionReference,
+                    replacedAt: now,
+                  },
+                },
+              }
+            : {}),
+        }
+      );
+    } catch (error) {
+      if (error?.code === 11000 || error?.codeName === 'DuplicateKey') {
+        return json({
+          error: 'Esta referencia ya está asociada a otro pedido para este método de pago.',
+          code: 'DUPLICATE_PAYMENT_REFERENCE',
+        }, 409);
+      }
+      throw error;
+    }
+
+    if (saved.matchedCount !== 1) {
+      const latest = await orders.findOne({ id: order.id, buyerId: user.id });
+
+      if (
+        latest?.paymentStatus === 'paid' &&
+        latest?.paymentRef?.transactionReference === reference
+      ) {
+        return json({
+          ok: true,
+          status: 'paid',
+          message: 'El pago ya figura como confirmado.',
+        });
+      }
+
+      return json({
+        error: 'El pedido cambió mientras guardábamos la referencia. Actualiza e inténtalo de nuevo.',
+      }, 409);
+    }
+
+    const events = db.collection('transfer_payment_events');
+    const event = await events.findOne({
+      provider: order.paymentMethod,
+      transactionReference: reference,
+    });
+
+    if (!event) {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'Referencia guardada. El pedido seguirá pendiente hasta recibir y comprobar un SMS coincidente.',
+      });
+    }
+
+    if (event.status === 'auto_approved' && event.matchedOrderId === order.id) {
+      const latestOrder = await orders.findOne({
+        id: order.id,
+        buyerId: user.id,
+      });
+
+      const expectedConfirmedAmount = Number(
+        latestOrder?.localPaymentAmountCUP ?? latestOrder?.total
+      );
+      const confirmedAmountMatches =
+        Number.isFinite(Number(latestOrder?.paymentRef?.amount)) &&
+        Number.isFinite(expectedConfirmedAmount) &&
+        expectedConfirmedAmount > 0 &&
+        Math.round(Number(latestOrder.paymentRef.amount) * 100) ===
+          Math.round(expectedConfirmedAmount * 100);
+
+      if (
+        latestOrder?.paymentStatus === 'paid' &&
+        latestOrder?.paymentRef?.provider === order.paymentMethod &&
+        latestOrder?.paymentRef?.transactionReference === reference &&
+        String(latestOrder?.paymentRef?.currency || '').toUpperCase() === 'CUP' &&
+        confirmedAmountMatches
+      ) {
+        return json({
+          ok: true,
+          status: 'paid',
+          message: 'El pago ya figura confirmado y coincide con la referencia.',
+        });
+      }
+
+      console.error(
+        '[Transfermóvil/EnZona] CRÍTICO: el evento figura procesado, pero el pedido no refleja un pago coherente.',
+        { eventId: event._id, orderId: order.id, provider: order.paymentMethod }
+      );
+
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'Existe una discrepancia entre el SMS procesado y el pedido. No vuelvas a pagar; requiere revisión administrativa.',
+      }, 409);
+    }
+
+    if (event.status !== 'pending_review') {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'El evento ya está procesado o en comprobación. No se ha confirmado este pedido.',
+      });
+    }
+
+    const expectedLocalAmount = Number(order.localPaymentAmountCUP ?? order.total);
+    const sameAmount =
+      Number.isFinite(expectedLocalAmount) &&
+      expectedLocalAmount > 0 &&
+      Number.isFinite(Number(event.amount)) &&
+      Math.round(expectedLocalAmount * 100) ===
+        Math.round(Number(event.amount) * 100);
+
+    const createdMs = Date.parse(order.createdAt);
+    const receivedMs = Date.parse(event.receivedAt);
+    const validWindow =
+      Number.isFinite(createdMs) &&
+      Number.isFinite(receivedMs) &&
+      receivedMs >= createdMs &&
+      receivedMs - createdMs <= 48 * 60 * 60 * 1000;
+
+    if (
+      !sameAmount ||
+      event.currency !== 'CUP' ||
+      !event.smsText ||
+      !validWindow
+    ) {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'Referencia guardada, pero el importe, el SMS o el período no coinciden. Requiere revisión manual.',
+      });
+    }
+
+    // Reclamar el evento antes de actualizar el pedido para evitar
+    // que dos peticiones procesen simultáneamente el mismo SMS.
+    const claim = await events.updateOne(
+      { _id: event._id, status: 'pending_review' },
+      {
+        $set: {
+          status: 'matching_reference',
+          matchingOrderId: order.id,
+        },
+      }
+    );
+
+    if (claim.modifiedCount !== 1) {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'El SMS está siendo procesado por otra operación. No se ha confirmado aquí.',
+      });
+    }
+
+    const confirmedAt = new Date().toISOString();
+    const updateResult = await orders.updateOne(
+      {
+        id: order.id,
+        buyerId: user.id,
+        paymentStatus: 'pending_payment',
+        paymentMethod: order.paymentMethod,
+        $or: [
+          { currency: 'CUP', total: order.total },
+          { localPaymentAmountCUP: expectedLocalAmount },
+        ],
+        buyerTransactionReference: reference,
+      },
+      {
+        $set: {
+          paymentStatus: 'paid',
+          status: 'paid',
+          paymentRef: {
+            provider: order.paymentMethod,
+            transactionReference: reference,
+            amount: event.amount,
+            currency: 'CUP',
+            receiverAccount: event.receiverAccount || null,
+            senderPhone: event.senderPhone || null,
+            transactionDate: event.transactionDate || null,
+            receivedAt: event.receivedAt,
+            confirmedAt,
+            verificationMethod: 'matched-sms-reference-and-amount',
+          },
+          updatedAt: confirmedAt,
+        },
+        $push: {
+          statusHistory: {
+            status: 'paid',
+            at: confirmedAt,
+            by: 'matched-sms-reference-and-amount',
+            notes: 'Referencia exacta e importe coincidentes con SMS. El SMS no constituye prueba bancaria criptográfica.',
+          },
+        },
+      }
+    );
+
+    if (updateResult.modifiedCount !== 1) {
+      await events.updateOne(
+        { _id: event._id, status: 'matching_reference', matchingOrderId: order.id },
+        {
+          $set: {
+            status: 'pending_review',
+            reviewNotes: 'No se pudo actualizar el pedido durante la conciliación.',
+          },
+          $unset: { matchingOrderId: '' },
+        }
+      );
+
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'No se pudo confirmar el pedido. Requiere revisión manual.',
+      });
+    }
+
+    const finalizeResult = await events.updateOne(
+      { _id: event._id, status: 'matching_reference', matchingOrderId: order.id },
+      {
+        $set: {
+          status: 'auto_approved',
+          matchedOrderId: order.id,
+          reviewedAt: confirmedAt,
+          reviewNotes: 'Referencia exacta e importe coincidentes. El SMS no constituye prueba bancaria criptográfica.',
+        },
+        $unset: { matchingOrderId: '' },
+      }
+    );
+
+    if (finalizeResult.modifiedCount !== 1) {
+      console.error(
+        '[Transfermóvil] CRÍTICO: pedido pagado, pero el evento SMS no se finalizó.',
+        { eventId: event._id, orderId: order.id }
+      );
+
+      return json({
+        ok: false,
+        status: 'paid_reconciliation_error',
+        message: 'El pedido quedó pagado, pero la conciliación del SMS requiere revisión administrativa. No vuelvas a pagar.',
+      }, 500);
+    }
+
+    if (typeof order.buyerEmail === 'string' && order.buyerEmail.trim()) {
+      sendPaymentConfirmedEmail(
+        order.buyerEmail,
+        order.shipping?.name || '',
+        { ...order, paymentStatus: 'paid', status: 'paid' },
+        null
+      ).catch(e => {
+        console.error('[Transfermóvil] Error enviando correo de confirmación:', e?.message || e);
+      });
+    }
+
+    return json({
+      ok: true,
+      status: 'auto_approved',
+      message: 'Referencia e importe coinciden con el SMS. Conserva el comprobante: el SMS no es una prueba bancaria criptográfica.',
+    });
   }
 
   // GET /api/orders/:id - Get order detail (buyer or admin)
@@ -3057,7 +5348,9 @@ return json({ payments: out });
     if (order.buyerId !== user.id && user.role !== 'admin') {
       return json({ error: 'Sin permiso' }, 403);
     }
-    return json({ order });
+    return json({
+      order: order.buyerId === user.id ? sanitizeBuyerOrder(order) : order
+    });
   }
 
   // PUT /api/admin/orders/:id - Admin update order status (with history)
@@ -3077,6 +5370,16 @@ return json({ payments: out });
     const effectivePaymentStatus = order.paymentStatus || (order.status === 'paid' ? 'paid' : null);
     if (effectivePaymentStatus !== 'paid') {
       return json({ error: 'El pedido debe tener el pago confirmado antes de gestionar su preparación o entrega.' }, 409);
+    }
+
+    if (
+      status === 'delivered' &&
+      order.carrierService?.carrierId &&
+      order.carrierService.status !== 'delivered'
+    ) {
+      return json({
+        error: 'El transportista asignado debe confirmar la entrega antes de que un administrador pueda marcarla como entregada.',
+      }, 409);
     }
 
     const now = new Date().toISOString();
@@ -3107,7 +5410,22 @@ return json({ payments: out });
     if (trackingNumber) update.$set.trackingNumber = trackingNumber;
     if (trackingCarrier) update.$set.trackingCarrier = trackingCarrier;
 
-    await db.collection('orders').updateOne({ id: path[2] }, update);
+    const updateFilter = { id: path[2] };
+    if (status === 'delivered') {
+      updateFilter.$or = [
+        { 'carrierService.carrierId': { $exists: false } },
+        { 'carrierService.carrierId': null },
+        { 'carrierService.status': 'delivered' },
+      ];
+    }
+
+    const updateResult = await db.collection('orders').updateOne(updateFilter, update);
+    if (updateResult.matchedCount !== 1) {
+      return json({
+        error: 'No se pudo actualizar el pedido. Comprueba el estado del transportista y vuelve a intentarlo.',
+      }, 409);
+    }
+
     const updated = await db.collection('orders').findOne({ id: path[2] });
 
     // Send transactional emails based on status change (async, don't block)
@@ -3117,12 +5435,44 @@ return json({ payments: out });
         carrier: updated.trackingCarrier,
       }).catch((e) => console.error('[Email] failed to send shipped:', e?.message || e));
     } else if (status === 'delivered') {
-      sendOrderDeliveredEmail(updated.buyerEmail, '', updated).catch((e) => console.error('[Email] failed to send delivered:', e?.message || e));
+      const wasAlreadyDelivered =
+        order.shippingStatus === 'delivered' || order.status === 'delivered';
+
+      if (!wasAlreadyDelivered) {
+        sendOrderDeliveredNotifications(updated).catch((e) =>
+          console.error('[Email] failed to send delivered:', e?.message || e)
+        );
+      }
     } else if (status === 'cancelled' || status === 'payment_failed') {
       sendPaymentFailedEmail(updated.buyerEmail, '', updated, adminNotes).catch((e) => console.error('[Email] failed to send failed:', e?.message || e));
     }
 
     return json({ order: updated });
+  }
+
+  // GET /api/admin/transfermovil-events - Admin-only SMS review queue
+  if (path[0] === 'admin' && path[1] === 'transfermovil-events' && method === 'GET' && path.length === 2) {
+    const { error } = await requireAdmin(request);
+    if (error) return error;
+
+    const params = new URL(request.url).searchParams;
+    const requestedLimit = Number.parseInt(params.get('limit') || '50', 10);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(100, Math.max(1, requestedLimit))
+      : 50;
+    const status = params.get('status');
+    const filter = {};
+    if (status && ['pending_review', 'reviewed', 'ignored'].includes(status)) {
+      filter.status = status;
+    }
+
+    const events = await db.collection('transfer_payment_events')
+      .find(filter)
+      .sort({ receivedAt: -1 })
+      .limit(limit)
+      .toArray();
+
+    return json({ events, limit });
   }
 
   // GET /api/admin/orders - Admin list all orders
@@ -3223,11 +5573,22 @@ return json({ payments: out });
 
     drawLine('UBIK2YEMG', { size: 22, bold: true, gap: 30 });
     drawLine('FACTURA COMERCIAL', { size: 15, bold: true, gap: 25 });
+    drawLine('Código UBIK2: ' + String(order.ubikCode || '—'));
     drawLine('Número de factura: ' + String(order.publicInvoiceId).toUpperCase());
     drawLine('Pedido: ' + String(order.id).slice(0, 80));
     drawLine('Negocio: ' + String(order.businessName || 'No indicado').slice(0, 120));
     drawLine('Fecha: ' + (order.createdAt || 'No indicada'));
     drawLine('Método de entrega: ' + String(order.deliveryMethod || 'No indicado'));
+    const invoiceCurrency = String(order.currency || 'CUP').toUpperCase();
+    const invoiceSubtotal = Number(order.subtotal ?? order.total ?? 0) || 0;
+    const invoiceDeliveryFee = Number(order.deliveryFee ?? 0) || 0;
+    const invoiceDeliveryFeeCUP = Number(order.deliveryFeeCUP ?? 0) || 0;
+
+    drawLine('Subtotal de productos: ' + invoiceSubtotal.toFixed(2) + ' ' + invoiceCurrency);
+    drawLine('Tarifa de entrega: ' + invoiceDeliveryFee.toFixed(2) + ' ' + invoiceCurrency);
+    if (invoiceCurrency !== 'CUP' && invoiceDeliveryFeeCUP > 0) {
+      drawLine('Equivalente de la entrega: ' + invoiceDeliveryFeeCUP.toFixed(2) + ' CUP');
+    }
     drawLine('DATOS DEL DESTINATARIO', { size: 12, bold: true, gap: 23 });
     drawLine('Nombre: ' + String(order.shipping?.name || 'No indicado'));
     drawLine('Teléfono: ' + String(order.shipping?.phone || 'No indicado'));
@@ -3251,6 +5612,35 @@ return json({ payments: out });
     drawLine('Total: ' + (Number(order.total ?? order.subtotal ?? 0) || 0).toFixed(2) +
       ' ' + String(order.currency || 'CUP'), { size: 14, bold: true, gap: 25 });
 
+    const invoicePaymentMethod = String(order.paymentMethod || '').toLowerCase();
+    if (['transfermovil', 'enzona'].includes(invoicePaymentMethod)) {
+      const savedLocalAmount = Number(order.localPaymentAmountCUP);
+      const localAmount =
+        Number.isFinite(savedLocalAmount) && savedLocalAmount > 0
+          ? savedLocalAmount
+          : invoiceCurrency === 'CUP' &&
+            Number.isFinite(Number(order.total)) &&
+            Number(order.total) > 0
+            ? Number(order.total)
+            : null;
+
+      if (localAmount !== null) {
+        const paymentLabel = invoicePaymentMethod === 'transfermovil'
+          ? 'TRANSFERMÓVIL'
+          : 'ENZONA';
+        drawLine(
+          'IMPORTE A TRANSFERIR POR ' + paymentLabel + ': ' +
+          localAmount.toFixed(2) + ' CUP',
+          { size: 13, bold: true, gap: 25 }
+        );
+      } else {
+        drawLine(
+          'IMPORTE A TRANSFERIR EN CUP: NO DISPONIBLE. Confirmar con soporte antes de pagar.',
+          { size: 10, bold: true, gap: 25 }
+        );
+      }
+    }
+
     const paymentStatus = String(order.paymentStatus || order.status || 'unknown');
     const statusLabels = {
       paid: 'PAGO CONFIRMADO',
@@ -3264,32 +5654,6 @@ return json({ payments: out });
     drawLine('Estado real del pago: ' + (statusLabels[paymentStatus] || paymentStatus));
     drawLine('La validez de esta factura no demuestra por sí sola que el pago esté confirmado.', {
       size: 9, gap: 16
-    });
-
-    // Página de verificación separada: el QR no cambia estados ni aprueba pagos.
-    const qrPage = pdf.addPage(pageSize);
-    qrPage.drawText('VERIFICACIÓN PÚBLICA DE FACTURA', {
-      x: 48, y: 780, size: 16, font: bold, color: rgb(0.12, 0.16, 0.22)
-    });
-    const requestOrigin = new URL(request.url).origin;
-    const base = BASE_URL && !BASE_URL.includes('localhost')
-      ? BASE_URL : requestOrigin;
-    const verifyUrl = base.replace(/\/+$/, '') + '/invoice/' +
-      encodeURIComponent(order.publicInvoiceId);
-    const qrData = await QRCode.toDataURL(verifyUrl, {
-      errorCorrectionLevel: 'M', margin: 2, width: 320
-    });
-    const qrImage = await pdf.embedPng(qrData);
-    qrPage.drawImage(qrImage, { x: 177, y: 390, width: 240, height: 240 });
-    qrPage.drawText('Escanea el QR para consultar la información pública.', {
-      x: 80, y: 350, size: 11, font, color: rgb(0.12, 0.16, 0.22)
-    });
-    qrPage.drawText('La consulta no confirma pagos ni libera fondos.', {
-      x: 95, y: 328, size: 10, font: bold, color: rgb(0.12, 0.16, 0.22)
-    });
-    qrPage.drawText(verifyUrl.slice(0, 100), {
-      x: 48, y: 295, size: 8, font, color: rgb(0.12, 0.16, 0.22),
-      maxWidth: 495
     });
 
     const bytes = await pdf.save();
@@ -3745,72 +6109,17 @@ return json({ payments: out });
 
   // ===== SEED =====
   if (path[0] === 'seed' && method === 'POST') {
-    // safe to call multiple times - only seeds products when empty, but ALWAYS reconciles admin
+    // El endpoint de inicialización requiere una sesión administrativa válida.
+    const { error } = await requireAdmin(request);
+    if (error) return error;
+
+    // La inicialización solo debe continuar tras autenticar al administrador.
     const existing = await db.collection('products').countDocuments();
-    // ensure settings + admin user exist regardless
+    // Solo inicializa los ajustes; la gestión de cuentas administrativas
+    // debe realizarse mediante un procedimiento independiente y explícito.
     await getSettings(db);
 
-    // === Admin reconciliation (idempotent) ===
-    // Credenciales del administrador SOLO desde variables de entorno del servidor.
-    // Si faltan, se omite la reconciliación (nunca se usan valores por defecto).
-    const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
-    const ADMIN_NAME = 'Administrador UBIK2 YEMG';
-    const LEGACY_EMAILS = (process.env.ADMIN_LEGACY_EMAILS || '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean);
-    const adminConfigured = Boolean(ADMIN_EMAIL && ADMIN_PASSWORD && ADMIN_PASSWORD.length >= 12);
-    if (!adminConfigured) console.warn('[Seed] ADMIN_EMAIL/ADMIN_PASSWORD no configuradas (mín. 12 caracteres): se omite la reconciliación de admin.');
-
-    let adminReconciled = 'skipped';
-    if (adminConfigured) {
-    adminReconciled = 'none';
-    const newHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
-
-    // 1) Try to find any legacy admin email and migrate it to the new one
-    const legacyAdmin = await db.collection('users').findOne({ email: { $in: LEGACY_EMAILS } });
-    if (legacyAdmin) {
-      // Check if new email already taken by another doc to avoid conflict
-      const conflicting = await db.collection('users').findOne({ email: ADMIN_EMAIL });
-      if (conflicting && conflicting.id !== legacyAdmin.id) {
-        if (conflicting.businessId) {
-          await db.collection('businesses').deleteOne({ id: conflicting.businessId });
-          await db.collection('products').deleteMany({ businessId: conflicting.businessId });
-        }
-        await db.collection('users').deleteOne({ id: conflicting.id });
-      }
-      await db.collection('users').updateOne(
-        { id: legacyAdmin.id },
-        { $set: { email: ADMIN_EMAIL, password: newHash, role: 'admin', name: legacyAdmin.name || ADMIN_NAME, suspended: false } }
-      );
-      adminReconciled = 'migrated';
-    } else {
-      // 2) Otherwise, look for existing user with the new email
-      const existingNew = await db.collection('users').findOne({ email: ADMIN_EMAIL });
-      if (existingNew) {
-        await db.collection('users').updateOne(
-          { id: existingNew.id },
-          { $set: { password: newHash, role: 'admin', suspended: false } }
-        );
-        adminReconciled = 'password-reset';
-      } else {
-        // 3) Create from scratch
-        const adminId = uuidv4();
-        const adminBizId = uuidv4();
-        await db.collection('businesses').insertOne({
-          id: adminBizId, userId: adminId, name: 'UBIK2 YEMG Admin', logo: '', description: 'Administración',
-          whatsapp: '+5350000000', location: 'Cuba', instagram: '', facebook: '', createdAt: new Date().toISOString(),
-        });
-        await db.collection('users').insertOne({
-          id: adminId, email: ADMIN_EMAIL, password: newHash, name: ADMIN_NAME,
-          role: 'admin', businessId: adminBizId, plan: 'premium', planExpiresAt: null,
-          createdAt: new Date().toISOString(),
-        });
-        adminReconciled = 'created';
-      }
-    }
-
-    } // end if (adminConfigured)
-
-    if (existing > 0) return json({ message: 'Ya hay datos cargados', count: existing, adminReconciled });
+    if (existing > 0) return json({ message: 'Ya hay datos cargados', count: existing });
 
     const businessesSeed = [
       { name: 'Sabores de La Habana', logo: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=200&q=80', description: 'Comida tradicional cubana hecha con amor', whatsapp: '+5355512345', location: 'La Habana, Cuba', instagram: '@sabores_habana' },
@@ -3873,6 +6182,9 @@ return json({ payments: out });
       transfermovilName: s.transfermovilName,
       premiumPriceUSD: s.premiumPriceUSD,
       premiumPriceCUP: s.premiumPriceCUP || 0,
+      usdRate: Number.isFinite(Number(s.usdRate)) && Number(s.usdRate) > 0
+        ? Number(s.usdRate)
+        : 120,
       plansEnabled: s.plansEnabled !== false,
       contactPhone: s.contactPhone || '+5359195051',
       contactEmail: s.contactEmail || 'UBIK2YEMG@gmail.com',
@@ -4025,7 +6337,7 @@ return json({ payments: out });
         .collection('businesses')
         .find(
           { id: { $in: users.map((u) => u.businessId) } },
-          { projection: { id: 1, name: 1, deliveryEnabled: 1, verified: 1, verifiedAt: 1, verifiedBy: 1 } }
+          { projection: { id: 1, name: 1, deliveryEnabled: 1, verified: 1, verifiedAt: 1, verifiedBy: 1, cryptoEnabled: 1 } }
         )
         .toArray();
       const bm = Object.fromEntries(bizs.map((b) => [b.id, b]));
@@ -4070,9 +6382,121 @@ return json({ payments: out });
       const existing = await db.collection('businesses').findOne({ id: path[2] });
       if (!existing) return json({ error: 'Negocio no encontrado' }, 404);
 
-      const allowed = ['name', 'logo', 'description', 'whatsapp', 'telegram', 'sms', 'location', 'instagram', 'facebook'];
+      const allowed = [
+        'name', 'logo', 'description', 'whatsapp', 'telegram', 'sms',
+        'location', 'instagram', 'facebook', 'messenger',
+        'businessType', 'country', 'province', 'municipality', 'address',
+        'openingHours', 'closingHours', 'showContactsPublicly', 'sellingApproved',
+        'transfermovilEnabled', 'transfermovilNumber', 'transfermovilName',
+        'transfermovilAccount', 'transfermovilContactPhone', 'transfermovilVerificationPhone',
+        'enzonaEnabled', 'enzonaRecipient', 'enzonaCardNumber', 'enzonaPhone',
+        'cryptoEnabled', 'deliveryFeeCUP'
+      ];
       const update = {};
       for (const k of allowed) if (k in body) update[k] = body[k];
+
+      // Validar la configuración de pagos antes de guardar.
+      for (const key of [
+        'transfermovilEnabled', 'enzonaEnabled', 'cryptoEnabled',
+        'sellingApproved', 'showContactsPublicly'
+      ]) {
+        if (key in body && typeof body[key] !== 'boolean') {
+          return json({ error: `El campo ${key} debe ser verdadero o falso.` }, 400);
+        }
+      }
+
+      const businessTextLimits = {
+        messenger: 300, businessType: 50, country: 80,
+        province: 100, municipality: 100, address: 300,
+        openingHours: 50, closingHours: 50
+      };
+
+      for (const [key, maxLength] of Object.entries(businessTextLimits)) {
+        if (!(key in body)) continue;
+        if (typeof body[key] !== 'string' || body[key].length > maxLength) {
+          return json({ error: `El campo ${key} no es válido o supera ${maxLength} caracteres.` }, 400);
+        }
+        update[key] = body[key].trim();
+      }
+
+      if ('deliveryFeeCUP' in body) {
+        const fee = Number(body.deliveryFeeCUP);
+        if (!Number.isFinite(fee) || fee < 0 || fee > 1000000) {
+          return json({ error: 'El costo de entrega debe estar entre 0 y 1 000 000 CUP.' }, 400);
+        }
+        update.deliveryFeeCUP = fee;
+      }
+
+      const paymentTextLimits = {
+        transfermovilNumber: 40,
+        transfermovilName: 100,
+        transfermovilAccount: 60,
+        transfermovilContactPhone: 30,
+        transfermovilVerificationPhone: 30,
+        enzonaRecipient: 150,
+        enzonaCardNumber: 60,
+        enzonaPhone: 30,
+      };
+
+      for (const [key, maxLength] of Object.entries(paymentTextLimits)) {
+        if (!(key in body)) continue;
+
+        if (typeof body[key] !== 'string') {
+          return json({ error: `El campo ${key} debe ser texto.` }, 400);
+        }
+
+        const value = body[key].trim();
+
+        if (value.length > maxLength) {
+          return json({ error: `El campo ${key} supera la longitud permitida.` }, 400);
+        }
+
+        if (value && value.length < 3) {
+          return json({ error: `El campo ${key} es demasiado corto.` }, 400);
+        }
+
+        update[key] = value;
+      }
+
+      if (update.transfermovilEnabled === true &&
+          !String(update.transfermovilNumber ?? '').trim() &&
+          !String(existing.transfermovilNumber ?? '').trim()) {
+        return json({ error: 'Introduce el número receptor antes de habilitar Transfermóvil.' }, 400);
+      }
+
+      if (update.transfermovilEnabled === true &&
+          !String(update.transfermovilName ?? existing.transfermovilName ?? '').trim()) {
+        return json({ error: 'Introduce el nombre del titular antes de habilitar Transfermóvil.' }, 400);
+      }
+
+      if (update.transfermovilEnabled === true &&
+          !String(update.transfermovilContactPhone ?? existing.transfermovilContactPhone ?? '').trim()) {
+        return json({ error: 'Introduce el móvil de contacto antes de habilitar Transfermóvil.' }, 400);
+      }
+
+      if (update.transfermovilEnabled === true) {
+        const verificationPhone = String(
+          update.transfermovilVerificationPhone ?? existing.transfermovilVerificationPhone ?? ''
+        ).trim() || String(
+          update.transfermovilContactPhone ?? existing.transfermovilContactPhone ?? ''
+        ).trim();
+        if (!verificationPhone) {
+          return json({ error: 'Introduce el móvil de contacto o el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+        }
+        update.transfermovilVerificationPhone = verificationPhone;
+      }
+
+      if (update.enzonaEnabled === true) {
+        if (!String(update.enzonaRecipient ?? existing.enzonaRecipient ?? '').trim()) {
+          return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(update.enzonaCardNumber ?? existing.enzonaCardNumber ?? '').trim()) {
+          return json({ error: 'Introduce la tarjeta receptora antes de habilitar EnZona.' }, 400);
+        }
+        if (!String(update.enzonaPhone ?? existing.enzonaPhone ?? '').trim()) {
+          return json({ error: 'Introduce el móvil receptor antes de habilitar EnZona.' }, 400);
+        }
+      }
 
       if ('commissionRateBps' in body) {
         if (!Number.isInteger(body.commissionRateBps) || body.commissionRateBps < 0 || body.commissionRateBps > 3000) {
@@ -4083,16 +6507,24 @@ return json({ payments: out });
 
       if ('verified' in body) {
         if (typeof body.verified !== 'boolean') {
-          return json({ error: 'El estado de verificación debe ser verdadero o falso' }, 400);
+          return json({ error: 'El estado de verificación debe ser verdadero o falso.' }, 400);
         }
         update.verified = body.verified;
         update.verifiedAt = body.verified ? new Date().toISOString() : null;
         update.verifiedBy = body.verified ? user.id : null;
+
+        if (!body.verified) {
+          update.deliveryEnabled = false;
+        }
       }
 
       if ('deliveryEnabled' in body) {
         if (typeof body.deliveryEnabled !== 'boolean') {
-          return json({ error: 'El estado de entregas debe ser verdadero o falso' }, 400);
+          return json({ error: 'El estado de entregas debe ser verdadero o falso.' }, 400);
+        }
+        const effectiveVerified = update.verified ?? (existing.verified === true);
+        if (body.deliveryEnabled && !effectiveVerified) {
+          return json({ error: 'Primero debes verificar el negocio para autorizar las entregas.' }, 400);
         }
         update.deliveryEnabled = body.deliveryEnabled;
       }
@@ -4235,6 +6667,691 @@ return json({ payments: out });
     return json({ ok: true });
   }
 
+
+  // ===== CARRIER APPLICATIONS =====
+
+  // GET /api/carriers/me - Estado de la solicitud del usuario autenticado
+  if (path[0] === 'carriers' && path[1] === 'me' && method === 'GET' && path.length === 2) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne(
+      { userId: user.id },
+      { projection: { _id: 0, userId: 0 } }
+    );
+
+    const allowedProfileFields = [
+      'applicationNumber',
+      'status',
+      'reviewNotes',
+      'identityNumber',
+      'fullName',
+      'phone',
+      'addressProvince',
+      'addressMunicipality',
+      'addressLocality',
+      'addressStreet',
+      'addressReference',
+      'vehicleType',
+      'vehiclePlate',
+      'transportMode',
+      'experience',
+      'availability',
+      'coverageAreas',
+      'province',
+      'municipalities',
+    ];
+
+    const safeCarrier = carrier
+      ? Object.fromEntries(
+          allowedProfileFields
+            .filter(field => Object.prototype.hasOwnProperty.call(carrier, field))
+            .map(field => [field, carrier[field]])
+        )
+      : null;
+
+    return json({ carrier: safeCarrier });
+  }
+
+
+  // GET /api/carriers/services - Servicios disponibles y asignados.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'services' &&
+    method === 'GET' &&
+    path.length === 2
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'Necesitas tener autorización como transportista.' }, 403);
+    }
+
+    const areas = Array.isArray(carrier.coverageAreas) && carrier.coverageAreas.length
+      ? carrier.coverageAreas
+      : [{
+          province: carrier.province,
+          municipalities: carrier.municipalities || [],
+        }];
+
+    const covers = (province, municipality) =>
+      areas.some(area =>
+        area.province === province &&
+        Array.isArray(area.municipalities) &&
+        area.municipalities.includes(municipality)
+      );
+
+    const supportsRoute = routeType => {
+      if (routeType === 'local') return true;
+      if (routeType === 'provincial') {
+        return ['provincial', 'interprovincial'].includes(carrier.transportMode);
+      }
+      if (routeType === 'interprovincial') {
+        return carrier.transportMode === 'interprovincial';
+      }
+      return false;
+    };
+
+    const orders = db.collection('orders');
+
+    const requestedOrders = await orders.find({
+      'carrierService.status': 'requested',
+      'carrierService.carrierId': { $exists: false },
+      'carrierService.declinedCarrierIds': { $ne: carrier.id },
+      $and: [{
+        $or: [
+          { paymentStatus: 'paid' },
+          { status: 'paid', paymentStatus: { $exists: false } },
+          { status: 'paid', paymentStatus: null },
+          { status: 'paid', paymentStatus: '' },
+        ],
+      }],
+    }, {
+      projection: {
+        _id: 0,
+        id: 1,
+        publicInvoiceId: 1,
+        ubikCode: 1,
+        businessId: 1,
+        businessName: 1,
+        items: 1,
+        totalCUP: 1,
+        total: 1,
+        createdAt: 1,
+        carrierService: 1,
+      },
+    }).sort({ 'carrierService.requestedAt': 1 }).limit(100).toArray();
+
+    const availableServices = requestedOrders
+      .filter(order => {
+        const service = order.carrierService;
+        if (!service?.origin || !service?.destination) return false;
+
+        return (
+          covers(service.origin.province, service.origin.municipality) &&
+          covers(service.destination.province, service.destination.municipality) &&
+          supportsRoute(service.routeType)
+        );
+      })
+      .map(order => ({
+        orderId: order.id,
+        publicInvoiceId: order.publicInvoiceId || order.id,
+        ubikCode: order.ubikCode || null,
+        businessId: order.businessId,
+        businessName: order.businessName || '',
+        items: (order.items || []).map(item => ({
+          name: item.name || item.productName || '',
+          quantity: item.quantity || 1,
+        })),
+        totalCUP: order.totalCUP ?? order.total ?? null,
+        requestedAt: order.carrierService.requestedAt,
+        routeType: order.carrierService.routeType,
+        origin: {
+          province: order.carrierService.origin.province,
+          municipality: order.carrierService.origin.municipality,
+        },
+        destination: {
+          province: order.carrierService.destination.province,
+          municipality: order.carrierService.destination.municipality,
+        },
+      }));
+
+    const assignedOrders = await orders.find({
+      'carrierService.carrierUserId': user.id,
+      'carrierService.status': { $in: ['accepted', 'picked_up', 'delivered'] },
+    }, {
+      projection: {
+        _id: 0,
+        id: 1,
+        publicInvoiceId: 1,
+        ubikCode: 1,
+        items: 1,
+        totalCUP: 1,
+        total: 1,
+        createdAt: 1,
+        shipping: 1,
+        shippingName: 1,
+        shippingPhone: 1,
+        shippingAddress: 1,
+        shippingNotes: 1,
+        carrierService: 1,
+      },
+    }).sort({ 'carrierService.acceptedAt': -1 }).limit(100).toArray();
+
+    const assignedServices = assignedOrders.map(order => {
+      const service = order.carrierService || {};
+      const shipping = order.shipping || {};
+
+      return {
+        orderId: order.id,
+        publicInvoiceId: order.publicInvoiceId || order.id,
+        ubikCode: order.ubikCode || null,
+        status: service.status,
+        routeType: service.routeType,
+        acceptedAt: service.acceptedAt || null,
+        pickedUpAt: service.pickedUpAt || null,
+        deliveredAt: service.deliveredAt || null,
+        origin: {
+          province: service.origin?.province || '',
+          municipality: service.origin?.municipality || '',
+          address: service.origin?.address || '',
+        },
+        recipient: {
+          name: shipping.name || order.shippingName || '',
+          phone: shipping.phone || order.shippingPhone || '',
+          address: shipping.address || order.shippingAddress || '',
+          province: shipping.province || '',
+          municipality: shipping.municipality || '',
+          notes: order.shippingNotes || shipping.notes || '',
+        },
+        items: (order.items || []).map(item => ({
+          name: item.name || item.productName || '',
+          quantity: item.quantity || 1,
+        })),
+        totalCUP: order.totalCUP ?? order.total ?? null,
+        createdAt: order.createdAt || null,
+      };
+    });
+
+    return json({ availableServices, assignedServices });
+  }
+
+  // POST /api/carriers/orders/:id/respond - Aceptar o rechazar.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'respond' &&
+    path.length === 4 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'No tienes autorización como transportista.' }, 403);
+    }
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'Solicitud inválida.' }, 400);
+    }
+
+    if (!['accepted', 'rejected'].includes(body?.action)) {
+      return json({ error: 'Acción inválida.' }, 400);
+    }
+
+    const orders = db.collection('orders');
+    const now = new Date().toISOString();
+
+    // Revalidar el servicio y la cobertura en el servidor.
+    const candidate = await orders.findOne({
+      id: path[2],
+      'carrierService.status': 'requested',
+      'carrierService.carrierId': { $exists: false },
+      'carrierService.declinedCarrierIds': { $ne: carrier.id },
+    });
+
+    if (!candidate) {
+      return json({ error: 'El servicio ya no está disponible.' }, 409);
+    }
+
+    const effectivePaymentStatus =
+      candidate.paymentStatus ||
+      (candidate.status === 'paid' ? 'paid' : null);
+
+    const effectiveDeliveryMethod =
+      candidate.deliveryMethod ||
+      candidate.shipping?.deliveryMethod ||
+      'pickup';
+
+    if (effectivePaymentStatus !== 'paid' ||
+        effectiveDeliveryMethod !== 'delivery') {
+      return json({ error: 'El pedido no cumple los requisitos de transporte.' }, 409);
+    }
+
+    const areas = Array.isArray(carrier.coverageAreas) && carrier.coverageAreas.length
+      ? carrier.coverageAreas
+      : [{
+          province: carrier.province,
+          municipalities: carrier.municipalities || [],
+        }];
+
+    const covers = (province, municipality) =>
+      areas.some(area =>
+        area.province === province &&
+        Array.isArray(area.municipalities) &&
+        area.municipalities.includes(municipality)
+      );
+
+    const service = candidate.carrierService || {};
+    const origin = service.origin || {};
+    const destination = service.destination || {};
+
+    const supportsRoute =
+      service.routeType === 'local' ||
+      (service.routeType === 'provincial' &&
+        ['provincial', 'interprovincial'].includes(carrier.transportMode)) ||
+      (service.routeType === 'interprovincial' &&
+        carrier.transportMode === 'interprovincial');
+
+    if (
+      !covers(origin.province, origin.municipality) ||
+      !covers(destination.province, destination.municipality) ||
+      !supportsRoute
+    ) {
+      return json({ error: 'Este servicio está fuera de tu cobertura o modalidad autorizada.' }, 403);
+    }
+
+    const filter = {
+      id: path[2],
+      'carrierService.status': 'requested',
+      'carrierService.carrierId': { $exists: false },
+      'carrierService.declinedCarrierIds': { $ne: carrier.id },
+      $and: [
+        {
+          $or: [
+            { paymentStatus: 'paid' },
+            { status: 'paid', paymentStatus: { $exists: false } },
+            { status: 'paid', paymentStatus: null },
+            { status: 'paid', paymentStatus: '' },
+          ],
+        },
+        {
+          $or: [
+            { deliveryMethod: 'delivery' },
+            { 'shipping.deliveryMethod': 'delivery' },
+          ],
+        },
+      ],
+    };
+
+    if (body.action === 'rejected') {
+      const result = await orders.updateOne(filter, {
+        $addToSet: { 'carrierService.declinedCarrierIds': carrier.id },
+        $set: { updatedAt: now },
+      });
+
+      if (result.modifiedCount !== 1) {
+        return json({ error: 'El servicio ya no está disponible.' }, 409);
+      }
+
+      return json({ ok: true, status: 'rejected' });
+    }
+
+    const result = await orders.updateOne(filter, {
+      $set: {
+        'carrierService.status': 'accepted',
+        'carrierService.carrierId': carrier.id,
+        'carrierService.carrierUserId': user.id,
+        'carrierService.carrierName': carrier.fullName || '',
+        'carrierService.acceptedAt': now,
+        'carrierService.acceptedBy': user.id,
+        updatedAt: now,
+      },
+      $push: {
+        statusHistory: {
+          status: 'carrier_accepted',
+          at: now,
+          by: user.id,
+        },
+      },
+    });
+
+    if (result.modifiedCount !== 1) {
+      return json({
+        error: 'Otro transportista aceptó el servicio o el pedido dejó de estar disponible.',
+      }, 409);
+    }
+
+    return json({ ok: true, status: 'accepted' });
+  }
+
+  // POST /api/carriers/orders/:id/pickup - Confirmar recogida.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'pickup' &&
+    path.length === 4 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'No tienes autorización como transportista.' }, 403);
+    }
+
+    const now = new Date().toISOString();
+    const result = await db.collection('orders').updateOne({
+      id: path[2],
+      'carrierService.carrierId': carrier.id,
+      'carrierService.carrierUserId': user.id,
+      'carrierService.status': 'accepted',
+      $and: [
+        {
+          $or: [
+            { paymentStatus: 'paid' },
+            { status: 'paid', paymentStatus: { $exists: false } },
+            { status: 'paid', paymentStatus: null },
+            { status: 'paid', paymentStatus: '' },
+          ],
+        },
+        {
+          $or: [
+            { deliveryMethod: 'delivery' },
+            { 'shipping.deliveryMethod': 'delivery' },
+          ],
+        },
+      ],
+    }, {
+      $set: {
+        'carrierService.status': 'picked_up',
+        'carrierService.pickedUpAt': now,
+        shippingStatus: 'shipped',
+        updatedAt: now,
+      },
+      $push: {
+        statusHistory: {
+          status: 'carrier_picked_up',
+          at: now,
+          by: user.id,
+        },
+      },
+    });
+
+    if (result.modifiedCount !== 1) {
+      return json({ error: 'No se pudo confirmar la recogida. Comprueba el estado del servicio.' }, 409);
+    }
+
+    return json({ ok: true, status: 'picked_up', pickedUpAt: now });
+  }
+
+  // POST /api/carriers/orders/:id/deliver - Confirmar entrega.
+  if (
+    path[0] === 'carriers' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'deliver' &&
+    path.length === 4 &&
+    method === 'POST'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const carrier = await db.collection('carriers').findOne({
+      userId: user.id,
+      status: 'approved',
+    });
+
+    if (!carrier) {
+      return json({ error: 'No tienes autorización como transportista.' }, 403);
+    }
+
+    const now = new Date().toISOString();
+    const result = await db.collection('orders').updateOne({
+      id: path[2],
+      'carrierService.carrierId': carrier.id,
+      'carrierService.carrierUserId': user.id,
+      'carrierService.status': 'picked_up',
+      $and: [
+        {
+          $or: [
+            { paymentStatus: 'paid' },
+            { status: 'paid', paymentStatus: { $exists: false } },
+            { status: 'paid', paymentStatus: null },
+            { status: 'paid', paymentStatus: '' },
+          ],
+        },
+        {
+          $or: [
+            { deliveryMethod: 'delivery' },
+            { 'shipping.deliveryMethod': 'delivery' },
+          ],
+        },
+      ],
+    }, {
+      $set: {
+        'carrierService.status': 'delivered',
+        'carrierService.deliveredAt': now,
+        shippingStatus: 'delivered',
+        status: 'delivered',
+        updatedAt: now,
+      },
+      $push: {
+        statusHistory: {
+          status: 'carrier_delivered',
+          at: now,
+          by: user.id,
+        },
+      },
+    });
+
+    if (result.modifiedCount !== 1) {
+      return json({ error: 'No se pudo confirmar la entrega. Comprueba el estado del servicio.' }, 409);
+    }
+
+    return json({
+      ok: true,
+      status: 'delivered',
+      deliveredAt: now,
+      message: 'Entrega registrada. El comprador aún debe confirmar la recepción.',
+    });
+  }
+
+  // POST /api/carriers/apply - Solicitud de inscripción
+  if (path[0] === 'carriers' && path[1] === 'apply' && method === 'POST' && path.length === 2) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'Solicitud inválida' }, 400);
+    }
+
+    const parsed = carrierApplicationSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({
+        error: 'Revisa los datos del formulario',
+        details: parsed.error.flatten().fieldErrors,
+      }, 400);
+    }
+
+    const coverageAreas = parsed.data.coverageAreas?.length
+      ? parsed.data.coverageAreas
+      : [{
+          province: parsed.data.province,
+          municipalities: parsed.data.municipalities,
+        }];
+
+    const seenProvinces = new Set();
+    for (const area of coverageAreas) {
+      if (!Array.isArray(area.municipalities) ||
+          !area.municipalities.length ||
+          seenProvinces.has(area.province) ||
+          area.municipalities.some(
+            municipality => !isValidCubanLocation(area.province, municipality)
+          ) ||
+          new Set(area.municipalities).size !== area.municipalities.length) {
+        return json({
+          error: 'La cobertura contiene provincias o municipios inválidos o repetidos.',
+        }, 400);
+      }
+      seenProvinces.add(area.province);
+    }
+
+    const carriers = db.collection('carriers');
+    const existing = await carriers.findOne({ userId: user.id });
+
+    if (existing && existing.status !== 'rejected') {
+      return json({
+        error: existing.status === 'pending'
+          ? 'Tu solicitud está pendiente de revisión.'
+          : 'Ya tienes una inscripción registrada. Consulta su estado.',
+        carrier: {
+          status: existing.status || 'unknown',
+          reviewNotes: existing.reviewNotes || '',
+        },
+      }, 409);
+    }
+
+    const now = new Date().toISOString();
+    const applicationNumber = existing?.applicationNumber ||
+      await generateCarrierApplicationNumber(db);
+
+    const application = {
+      ...parsed.data,
+      coverageAreas,
+      province: coverageAreas[0].province,
+      municipalities: coverageAreas[0].municipalities,
+      applicationNumber,
+      userId: user.id,
+      userEmail: user.email || '',
+      status: 'pending',
+      reviewNotes: '',
+      submittedAt: now,
+      updatedAt: now,
+    };
+
+    if (existing) {
+      const retryResult = await carriers.updateOne(
+        { userId: user.id, status: 'rejected' },
+        { $set: application, $unset: { reviewedAt: '', reviewedBy: '' } }
+      );
+
+      if (retryResult.matchedCount !== 1) {
+        return json({
+          error: 'El estado de tu solicitud cambió. Actualiza la página y vuelve a consultar.',
+        }, 409);
+      }
+    } else {
+      await carriers.insertOne({
+        id: uuidv4(),
+        ...application,
+      });
+    }
+
+    return json({
+      ok: true,
+      message: 'Solicitud enviada. La administración debe revisarla antes de autorizarte.',
+      status: 'pending',
+      applicationNumber,
+    }, 201);
+  }
+
+  // GET /api/admin/carriers - Lista de solicitudes para administración
+  if (path[0] === 'admin' && path[1] === 'carriers' && method === 'GET' && path.length === 2) {
+    const { error } = await requireAdmin(request);
+    if (error) return error;
+
+    const params = new URL(request.url).searchParams;
+    const requestedStatus = params.get('status');
+    const allowedStatuses = ['pending', 'approved', 'active', 'rejected', 'suspended'];
+    const filter = {};
+
+    if (requestedStatus && allowedStatuses.includes(requestedStatus)) {
+      filter.status = requestedStatus;
+    }
+
+    const carriers = await db.collection('carriers')
+      .find(filter, { projection: { _id: 0, userId: 0 } })
+      .sort({ submittedAt: -1 })
+      .limit(100)
+      .toArray();
+
+    return json({ carriers });
+  }
+
+  // PUT /api/admin/carriers/:id - Revisión administrativa
+  if (path[0] === 'admin' && path[1] === 'carriers' && path[2] && method === 'PUT' && path.length === 3) {
+    const { user, error } = await requireAdmin(request);
+    if (error) return error;
+
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return json({ error: 'Solicitud inválida' }, 400);
+    }
+
+    const parsed = carrierReviewSchema.safeParse(body);
+    if (!parsed.success) {
+      return json({
+        error: 'Datos de revisión inválidos',
+        details: parsed.error.flatten().fieldErrors,
+      }, 400);
+    }
+
+    const carriers = db.collection('carriers');
+    const carrier = await carriers.findOne({ id: path[2] });
+
+    if (!carrier) {
+      return json({ error: 'Solicitud de transportista no encontrada' }, 404);
+    }
+
+    const now = new Date().toISOString();
+
+    await carriers.updateOne(
+      { id: path[2] },
+      {
+        $set: {
+          status: parsed.data.status,
+          reviewNotes: parsed.data.reviewNotes,
+          reviewedAt: now,
+          reviewedBy: user.id,
+          updatedAt: now,
+        },
+      }
+    );
+
+    return json({
+      ok: true,
+      message: 'Revisión guardada',
+      status: parsed.data.status,
+    });
+  }
+
   return json({ error: 'Ruta no encontrada' }, 404);
 }
 
@@ -4254,11 +7371,4 @@ export const POST = handler;
 export const PUT = handler;
 export const DELETE = handler;
 export const OPTIONS = async () =>
-  new NextResponse(null, {
-    status: 204,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    },
-  });
+  new NextResponse(null, { status: 204 });

@@ -3,8 +3,8 @@
 // Renders proper HTML (NOT a 307 redirect) so crawlers can read the OG tags.
 // Real browsers are auto-redirected to the SPA via a client-side script.
 
-const DB_NAME = process.env.DB_NAME || 'ubik2_yemg_test';
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
+const BASE_URL = (process.env.NEXT_PUBLIC_BASE_URL || 'https://www.ubik2yemg.qzz.io').replace(/\/$/, '');
 
 async function fetchProduct(id) {
   try {
@@ -16,10 +16,14 @@ async function fetchProduct(id) {
     const product = await db.collection('products').findOne({ id });
     if (!product) { await client.close(); return null; }
     const business = product.businessId
-      ? await db.collection('businesses').findOne({ id: product.businessId }, { projection: { name: 1, location: 1 } })
+      ? await db.collection('businesses').findOne({ id: product.businessId }, { projection: { name: 1, location: 1, address: 1, province: 1, municipality: 1 } })
       : null;
+    const settings = await db.collection('settings').findOne(
+      { id: 'global' },
+      { projection: { usdRate: 1 } }
+    );
     await client.close();
-    return { ...product, business };
+    return { ...product, business, usdRate: Number(settings?.usdRate) };
   } catch (e) {
     return null;
   }
@@ -30,12 +34,40 @@ export async function generateMetadata({ params }) {
   if (!product) {
     return { title: 'Producto no encontrado · UBIK2 YEMG', description: 'Marketplace cubano de MiPymes' };
   }
-  const priceLabel = product.currency === 'USDC'
-    ? `${Number(product.price).toLocaleString()} USDC`
-    : `${Number(product.price).toLocaleString()} CUP`;
+  const currency = String(product.currency || 'CUP').toUpperCase();
+  const supportedCurrencies = ['CUP', 'MLC', 'USD', 'EUR', 'GBP', 'CAD', 'MXN', 'USDT', 'USDC'];
+  const displayCurrency = supportedCurrencies.includes(currency) ? currency : 'CUP';
+  const priceNumber = Number(product.price);
+  const basePriceLabel = `${priceNumber.toLocaleString('es-ES', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })} ${displayCurrency}`;
+  const rate = Number(product.usdRate);
+  const cupEquivalent = ['USD', 'USDT', 'USDC'].includes(displayCurrency)
+    && Number.isFinite(rate) && rate > 0 && Number.isFinite(priceNumber)
+    ? `${(priceNumber * rate).toLocaleString('es-ES', { maximumFractionDigits: 2 })} CUP`
+    : '';
+  const priceLabel = cupEquivalent
+    ? `${basePriceLabel} (≈ ${cupEquivalent})`
+    : basePriceLabel;
   const title = `${product.name} — ${priceLabel} · UBIK2 YEMG`;
-  const shortDesc = (product.description || '').slice(0, 160)
-    || `${product.name} disponible en ${product.business?.name || 'UBIK2 YEMG'}. Precio: ${priceLabel}.`;
+  const businessName = product.business?.name || 'UBIK2 YEMG';
+  const businessAddress = [...new Set([
+    product.business?.address,
+    product.business?.municipality,
+    product.business?.province,
+    product.business?.location,
+  ].map(value => String(value || '').trim()).filter(Boolean))].join(', ');
+  const storeDetails = [
+    `Tienda: ${businessName}.`,
+    businessAddress ? `Dirección/ubicación: ${businessAddress}.` : '',
+    `Precio: ${priceLabel}.`,
+  ].filter(Boolean).join(' ');
+  const productDescription = (
+    product.description || `${product.name} disponible en UBIK2 YEMG.`
+  ).trim();
+  const descriptionLimit = Math.max(0, 300 - storeDetails.length - 1);
+  const shortDesc = `${productDescription.slice(0, descriptionLimit).trim()} ${storeDetails}`.trim();
   const shareUrl = `${BASE_URL}/product/${product.id}`;
   const ogImage = product.image && product.image.includes('res.cloudinary.com')
     ? product.image.replace('/upload/', '/upload/c_pad,w_1200,h_630,b_auto,f_jpg,q_auto/')
@@ -69,11 +101,25 @@ export default async function SharedProductPage({ params }) {
   // the OpenGraph metadata. Real browsers are redirected via inline JS.
   const safeId = encodeURIComponent(params.id);
   const targetUrl = `/?product=${safeId}`;
-  const priceLabel = product
-    ? (product.currency === 'USDC'
-      ? `${Number(product.price).toLocaleString()} USDC`
-      : `${Number(product.price).toLocaleString()} CUP`)
+  const currency = String(product?.currency || 'CUP').toUpperCase();
+  const supportedCurrencies = ['CUP', 'MLC', 'USD', 'EUR', 'GBP', 'CAD', 'MXN', 'USDT', 'USDC'];
+  const displayCurrency = supportedCurrencies.includes(currency) ? currency : 'CUP';
+  const priceNumber = Number(product?.price);
+  const basePriceLabel = product
+    ? `${priceNumber.toLocaleString('es-ES', {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      })} ${displayCurrency}`
     : '';
+  const rate = Number(product?.usdRate);
+  const cupEquivalent = product
+    && ['USD', 'USDT', 'USDC'].includes(displayCurrency)
+    && Number.isFinite(rate) && rate > 0 && Number.isFinite(priceNumber)
+    ? `${(priceNumber * rate).toLocaleString('es-ES', { maximumFractionDigits: 2 })} CUP`
+    : '';
+  const priceLabel = cupEquivalent
+    ? `${basePriceLabel} (≈ ${cupEquivalent})`
+    : basePriceLabel;
   return (
     <>
       {/* eslint-disable-next-line @next/next/no-sync-scripts */}

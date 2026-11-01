@@ -5,7 +5,7 @@
 // Crawlers (which do NOT execute JS) read the OG tags directly from the HTML.
 
 const DB_NAME = process.env.DB_NAME || 'ubik2_yemg';
-const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+const BASE_URL = (process.env.NEXT_PUBLIC_BASE_URL || 'https://www.ubik2yemg.qzz.io').replace(/\/$/, '');
 
 async function fetchBusiness(id) {
   try {

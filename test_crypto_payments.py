@@ -20,7 +20,7 @@ import json
 
 class TestCryptoPayments(unittest.TestCase):
     """Test crypto payment logic"""
-    
+
     def test_normalize_tx_hash(self):
         """Test txHash normalization for uniqueness"""
         test_cases = [
@@ -30,13 +30,13 @@ class TestCryptoPayments(unittest.TestCase):
             ("0x0xabc", "0xabc"),  # Only strip leading 0x once
             ("", ""),
         ]
-        
+
         for input_hash, expected in test_cases:
             # JavaScript equivalent: txHash.toLowerCase().replace(/^0x/, '')
             import re
             result = re.sub(r'^0x', '', input_hash.lower())
             self.assertEqual(result, expected, f"Failed for {input_hash}")
-    
+
     def test_amount_to_raw_conversion(self):
         """Test amount to raw units (6 decimals for USDT/USDC)"""
         test_cases = [
@@ -45,11 +45,11 @@ class TestCryptoPayments(unittest.TestCase):
             (0.01, 6, "10000"),
             (1.0, 18, "1000000000000000000"),
         ]
-        
+
         for amount, decimals, expected in test_cases:
             result = str(int(round(amount * (10 ** decimals))))
             self.assertEqual(result, expected, f"Failed for {amount} with {decimals} decimals")
-    
+
     def test_raw_to_amount_conversion(self):
         """Test raw units to amount"""
         test_cases = [
@@ -57,33 +57,33 @@ class TestCryptoPayments(unittest.TestCase):
             ("100500000", 6, 100.50),
             ("10000", 6, 0.01),
         ]
-        
+
         for raw, decimals, expected in test_cases:
             result = int(raw) / (10 ** decimals)
             self.assertAlmostEqual(result, expected, places=2)
-    
+
     def test_crypto_config_parsing(self):
         """Test parsing of CRYPTO_ENABLED_NETWORKS"""
         env = "TRC20_USDT,ERC20_USDC,POLYGON_USDT"
         parts = env.split(',')
-        
+
         networks = []
         for part in parts:
             part = part.strip()
             if '_' in part:
                 network, currency = part.split('_', 1)
                 networks.append({'network': network, 'currency': currency})
-        
+
         self.assertEqual(len(networks), 3)
         self.assertEqual(networks[0], {'network': 'TRC20', 'currency': 'USDT'})
         self.assertEqual(networks[1], {'network': 'ERC20', 'currency': 'USDC'})
         self.assertEqual(networks[2], {'network': 'POLYGON', 'currency': 'USDT'})
-    
+
     def test_invalid_network_format(self):
         """Test that invalid network formats are skipped"""
         env = "TRC20_USDT,INVALID,ERC20_USDC,ALSO_INVALID_FORMAT"
         parts = env.split(',')
-        
+
         networks = []
         for part in parts:
             part = part.strip()
@@ -92,42 +92,42 @@ class TestCryptoPayments(unittest.TestCase):
                 if len(split_result) == 2:
                     network, currency = split_result
                     networks.append({'network': network, 'currency': currency})
-        
+
         # INVALID and ALSO_INVALID_FORMAT have no underscore so they're skipped
         # But wait - "INVALID" has no underscore, "ALSO_INVALID_FORMAT" has two underscores
         # With split('_', 1), ALSO_INVALID_FORMAT becomes ['ALSO', 'INVALID_FORMAT']
         # So we get 3 networks: TRC20_USDT, ERC20_USDC, ALSO_INVALID_FORMAT
         self.assertEqual(len(networks), 3)
-    
+
     def test_expiry_calculation(self):
         """Test invoice expiry calculation"""
         from datetime import datetime, timedelta
-        
+
         now = datetime(2025, 1, 15, 10, 0, 0)
         expiry_minutes = 30
         expires_at = now + timedelta(minutes=expiry_minutes)
-        
+
         expected = datetime(2025, 1, 15, 10, 30, 0)
         self.assertEqual(expires_at, expected)
-    
+
     def test_underpay_overpay_tolerance(self):
         """Test tolerance calculations"""
         expected = 100.00
         underpay_pct = 0.5  # 0.5%
         overpay_pct = 5.0   # 5%
-        
+
         min_amount = expected * (1 - underpay_pct / 100)
         max_amount = expected * (1 + overpay_pct / 100)
-        
+
         self.assertAlmostEqual(min_amount, 99.50, places=2)
         self.assertAlmostEqual(max_amount, 105.00, places=2)
-        
+
         # Test boundary values
         self.assertTrue(99.50 >= min_amount)  # Exactly at boundary = OK
         self.assertTrue(99.49 < min_amount)   # Below = underpaid
         self.assertTrue(105.00 <= max_amount) # Exactly at boundary = OK
         self.assertTrue(105.01 > max_amount)  # Above = overpaid
-    
+
     def test_currency_network_validation(self):
         """Test valid currency/network combinations"""
         valid_combinations = [
@@ -141,7 +141,7 @@ class TestCryptoPayments(unittest.TestCase):
             ('USDT', 'ARBITRUM'),
             ('USDC', 'ARBITRUM'),
         ]
-        
+
         for currency, network in valid_combinations:
             key = f"{network}_{currency}"
             self.assertIn(key, [
@@ -149,33 +149,33 @@ class TestCryptoPayments(unittest.TestCase):
                 'POLYGON_USDT', 'POLYGON_USDC', 'BASE_USDT', 'BASE_USDC',
                 'ARBITRUM_USDT', 'ARBITRUM_USDC'
             ])
-    
+
     def test_invalid_currency(self):
         """Test that invalid currencies are rejected"""
         invalid = ['BTC', 'ETH', 'BNB', 'DOGE', 'XRP']
         valid_currencies = ['USDT', 'USDC']
-        
+
         for currency in invalid:
             self.assertNotIn(currency, valid_currencies)
-    
+
     def test_invalid_network(self):
         """Test that invalid networks are rejected"""
         invalid = ['BSC', 'SOLANA', 'AVALANCHE', 'FANTOM']
         valid_networks = ['TRC20', 'ERC20', 'POLYGON', 'BASE', 'ARBITRUM']
-        
+
         for network in invalid:
             self.assertNotIn(network, valid_networks)
-    
+
     def test_decimals_by_currency(self):
         """Test decimal places by currency"""
         decimals_map = {
             'USDT': 6,
             'USDC': 6,
         }
-        
+
         self.assertEqual(decimals_map['USDT'], 6)
         self.assertEqual(decimals_map['USDC'], 6)
-    
+
     def test_min_confirmations_by_network(self):
         """Test required confirmations by network"""
         confirmations = {
@@ -185,7 +185,7 @@ class TestCryptoPayments(unittest.TestCase):
             'BASE': 2,
             'ARBITRUM': 20,
         }
-        
+
         # Tron is fast (1 block)
         self.assertEqual(confirmations['TRC20'], 1)
         # Ethereum needs more
@@ -196,7 +196,7 @@ class TestCryptoPayments(unittest.TestCase):
         self.assertEqual(confirmations['BASE'], 2)
         # Arbitrum needs more
         self.assertEqual(confirmations['ARBITRUM'], 20)
-    
+
     def test_token_contracts_exist(self):
         """Test that token contracts are defined for all supported networks"""
         contracts = {
@@ -210,7 +210,7 @@ class TestCryptoPayments(unittest.TestCase):
             'ARBITRUM_USDT': '0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9',
             'ARBITRUM_USDC': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
         }
-        
+
         # All should be non-empty strings
         for key, contract in contracts.items():
             self.assertIsInstance(contract, str)
@@ -224,12 +224,12 @@ class TestCryptoPayments(unittest.TestCase):
 
 class TestSecurity(unittest.TestCase):
     """Security-focused tests"""
-    
+
     def test_no_private_keys_in_env(self):
         """Ensure env.example doesn't contain private key patterns"""
         with open(os.path.join(BASE_DIR, '.env.example'), 'r') as f:
             content = f.read()
-        
+
         # Should not contain private key patterns
         forbidden = ['PRIVATE_KEY', 'MNEMONIC', 'SEED', 'private_key', 'mnemonic', 'seed']
         for forbidden_word in forbidden:
@@ -240,27 +240,27 @@ class TestSecurity(unittest.TestCase):
                     # Allow if it's in a "NEVER" or "NUNCA" warning
                     if 'NEVER' not in line.upper() and 'NUNCA' not in line.upper():
                         self.fail(f"Found {forbidden_word} in env.example: {line}")
-    
+
     def test_only_public_addresses_in_env(self):
         """Ensure only public addresses (wallet receive addresses) in env"""
         with open(os.path.join(BASE_DIR, '.env.example'), 'r') as f:
             content = f.read()
-        
+
         # All CRYPTO_WALLET_* should be example addresses (not real ones)
         import re
         wallet_lines = [line for line in content.split('\n') if 'CRYPTO_WALLET_' in line and '=' in line and not line.strip().startswith('#')]
-        
+
         # At least some should be example/placeholder addresses
         # The test just checks that the file has wallet config lines
         self.assertGreater(len(wallet_lines), 0, "Should have CRYPTO_WALLET_ lines")
-    
+
     def test_rpc_urls_are_public(self):
         """Ensure RPC URLs are public endpoints (no API keys)"""
         with open(os.path.join(BASE_DIR, '.env.example'), 'r') as f:
             content = f.read()
-        
+
         rpc_lines = [line for line in content.split('\n') if 'CRYPTO_RPC_' in line and '=' in line and not line.strip().startswith('#')]
-        
+
         for line in rpc_lines:
             # Should not contain API key patterns
             self.assertNotIn('api_key', line.lower())
@@ -269,106 +269,106 @@ class TestSecurity(unittest.TestCase):
             # Should be known public endpoints
             known_public = ['trongrid.io', 'llamarpc.com', 'polygon-rpc.com', 'mainnet.base.org', 'arbitrum.io']
             self.assertTrue(any(ep in line for ep in known_public), f"Unknown RPC endpoint: {line}")
-    
+
     def test_no_hardcoded_secrets_in_route(self):
         """Check route.js doesn't have hardcoded secrets"""
         with open(os.path.join(BASE_DIR, 'app/api/[[...path]]/route.js'), 'r') as f:
             content = f.read()
-        
+
         # Should not have hardcoded private keys, mnemonics, etc.
         forbidden_patterns = [
             'privateKey', 'private_key', 'mnemonic', 'seedPhrase', 'seed_phrase',
             'PRIVATE_KEY', 'MNEMONIC', 'SEED_PHRASE'
         ]
-        
+
         for pattern in forbidden_patterns:
             self.assertNotIn(pattern, content, f"Found forbidden pattern: {pattern}")
-    
+
     def test_jwt_secret_no_fallback(self):
         """Test that JWT_SECRET has no insecure fallback"""
         with open(os.path.join(BASE_DIR, 'app/api/[[...path]]/route.js'), 'r') as f:
             content = f.read()
-        
+
         # Should not have 'dev_secret' or similar fallback
         self.assertNotIn('dev_secret', content)
         # Should have check for missing JWT_SECRET
         self.assertIn('JWT_SECRET no está definida', content)
-    
+
     def test_txhash_unique_index(self):
         """Test that txHashNormalized unique index is created"""
         with open(os.path.join(BASE_DIR, 'app/api/[[...path]]/route.js'), 'r') as f:
             content = f.read()
-        
+
         # Should have unique index on txHashNormalized
         self.assertIn('txHashNormalized', content)
         self.assertIn('unique', content)
         # Should be sparse (allow null)
         self.assertIn('sparse', content)
-    
+
     def test_order_invoice_unique_index(self):
         """Test that orderId unique index is created"""
         with open(os.path.join(BASE_DIR, 'app/api/[[...path]]/route.js'), 'r') as f:
             content = f.read()
-        
+
         # Should have unique index on orderId for crypto_invoices
         # Check for the pattern in the ensureIndexes function
         self.assertIn('orderId', content)
         self.assertIn('unique', content)
         # Check that crypto_invoices collection gets orderId index
         self.assertIn('crypto_invoices', content)
-    
+
     def test_crypto_invoice_statuses(self):
         """Test all valid crypto invoice statuses"""
         valid_statuses = ['pending', 'submitted', 'approved', 'rejected', 'expired']
         # Note: 'underpaid' and 'overpaid' are designed but not yet implemented in route.js
-        
+
         # These should be handled in the code
         with open(os.path.join(BASE_DIR, 'app/api/[[...path]]/route.js'), 'r') as f:
             content = f.read()
-        
+
         for status in valid_statuses:
             self.assertIn(status, content, f"Status {status} not found in route.js")
 
 
 class TestIntegration(unittest.TestCase):
     """Integration-style tests (mock-based)"""
-    
+
     def test_create_order_validates_stock(self):
         """Test that order creation validates stock (mock-free version)"""
         # Simulate the validation logic
         product = {'id': 'prod-1', 'stock': 5}
         requested_quantity = 10
-        
+
         # Should detect insufficient stock
         has_stock = product['stock'] >= requested_quantity
         self.assertFalse(has_stock)
-        
+
         # Test sufficient stock
         requested_quantity = 3
         has_stock = product['stock'] >= requested_quantity
         self.assertTrue(has_stock)
-    
+
     def test_idempotency_key_prevents_duplicates(self):
         """Test idempotency key logic"""
         # Simulate the check
         existing_order = {'id': 'order-1', 'idempotencyKey': 'key-123'}
         new_request_key = 'key-123'
-        
+
         # Should detect duplicate
         is_duplicate = existing_order.get('idempotencyKey') == new_request_key
         self.assertTrue(is_duplicate)
-    
+
     def test_stock_restored_on_reject(self):
         """Test that stock is restored when invoice rejected"""
         order_items = [
             {'productId': 'prod-1', 'quantity': 2},
             {'productId': 'prod-2', 'quantity': 1},
         ]
-        
+
         restored = {}
         for item in order_items:
             restored[item['productId']] = restored.get(item['productId'], 0) + item['quantity']
-        
+
         self.assertEqual(restored, {'prod-1': 2, 'prod-2': 1})
 
 

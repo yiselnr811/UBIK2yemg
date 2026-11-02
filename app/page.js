@@ -5893,6 +5893,10 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [sellerOrderForms, setSellerOrderForms] = React.useState({});
   const [sellerOrderSaving, setSellerOrderSaving] = React.useState({});
   const [sellerOrderMessage, setSellerOrderMessage] = React.useState({});
+  const [sellerCarrierLookup, setSellerCarrierLookup] = React.useState({});
+  const [sellerCarrierLoading, setSellerCarrierLoading] = React.useState({});
+  const [sellerCarrierRequesting, setSellerCarrierRequesting] = React.useState({});
+
 
   const [cryptoPayoutWallets, setCryptoPayoutWallets] = React.useState({ ...(business?.cryptoPayoutWallets || {}) });
   const [walletSaving, setWalletSaving] = React.useState(false);
@@ -6824,6 +6828,152 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       Descargar factura PDF
                     </Button>
                   </div>
+
+                  {paid && deliveryMethod === 'delivery' && (
+                    <div className="space-y-3 rounded-xl border border-green-700/30 bg-green-50/50 p-3 dark:bg-green-950/10 sm:p-4">
+                      <div>
+                        <h4 className="font-semibold">Transporte a domicilio</h4>
+                        <p className="text-sm text-muted-foreground">
+                          Busca transportistas aprobados que cubran la recogida y el destino del pedido.
+                        </p>
+                      </div>
+
+                      {(() => {
+                        const lookup = sellerCarrierLookup[order.id] || {};
+                        const activeService = lookup.carrierService || order.carrierService;
+                        const activeStatus = activeService?.status;
+                        const active = ['requested', 'accepted', 'picked_up', 'delivered'].includes(activeStatus);
+                        const statusLabels = {
+                          requested: 'Solicitud enviada. El primer transportista que acepte se quedará con el pedido.',
+                          accepted: `Transportista asignado: ${activeService?.carrierName || 'Aceptado'}.`,
+                          picked_up: 'El transportista ya recogió el pedido.',
+                          delivered: 'El transportista marcó el pedido como entregado.',
+                        };
+
+                        return (
+                          <div className="space-y-3">
+                            {active ? (
+                              <>
+
+                              <p className="rounded-lg border border-green-700/30 bg-background p-3 text-sm font-medium" role="status">
+                                {statusLabels[activeStatus] || 'El pedido tiene un servicio de transporte activo.'}
+                              </p>
+                              {lookup.sentCount > 0 && (
+                                <p className="text-sm font-medium text-green-700 dark:text-green-400" role="status">
+                                  Solicitud enviada a {lookup.sentCount} transportista(s). El primero que acepte se queda con el pedido.
+                                </p>
+                              )}
+
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className="min-h-11 w-full sm:w-auto"
+                                  disabled={Boolean(sellerCarrierLoading[order.id]) || saving}
+                                  onClick={async () => {
+                                    setSellerCarrierLoading(old => ({ ...old, [order.id]: true }));
+                                    setSellerCarrierLookup(old => ({
+                                      ...old,
+                                      [order.id]: { loading: true, carriers: [] },
+                                    }));
+                                    try {
+                                      const result = await api(
+                                        `/seller/orders/${encodeURIComponent(order.id)}/carriers`,
+                                        { token }
+                                      );
+                                      setSellerCarrierLookup(old => ({
+                                        ...old,
+                                        [order.id]: result,
+                                      }));
+                                    } catch (error) {
+                                      setSellerCarrierLookup(old => ({
+                                        ...old,
+                                        [order.id]: { error: error?.message || 'No se pudieron buscar transportistas.' },
+                                      }));
+                                    } finally {
+                                      setSellerCarrierLoading(old => ({ ...old, [order.id]: false }));
+                                    }
+                                  }}
+                                >
+                                  {sellerCarrierLoading[order.id] ? 'Buscando...' : 'Buscar transportistas compatibles'}
+                                </Button>
+
+                                {lookup.error && (
+                                  <p className="text-sm text-destructive" role="alert">{lookup.error}</p>
+                                )}
+
+                                {Array.isArray(lookup.carriers) && (
+                                  <div className="space-y-2">
+                                    <p className="text-sm font-medium">
+                                      {lookup.count || 0} transportista(s) compatible(s)
+                                      {lookup.routeType ? ` · Ruta ${lookup.routeType}` : ''}
+                                    </p>
+                                    {lookup.carriers.map((carrier, index) => (
+                                      <div key={`${carrier.name}-${index}`} className="rounded-lg border bg-background p-3 text-sm">
+                                        <p className="font-semibold">{carrier.name}</p>
+                                        <p className="text-muted-foreground">
+                                          Vehículo: {carrier.vehicleType} · Modalidad: {carrier.transportMode}
+                                        </p>
+                                        <p className="text-muted-foreground">
+                                          Recogida: {carrier.originCoverage}
+                                        </p>
+                                        <p className="text-muted-foreground">
+                                          Entrega: {carrier.destinationCoverage}
+                                        </p>
+                                      </div>
+                                    ))}
+                                    {lookup.count > 0 && (
+                                      <Button
+                                        type="button"
+                                        className="min-h-11 w-full bg-[#00A86B] font-semibold text-white hover:bg-[#008F5B] sm:w-auto"
+                                        disabled={Boolean(sellerCarrierRequesting[order.id]) || saving}
+                                        onClick={async () => {
+                                          setSellerCarrierRequesting(old => ({ ...old, [order.id]: true }));
+                                          try {
+                                            const result = await api(
+                                              `/seller/orders/${encodeURIComponent(order.id)}/carrier-request`,
+                                              { method: 'POST', token }
+                                            );
+                                            setSellerCarrierLookup(old => ({
+                                              ...old,
+                                              [order.id]: {
+                                                carrierService: result.carrierService,
+                                                sentCount: result.compatibleCarrierCount,
+                                                carriers: [],
+                                                count: 0,
+                                              },
+                                            }));
+                                            const refreshed = await api('/seller/orders', { token });
+                                            setSellerOrders(Array.isArray(refreshed?.orders)
+                                              ? refreshed.orders.filter(item => item && typeof item === 'object')
+                                              : []);
+                                          } catch (error) {
+                                            setSellerCarrierLookup(old => ({
+                                              ...old,
+                                              [order.id]: { ...old[order.id], error: error?.message || 'No se pudo enviar la solicitud.' },
+                                            }));
+                                          } finally {
+                                            setSellerCarrierRequesting(old => ({ ...old, [order.id]: false }));
+                                          }
+                                        }}
+                                      >
+                                        {sellerCarrierRequesting[order.id] ? 'Enviando solicitud...' : `Enviar solicitud a los ${lookup.count} compatibles`}
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
+
+
+                              </>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+
 
                   {order.buyerReceiptConfirmation?.confirmedAt ? (
                     <p className="text-sm font-medium text-green-700">

@@ -4096,6 +4096,152 @@ return json({ payments: out });
   }
 
 
+  // GET /api/seller/orders/:id/carriers - Transportistas compatibles.
+  if (
+    path[0] === 'seller' &&
+    path[1] === 'orders' &&
+    path[2] &&
+    path[3] === 'carriers' &&
+    path.length === 4 &&
+    method === 'GET'
+  ) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    const order = await db.collection('orders').findOne({
+      id: path[2],
+      businessId: business.id,
+    });
+
+    if (!order) {
+      return json({ error: 'Pedido no encontrado en tu comercio.' }, 404);
+    }
+
+    const paymentStatus = order.paymentStatus ||
+      (order.status === 'paid' ? 'paid' : null);
+
+    if (paymentStatus !== 'paid') {
+      return json({ error: 'El pedido debe tener el pago confirmado.' }, 409);
+    }
+
+    const deliveryMethod =
+      order.deliveryMethod || order.shipping?.deliveryMethod || 'pickup';
+
+    if (deliveryMethod !== 'delivery') {
+      return json({ error: 'Este pedido no requiere transporte a domicilio.' }, 409);
+    }
+
+    const currentCarrierService = order.carrierService || {};
+    if (['requested', 'accepted', 'picked_up', 'delivered'].includes(currentCarrierService.status)) {
+      return json({
+        carriers: [],
+        carrierService: {
+          status: currentCarrierService.status,
+          carrierName: currentCarrierService.carrierName || '',
+        },
+        message: 'Este pedido ya tiene una solicitud de transporte activa.',
+      });
+    }
+
+    const originProvince = String(business.province || '').trim();
+    const originMunicipality = String(business.municipality || '').trim();
+    const destinationProvince = String(order.shipping?.province || '').trim();
+    const destinationMunicipality = String(order.shipping?.municipality || '').trim();
+
+    if (
+      !isValidCubanLocation(originProvince, originMunicipality) ||
+      !isValidCubanLocation(destinationProvince, destinationMunicipality)
+    ) {
+      return json({ error: 'El origen o destino del pedido no tiene una ubicación válida.' }, 409);
+    }
+
+    const routeType =
+      originProvince !== destinationProvince
+        ? 'interprovincial'
+        : originMunicipality !== destinationMunicipality
+          ? 'provincial'
+          : 'local';
+
+    const approvedCarriers = await db.collection('carriers').find({
+      status: 'approved',
+    }, {
+      projection: {
+        _id: 0,
+        id: 1,
+        fullName: 1,
+        vehicleType: 1,
+        transportMode: 1,
+        coverageAreas: 1,
+        province: 1,
+        municipalities: 1,
+      },
+    }).toArray();
+
+    const carriers = approvedCarriers.filter(carrier => {
+      if (!carrier.id || currentCarrierService.declinedCarrierIds?.includes(carrier.id)) {
+        return false;
+      }
+
+      const areas = Array.isArray(carrier.coverageAreas) && carrier.coverageAreas.length
+        ? carrier.coverageAreas
+        : [{
+            province: carrier.province,
+            municipalities: carrier.municipalities || [],
+          }];
+
+      const covers = (province, municipality) =>
+        areas.some(area =>
+          area.province === province &&
+          Array.isArray(area.municipalities) &&
+          area.municipalities.includes(municipality)
+        );
+
+      const supportsRoute =
+        routeType === 'local'
+          ? true
+          : routeType === 'provincial'
+            ? ['provincial', 'interprovincial'].includes(carrier.transportMode)
+            : routeType === 'interprovincial'
+              ? carrier.transportMode === 'interprovincial'
+              : false;
+
+      return (
+        covers(originProvince, originMunicipality) &&
+        covers(destinationProvince, destinationMunicipality) &&
+        supportsRoute
+      );
+    }).map(carrier => ({
+      name: carrier.fullName || 'Transportista',
+      vehicleType: carrier.vehicleType || 'other',
+      transportMode: carrier.transportMode || 'local',
+      routeType,
+      originCoverage: originMunicipality + ', ' + originProvince,
+      destinationCoverage: destinationMunicipality + ', ' + destinationProvince,
+    }));
+
+    return json({
+      carriers,
+      routeType,
+      count: carriers.length,
+      message: carriers.length
+        ? 'Transportistas compatibles encontrados.'
+        : 'No hay transportistas aprobados que cubran esta ruta actualmente.',
+    });
+  }
+
   // POST /api/seller/orders/:id/carrier-request
   // Solicitud de transporte sin modificar el flujo de pagos ni confirmaciones.
   if (
@@ -4183,6 +4329,58 @@ return json({ payments: out });
           ? 'provincial'
           : 'local';
 
+    const approvedCarriers = await db.collection('carriers').find({
+      status: 'approved',
+    }, {
+      projection: {
+        _id: 0,
+        id: 1,
+        transportMode: 1,
+        coverageAreas: 1,
+        province: 1,
+        municipalities: 1,
+      },
+    }).toArray();
+
+    const compatibleCarrierCount = approvedCarriers.filter(carrier => {
+      if (!carrier.id) return false;
+
+      const areas = Array.isArray(carrier.coverageAreas) && carrier.coverageAreas.length
+        ? carrier.coverageAreas
+        : [{
+            province: carrier.province,
+            municipalities: carrier.municipalities || [],
+          }];
+
+      const covers = (province, municipality) => areas.some(area =>
+        area.province === province &&
+        Array.isArray(area.municipalities) &&
+        area.municipalities.includes(municipality)
+      );
+
+      const supportsRoute =
+        routeType === 'local'
+          ? true
+          : routeType === 'provincial'
+            ? ['provincial', 'interprovincial'].includes(carrier.transportMode)
+            : routeType === 'interprovincial'
+              ? carrier.transportMode === 'interprovincial'
+              : false;
+
+      return (
+        covers(originProvince, originMunicipality) &&
+        covers(destinationProvince, destinationMunicipality) &&
+        supportsRoute
+      );
+    }).length;
+
+    if (compatibleCarrierCount === 0) {
+      return json({
+        error: 'No hay transportistas aprobados que cubran esta ruta. No se creó la solicitud.',
+        compatibleCarrierCount: 0,
+      }, 409);
+    }
+
     const now = new Date().toISOString();
 
     const carrierService = {
@@ -4250,7 +4448,8 @@ return json({ payments: out });
     return json({
       ok: true,
       carrierService,
-      message: 'Solicitud de transporte registrada correctamente.',
+      compatibleCarrierCount,
+      message: 'Solicitud enviada a todos los transportistas compatibles.',
     }, 201);
   }
 

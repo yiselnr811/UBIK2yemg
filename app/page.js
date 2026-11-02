@@ -2022,6 +2022,7 @@ const App = () => {
 
     setCheckoutSubmitting(true);
     try {
+      const checkoutRequestStartedAt = Date.now();
       const orderRes = await api('/orders', {
         method: 'POST', token,
         body: {
@@ -2051,8 +2052,15 @@ const App = () => {
           } : {}),
         },
       });
+      const checkoutResponseReceivedAt = Date.now();
+      const serverTimestamp = Date.parse(orderRes.serverNow);
+      const serverClockOffsetMs = Number.isFinite(serverTimestamp)
+        ? serverTimestamp - ((checkoutRequestStartedAt + checkoutResponseReceivedAt) / 2)
+        : 0;
       setCheckoutOrder(orderRes.order);
-      setCheckoutInvoice(orderRes.invoice);
+      setCheckoutInvoice(orderRes.invoice
+        ? { ...orderRes.invoice, serverClockOffsetMs }
+        : orderRes.invoice);
       if (cryptoPendingCheckout.clearCart) saveCart([]);
       setCryptoSelectorOpen(false);
       setCryptoPendingCheckout(null);
@@ -2082,7 +2090,10 @@ const App = () => {
         token,
         body: { txHash: checkoutTxHash.trim() },
       });
-      setCheckoutInvoice(res.invoice);
+      setCheckoutInvoice({
+        ...res.invoice,
+        serverClockOffsetMs: checkoutInvoice?.serverClockOffsetMs ?? 0,
+      });
       toast.success('TxHash enviado. Pendiente de verificación.');
     } catch (err) {
       toast.error('Error enviando hash: ' + err.message);
@@ -8580,9 +8591,20 @@ const ManualPaymentCheckout = ({ order, token, onOrderUpdate, onCancel, onBack }
 };
 
 const CryptoCheckout = ({ t, order, invoice, config, txHash, setTxHash, onSubmit, onCancel, submitting, onBack }) => {
+  const [clockNow, setClockNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setClockNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   if (!order || !invoice) return null;
 
-  const timeLeft = new Date(invoice.expiresAt) - new Date();
+  const clockOffset = Number(invoice.serverClockOffsetMs);
+  const effectiveServerNow = clockNow + (
+    Number.isFinite(clockOffset) ? clockOffset : 0
+  );
+  const timeLeft = Date.parse(invoice.expiresAt) - effectiveServerNow;
   const expired = timeLeft <= 0;
   const minutes = Math.max(0, Math.ceil(timeLeft / 60000));
   const seconds = Math.max(0, Math.floor((timeLeft % 60000) / 1000));

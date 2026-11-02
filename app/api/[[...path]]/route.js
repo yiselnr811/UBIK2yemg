@@ -118,9 +118,15 @@ function getEnabledCryptoNetworks() {
 
 function getCryptoConfig() {
   const networks = getEnabledCryptoNetworks();
+  const configuredExpiryMinutes = Number(process.env.CRYPTO_INVOICE_EXPIRY_MINUTES);
+  const expiryMinutes = Number.isInteger(configuredExpiryMinutes)
+    && configuredExpiryMinutes >= 5
+    && configuredExpiryMinutes <= 120
+    ? configuredExpiryMinutes
+    : 30;
   return {
     enabled: networks,
-    expiryMinutes: Number(process.env.CRYPTO_INVOICE_EXPIRY_MINUTES) || 30,
+    expiryMinutes,
     underpayTolerancePct: Number(process.env.CRYPTO_UNDERPAY_TOLERANCE_PCT) || 0.5,
     overpayTolerancePct: Number(process.env.CRYPTO_OVERPAY_TOLERANCE_PCT) || 5,
   };
@@ -4081,7 +4087,12 @@ return json({ payments: out });
       console.error('[Email] failed to send order confirmation:', e?.message || e)
     );
 
-    return json({ order: sanitizeBuyerOrder(order), invoice, message: 'Pedido creado. Pendiente de pago.' }, 201);
+    return json({
+      order: sanitizeBuyerOrder(order),
+      invoice,
+      serverNow: new Date().toISOString(),
+      message: 'Pedido creado. Pendiente de pago.'
+    }, 201);
   }
 
 
@@ -5684,7 +5695,10 @@ function sanitizeBuyerOrder(order) {
 
     // Don't expose verification internals to buyer
     const { verification, ...invoiceOut } = invoice;
-    return json({ invoice: invoiceOut });
+    return json({
+      invoice: invoiceOut,
+      serverNow: new Date().toISOString()
+    });
   }
 
   // POST /api/orders/:id/invoice/submit-tx - Buyer submits txHash

@@ -1471,18 +1471,37 @@ async function route(request, method, path) {
     const text = smsText.trim();
     let parsed = null;
     let match = text.match(
-      /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})$/i
+      /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:?\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})(?:\.\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
     );
 
     if (match) {
-      parsed = {
-        provider: 'transfermovil',
-        receiverAccount: match[2],
-        amountText: match[3],
-        transactionReference: match[4],
-        senderPhone: match[1],
-        transactionDate: null,
-      };
+      let transactionDate = null;
+
+      if (match[5]) {
+        const [day, month, year] = match[5].split('/').map(Number);
+        const parsedDate = new Date(Date.UTC(year, month - 1, day));
+
+        if (
+          parsedDate.getUTCFullYear() !== year ||
+          parsedDate.getUTCMonth() !== month - 1 ||
+          parsedDate.getUTCDate() !== day
+        ) {
+          parsed = null;
+        } else {
+          transactionDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        }
+      }
+
+      if (!match[5] || transactionDate) {
+        parsed = {
+          provider: 'transfermovil',
+          receiverAccount: match[2],
+          amountText: match[3],
+          transactionReference: match[4],
+          senderPhone: match[1],
+          transactionDate,
+        };
+      }
     } else {
       match = text.match(
         /^ENZONA\s+transferencia recibida\s+Importe:\s*([\d.,]+)\s+CUP\s+No\.:\s*([A-Z0-9_-]{4,100})$/i

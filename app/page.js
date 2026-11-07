@@ -3240,7 +3240,7 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
   return (
     <div className="relative flex-1">
       <form onSubmit={(e) => { e.preventDefault(); setOpen(false); onSubmit(e); }}>
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
         <Input
           value={value}
           onChange={(e) => { onChange(e); setOpen(true); }}
@@ -3255,10 +3255,10 @@ const SearchBar = ({ value, onChange, onSubmit, placeholder, suggestions, open, 
           aria-controls={suggestionId}
           aria-activedescendant={show && activeIndex >= 0 && activeIndex < suggestions.length ? `${suggestionId}-option-${activeIndex}` : undefined}
           onKeyDown={handleSearchKeyDown}
-          className={compact ? 'pl-9 pr-16 h-9' : 'pl-9 pr-20 h-10 bg-muted/40'}
+          className={compact ? 'pl-10 pr-20 h-11 text-base' : 'pl-10 pr-24 h-12 text-base bg-muted/40'}
           autoComplete="off"
         />
-        <Button type="submit" size="sm" aria-label="Buscar" className="absolute right-1 top-1 h-8 brand-gradient text-white hover:opacity-90">
+        <Button type="submit" size="sm" aria-label="Buscar" className="absolute right-1 top-1 h-10 min-w-11 px-3 brand-gradient text-white hover:opacity-90">
           Buscar
         </Button>
       </form>
@@ -4010,7 +4010,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
                 }`}
               >
                 <span className="text-2xl leading-none">{c.icon}</span>
-                <span className={`text-[10.5px] font-semibold text-center leading-tight line-clamp-2 ${category === c.id ? 'text-[#1565C0]' : 'text-foreground'}`}>{c.name}</span>
+                <span className={`text-[13px] font-semibold text-center leading-tight line-clamp-2 ${category === c.id ? 'text-[#1565C0]' : 'text-foreground'}`}>{c.name}</span>
               </button>
             ))}
           </div>
@@ -4299,9 +4299,9 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
           type="button"
           aria-label={isFav ? `Quitar ${p.name} de favoritos` : `Añadir ${p.name} a favoritos`}
           onClick={(e) => { e.stopPropagation(); onFav(); }}
-          className="absolute top-2 right-2 h-8 w-8 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-md hover:scale-110 transition"
+          className="absolute top-2 right-2 h-11 w-11 rounded-full bg-white/90 backdrop-blur flex items-center justify-center shadow-md hover:scale-110 transition"
         >
-          <Heart className={`h-4 w-4 ${isFav ? 'fill-red-500 text-red-500' : 'text-foreground'}`} />
+          <Heart className={`h-5 w-5 ${isFav ? 'fill-red-500 text-red-500' : 'text-foreground'}`} />
         </button>
       </div>
 
@@ -4312,19 +4312,19 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
             {new Intl.NumberFormat('es-ES', { maximumFractionDigits: 2 }).format(Number(p.price) * Number(usdRate))} CUP
           </div>
         )}
-        <div className="text-sm font-medium mt-1.5 line-clamp-2 leading-tight min-h-[2.5rem]">{p.name}</div>
+        <div className="text-[15px] font-semibold mt-1.5 line-clamp-2 leading-snug min-h-[2.75rem]">{p.name}</div>
         {p.business?.name && (
-          <div className="text-xs font-semibold text-[#1565C0] mt-1 truncate" title={p.business.name}>
+          <div className="text-[13px] font-semibold text-[#1565C0] mt-1 truncate" title={p.business.name}>
             {p.business.name}
           </div>
         )}
-        <div className="flex items-center justify-between mt-1 text-[11px] text-muted-foreground">
+        <div className="flex items-center justify-between mt-1 text-xs text-muted-foreground">
           <span className="flex items-center gap-0.5 truncate">
-            <MapPin className="h-3 w-3 flex-shrink-0" />
+            <MapPin className="h-4 w-4 flex-shrink-0" />
             <span className="truncate">{p.location || p.business?.location || 'Cuba'}</span>
           </span>
           <span className="flex items-center gap-0.5 flex-shrink-0" suppressHydrationWarning>
-            <Clock className="h-3 w-3" /> {timeAgo(p.createdAt)}
+            <Clock className="h-4 w-4" /> {timeAgo(p.createdAt)}
           </span>
         </div>
         {getProductPaymentMethods(p).length > 0 && (
@@ -4332,7 +4332,7 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
             type="button"
             disabled={!(Number(p.stock) > 0)}
             onClick={(e) => { e.stopPropagation(); onAddToCart?.(p); }}
-            className="mt-3 w-full h-9 rounded-lg bg-[#1565C0] hover:bg-[#0d4fa3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition"
+            className="mt-3 w-full h-11 rounded-lg bg-[#1565C0] hover:bg-[#0d4fa3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition"
           >
             <ShoppingBag className="h-4 w-4" />
             {Number(p.stock) > 0 ? 'Añadir al carrito' : 'Sin stock'}
@@ -4340,18 +4340,18 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
         )}
         <div className="flex gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
           {waLink && (
-            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp" aria-label={`Contactar por WhatsApp sobre ${p.name}`}>
-              <MessageCircle className="h-4 w-4" />
+            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-11 min-w-11 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp" aria-label={`Contactar por WhatsApp sobre ${p.name}`}>
+              <MessageCircle className="h-5 w-5" />
             </a>
           )}
           {tgLink && (
-            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-8 rounded-md bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center transition" title="Telegram" aria-label={`Contactar por Telegram sobre ${p.name}`}>
-              <Send className="h-4 w-4" />
+            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-11 min-w-11 rounded-md bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center transition" title="Telegram" aria-label={`Contactar por Telegram sobre ${p.name}`}>
+              <Send className="h-5 w-5" />
             </a>
           )}
           {smsLink && (
-            <a href={smsLink} className="flex-1 h-8 rounded-md bg-foreground hover:opacity-90 text-background flex items-center justify-center transition" title="SMS" aria-label={`Enviar SMS sobre ${p.name}`}>
-              <Phone className="h-4 w-4" />
+            <a href={smsLink} className="flex-1 h-11 min-w-11 rounded-md bg-foreground hover:opacity-90 text-background flex items-center justify-center transition" title="SMS" aria-label={`Enviar SMS sobre ${p.name}`}>
+              <Phone className="h-5 w-5" />
             </a>
           )}
         </div>
@@ -4405,8 +4405,8 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
             <Badge variant="outline" className="capitalize">{product.category}</Badge>
             {product.stock > 0 ? <Badge className="bg-green-500 text-white">{t.inStock}</Badge> : <Badge variant="destructive">{t.outOfStock}</Badge>}
           </div>
-          <h1 className="text-3xl md:text-4xl font-extrabold">{product.name}</h1>
-          <div className="text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3"><PriceWithCurrencyIcon value={product.price} currency={product.currency} className="text-4xl md:text-5xl font-extrabold text-[#00A86B]" /></div>
+          <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold leading-tight break-words">{product.name}</h1>
+          <div className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3 leading-tight"><PriceWithCurrencyIcon value={product.price} currency={product.currency} className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#00A86B] leading-tight" /></div>
           {['USD', 'USDT', 'USDC'].includes(String(product.currency || '').toUpperCase()) &&
             Number(product.price) > 0 && Number(usdRate) > 0 && (
             <p className="mt-1 text-base font-semibold text-muted-foreground" aria-label="Precio aproximado en pesos cubanos">
@@ -4423,7 +4423,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
           <p className="mt-5 text-foreground/90 whitespace-pre-line leading-relaxed">{product.description}</p>
 
           {/* Action buttons */}
-          <div className="grid grid-cols-3 gap-2 mt-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-6">
             <Button variant="outline" onClick={() => toggleFav(product.id)} className={isFav ? 'border-red-500 text-red-500' : ''}>
               <Heart className={`h-4 w-4 mr-2 ${isFav ? 'fill-current' : ''}`} /> {t.favorites}
             </Button>
@@ -4436,7 +4436,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
           </div>
 
           {/* Contact section */}
-          <div className="mt-6 p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
+          <div className="mt-5 sm:mt-6 p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#1565C0]/5 via-card to-[#00A86B]/5 border border-border shadow-sm">
             {/* Mostrar solo los canales configurados y respetar la privacidad. */}
             {contactsHidden ? (() => {
               const province = product.province || product.business?.province;
@@ -4840,12 +4840,12 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
 
   return (
     <section className="container mx-auto px-4 py-8 max-w-4xl">
-      <div className="flex items-center justify-between gap-3 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-3xl font-extrabold">{t.cartTitle}</h1>
+          <h1 className="text-2xl sm:text-3xl font-extrabold">{t.cartTitle}</h1>
           <p className="text-muted-foreground">{t.cartSubtitle}</p>
         </div>
-        <Button variant="outline" onClick={onBack}>{t.continueShopping}</Button>
+        <Button variant="outline" onClick={onBack} className="w-full sm:w-auto min-h-11">{t.continueShopping}</Button>
       </div>
       {!items.length ? (
         <Card><CardContent className="p-10 text-center">
@@ -4860,22 +4860,22 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
             const currency = currencyOf(product);
             const cup = approximateCup(product);
             return (
-              <Card key={product.id}><CardContent className="p-4 flex items-center gap-3">
+              <Card key={product.id}><CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3">
                 {product.image
-                  ? <img src={product.image} alt={product.name || t.productFallback} className="w-20 h-20 rounded-lg object-cover bg-muted"/>
-                  : <div className="w-20 h-20 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
-                <div className="flex-1 min-w-0">
-                  <div className="font-bold truncate">{product.name || t.productFallback}</div>
+                  ? <img src={product.image} alt={product.name || t.productFallback} className="w-16 h-16 sm:w-20 sm:h-20 shrink-0 rounded-lg object-cover bg-muted"/>
+                  : <div className="w-16 h-16 sm:w-20 sm:h-20 shrink-0 rounded-lg bg-muted flex items-center justify-center"><ShoppingBag className="h-7 w-7"/></div>}
+                <div className="flex-1 min-w-0 w-full">
+                  <div className="font-bold leading-snug line-clamp-2 break-words">{product.name || t.productFallback}</div>
                   <div className="text-sm text-muted-foreground">{money(product.price)} {currency} c/u</div>
                   {cup !== null && <div className="text-xs text-muted-foreground">Equivalente: {money(cup)} CUP c/u</div>}
-                  <div className="flex items-center gap-2 mt-2">
-                    <Button size="sm" variant="outline" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button>
-                    <span>{quantity}</span>
-                    <Button size="sm" variant="outline" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button>
-                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button>
+                  <div className="flex flex-wrap items-center gap-2 mt-3">
+                    <Button size="sm" className="h-10 min-w-10" variant="outline" aria-label="Disminuir cantidad" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button>
+                    <span className="min-w-8 text-center font-semibold tabular-nums">{quantity}</span>
+                    <Button size="sm" className="h-10 min-w-10" variant="outline" aria-label="Aumentar cantidad" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button>
+                    <Button size="sm" variant="ghost" className="h-10 text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button>
                   </div>
                 </div>
-                <div className="text-right font-bold whitespace-nowrap">
+                <div className="w-full sm:w-auto text-left sm:text-right font-bold whitespace-nowrap border-t sm:border-t-0 pt-2 sm:pt-0">
                   <div>{money((Number(product.price) || 0) * quantity)} {currency}</div>
                   {cup !== null && <div className="text-xs text-muted-foreground font-normal">{money(cup * quantity)} CUP</div>}
                 </div>
@@ -4883,7 +4883,7 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
             );
           })}
         </div>
-        <Card className="mt-5"><CardContent className="p-5 flex flex-col gap-4">
+        <Card className="mt-5"><CardContent className="p-4 sm:p-5 flex flex-col gap-4">
           <div>
             <div className="text-sm text-muted-foreground">{t.estimatedSubtotal}</div>
             {mixedCurrencies ? (
@@ -5724,7 +5724,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                        order.status === 'paid' ||
                        (!order.paymentStatus && ['processing', 'shipped', 'delivered'].includes(order.status))
                      ) && (
-                      <div className="pt-3 space-y-2">
+                      <div className="mt-2 rounded-xl border border-border/80 bg-muted/20 p-3 sm:p-4 space-y-3">
                         {order.buyerReceiptConfirmation?.confirmedAt ? (
                           <p className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm font-semibold text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-300" role="status" aria-live="polite">
                             Recepción confirmada.
@@ -5757,6 +5757,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                   <div className="pt-2">
                     <Button
                       variant="outline"
+                      className="min-h-11 w-full justify-center whitespace-normal sm:w-auto"
                       onClick={() => loadInvoice(order)}
                       disabled={!!invoiceLoading[order.id]}
                     >
@@ -5774,7 +5775,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
                     )}
 
                     {openInvoiceId === order.id && invoices[order.id] && (
-                      <div className="mt-3 space-y-4 rounded-xl border bg-card p-4 break-words">
+                      <div className="mt-3 space-y-4 rounded-xl border bg-card p-3 sm:p-4 break-words">
                         <h4 className="text-base font-bold tracking-tight">Factura de pago</h4>
                         <p className="text-sm">
                           Estado: <strong>{invoices[order.id].status || 'Pendiente'}</strong>
@@ -6787,7 +6788,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                     </Badge>
                   </div>
 
-                  <div className="space-y-2 rounded-xl border border-border/80 bg-muted/30 p-3 text-sm sm:p-4">
+                  <div className="space-y-2 break-words rounded-xl border border-border/80 bg-muted/30 p-3 text-sm [overflow-wrap:anywhere] sm:p-4">
                     <h4 className="font-semibold tracking-tight">Datos de entrega</h4>
                     <p>
                       <span className="font-medium">Destinatario:</span>{" "}
@@ -6911,7 +6912,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                                       {lookup.routeType ? ` · Ruta ${lookup.routeType}` : ''}
                                     </p>
                                     {lookup.carriers.map((carrier, index) => (
-                                      <div key={`${carrier.name}-${index}`} className="rounded-lg border bg-background p-3 text-sm">
+                                      <div key={`${carrier.name}-${index}`} className="rounded-lg border bg-background p-3 text-sm [overflow-wrap:anywhere]">
                                         <p className="font-semibold">{carrier.name}</p>
                                         <p className="text-muted-foreground">
                                           Vehículo: {carrier.vehicleType} · Modalidad: {carrier.transportMode}
@@ -6988,7 +6989,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                   <div className="text-sm space-y-1">
                     {(Array.isArray(order.items) ? order.items : []).map((item, index) => (
                       <div key={item.id || item.productId || index} className="flex justify-between gap-3">
-                        <span>{item.productName || item.name || item.title || 'Producto'} × {item.quantity || item.qty || 1}</span>
+                        <span className="min-w-0 flex-1 break-words">{item.productName || item.name || item.title || 'Producto'}</span><span className="shrink-0 text-right font-medium">× {item.quantity || item.qty || 1}</span>
                       </div>
                     ))}
                     <div className="font-semibold pt-1">
@@ -7074,7 +7075,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                         }))}
                       />
                     </div>
-                    <div className="space-y-1 sm:col-span-2">
+                    <div className="space-y-3 rounded-xl border border-dashed border-border bg-muted/20 p-3 sm:col-span-2 sm:p-4">
                       <Label>{t.deliveryPhotos}</Label>
                       <Input
                         className="min-h-12 cursor-pointer py-2 text-sm focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-1 file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-2 file:text-sm file:font-semibold"
@@ -7110,13 +7111,13 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                         Fotos registradas: <span className="font-semibold text-foreground">{photos.length}/12</span>.
                       </p>
                       {(form.deliveryPhotos || []).length > 0 && (
-                        <p className="text-xs">{form.deliveryPhotos.length} foto(s) nuevas seleccionadas.</p>
+                        <p className="rounded-lg border border-green-600/20 bg-green-50 px-3 py-2 text-sm font-medium text-green-800 dark:bg-green-950/30 dark:text-green-300">{form.deliveryPhotos.length} foto(s) nuevas seleccionadas.</p>
                       )}
                     </div>
                   </div>
 
                   {message && (
-                    <p role="status" aria-live="polite" className={`rounded-lg border p-3 text-sm font-medium ${message.type === 'error' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-green-600/30 bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-300'}`}>
+                    <p role="status" aria-live="polite" className={`break-words rounded-lg border p-3 text-sm font-medium ${message.type === 'error' ? 'border-destructive/30 bg-destructive/5 text-destructive' : 'border-green-600/30 bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-300'}`}>
                       {message.text}
                     </p>
                   )}
@@ -7217,10 +7218,10 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
                       <h4 className="text-sm font-semibold">{t.registeredPhotos}</h4>
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         {photos.map((photo, index) => (
-                          <a key={`${photo}-${index}`} href={photo} target="_blank" rel="noreferrer">
+                          <a key={`${photo}-${index}`} href={photo} target="_blank" rel="noreferrer" className="block rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2">
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img src={photo} alt={`${t.deliveryPhotoAlt} ${index + 1}`}
-                              className="w-full h-24 object-cover rounded-md border" loading="lazy" />
+                              className="h-24 w-full rounded-md border object-cover" loading="lazy" />
                           </a>
                         ))}
                       </div>
@@ -7367,7 +7368,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Click para ver comprobante completo"
-                      className="inline-block mt-2 rounded-md overflow-hidden border border-border hover:ring-2 hover:ring-[#1565C0] transition-all"
+                      className="inline-block mt-2 rounded-md overflow-hidden border border-border transition-all hover:ring-2 hover:ring-[#1565C0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
                     >
                       <img
                         src={p.screenshot}
@@ -7381,8 +7382,8 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                 </div>
                 {p.status === 'pending' && (
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => onApprove(p.id)} className="bg-green-500 hover:bg-green-600 text-white"><Check className="h-3 w-3 mr-1" /> Aprobar</Button>
-                    <Button size="sm" variant="outline" onClick={() => onReject(p.id)} className="text-destructive border-destructive/40">Rechazar</Button>
+                    <Button size="sm" onClick={() => onApprove(p.id)} className="min-h-11 px-4 bg-green-500 hover:bg-green-600 text-white"><Check className="h-4 w-4 mr-1" /> Aprobar</Button>
+                    <Button size="sm" variant="outline" onClick={() => onReject(p.id)} className="min-h-11 px-4 text-destructive border-destructive/40">Rechazar</Button>
                   </div>
                 )}
               </CardContent>
@@ -7414,7 +7415,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                       target="_blank"
                       rel="noopener noreferrer"
                       title="Ver en explorer"
-                      className="inline-block mt-2 text-xs text-blue-600 hover:underline"
+                      className="inline-block mt-2 rounded-sm py-2 text-sm text-blue-600 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
                     >
                       Ver transacción en explorer
                     </a>
@@ -7423,8 +7424,8 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                 {(inv.status === 'pending' || inv.status === 'submitted') && (
                   <div className="flex gap-2 flex-wrap">
                     {inv.status === 'submitted' && (
-                      <Button size="sm" onClick={() => onApproveCryptoInvoice(inv.id)} className="bg-green-500 hover:bg-green-600 text-white">
-                        <Check className="h-3 w-3 mr-1" /> Aprobar
+                      <Button size="sm" onClick={() => onApproveCryptoInvoice(inv.id)} className="min-h-11 px-4 bg-green-500 hover:bg-green-600 text-white">
+                        <Check className="h-4 w-4 mr-1" /> Aprobar
                       </Button>
                     )}
                     {inv.status === 'submitted' && (
@@ -7514,30 +7515,30 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
           {orders.length === 0 ? (
             <p className="text-muted-foreground text-center py-12">Todavía no hay pedidos.</p>
           ) : orders.map((order) => (
-            <Card key={order.id}>
-              <CardContent className="p-4 space-y-3">
+            <Card key={order.id} className="border-border/80 shadow-sm">
+              <CardContent className="p-4 sm:p-5 space-y-4">
                 <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                   <div>
-                    <h3 className="font-bold">Pedido #{String(order.id || '').slice(-12)}</h3>
+                    <h3 className="text-base sm:text-lg font-bold tracking-tight break-all">Pedido #{String(order.id || '').slice(-12)}</h3>
                     <p className="text-sm text-muted-foreground">
                       {order.createdAt ? new Date(order.createdAt).toLocaleString('es-ES') : 'Fecha no disponible'}
                     </p>
-                    <p className="text-sm mt-1">Comprador: {order.shipping?.name || order.buyerName || '—'}</p>
-                    <p className="text-sm">Correo: {order.buyerEmail || order.shipping?.email || '—'}</p>
-                    <p className="text-sm">Teléfono: {order.shipping?.phone || '—'}</p>
+                    <p className="mt-2 text-sm font-medium break-words">Comprador: {order.shipping?.name || order.buyerName || '—'}</p>
+                    <p className="text-sm break-all">Correo: {order.buyerEmail || order.shipping?.email || '—'}</p>
+                    <p className="text-sm break-words">Teléfono: {order.shipping?.phone || '—'}</p>
                   </div>
-                  <div className="space-y-2 md:text-right">
+                  <div className="rounded-xl border bg-muted/30 p-3 space-y-2 md:min-w-52 md:text-right">
                     <Badge>{typeof getOrderStatusLabel === 'function' ? getOrderStatusLabel(order.status || 'pending_payment') : (order.status || 'Pendiente')}</Badge>
-                    <p className="font-bold text-lg">
+                    <p className="text-xl font-bold tracking-tight tabular-nums">
                       {order.currency || 'USD'} {Number(order.total ?? order.subtotal ?? 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
-                    <Button size="sm" onClick={() => onUpdateOrder(order)}>Actualizar pedido</Button>
+                    <Button size="sm" className="min-h-11 w-full whitespace-normal sm:w-auto" onClick={() => onUpdateOrder(order)}>Actualizar pedido</Button>
                   </div>
                 </div>
 
-                <div className="rounded-md border p-3">
+                <div className="rounded-xl border p-3 sm:p-4">
                   <h4 className="font-semibold mb-1">Dirección de entrega</h4>
-                  <p className="text-sm">{order.shipping?.address || 'No especificada'}</p>
+                  <p className="text-sm leading-6 break-words">{order.shipping?.address || 'No especificada'}</p>
                   {order.shipping?.notes && <p className="text-sm text-muted-foreground mt-1">Indicaciones: {order.shipping.notes}</p>}
                 </div>
 
@@ -7548,7 +7549,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                   ) : (
                     <div className="space-y-2">
                       {(Array.isArray(order.items) ? order.items.filter(Boolean) : []).map((item, index) => (
-                        <div key={item.productId || index} className="flex justify-between gap-3 text-sm border-b pb-2">
+                        <div key={item.productId || index} className="flex flex-col gap-1 border-b pb-3 text-sm sm:flex-row sm:justify-between sm:gap-3">
                           <span>{item.productName || 'Producto'} × {Number(item.quantity || 0)}</span>
                           <span className="font-medium">
                             {order.currency || item.currency || 'USD'} {Number(item.lineTotal ?? (Number(item.unitPrice || 0) * Number(item.quantity || 0))).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -7584,8 +7585,8 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                 <Badge variant={r.status === 'pending' ? 'default' : 'secondary'}>{r.status}</Badge>
                 {r.status === 'pending' && (
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => onResolveReport(r.id, 'resolved')} className="bg-green-500 text-white"><Check className="h-3 w-3" /></Button>
-                    <Button size="sm" variant="outline" onClick={() => onResolveReport(r.id, 'dismissed')}>Descartar</Button>
+                    <Button size="sm" onClick={() => onResolveReport(r.id, 'resolved')} aria-label="Marcar reporte como resuelto" className="min-h-11 min-w-11 bg-green-500 text-white"><Check className="h-4 w-4" /></Button>
+                    <Button size="sm" variant="outline" onClick={() => onResolveReport(r.id, 'dismissed')} className="min-h-11 px-4">Descartar</Button>
                   </div>
                 )}
               </CardContent>
@@ -7593,8 +7594,8 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
           ))}
         </TabsContent>
 
-        <TabsContent value="users" className="mt-4 space-y-2">
-          <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+        <TabsContent value="users" className="mt-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-lg border p-3 sm:p-4">
             <div>
               <h3 className="font-semibold">Editar negocios</h3>
               <p className="text-sm text-muted-foreground">
@@ -7603,7 +7604,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
             </div>
             <Button
               type="button"
-              size="sm"
+              size="sm" className="min-h-11 w-full sm:w-auto"
               variant={showBusinessEditControls ? "default" : "outline"}
               aria-label={showBusinessEditControls ? "Ocultar edición de negocios" : "Mostrar edición de negocios"}
               aria-expanded={showBusinessEditControls}
@@ -7618,15 +7619,15 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
           </div>
           {users.map((u) => (
             <Card key={u.id}>
-              <CardContent className="p-4 flex flex-col md:flex-row gap-3 md:items-center">
+              <CardContent className="p-3 sm:p-4 flex flex-col md:flex-row gap-3 md:items-center">
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold flex items-center gap-2 flex-wrap">
+                  <div className="font-semibold text-sm sm:text-base break-all flex items-center gap-2 flex-wrap">
                     {u.email}
                     {u.role === 'admin' && <Badge className="bg-amber-500 text-black border-0">admin</Badge>}
                     {u.accountType === 'buyer' && <Badge variant="outline">comprador</Badge>}
                     {u.suspended && <Badge variant="destructive">suspendido</Badge>}
                   </div>
-                  <div className="text-xs text-muted-foreground">
+                  <div className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">
                     {u.business ? `🏪 ${u.business.name}` : '🛍️ Sin negocio'} · Plan: <b>{u.plan}</b> · {u.name || '—'}
                     {u.business && (
                       <div className="mt-1 flex flex-wrap items-center gap-2">
@@ -7645,9 +7646,9 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
 
                   </div>
                 </div>
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex flex-col sm:flex-row gap-2 flex-wrap w-full md:w-auto">
                   <Select value={u.plan} onValueChange={(v) => onUpdateUser(u.id, { plan: v })}>
-                    <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="min-h-11 w-full sm:w-28"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="free">Free</SelectItem>
                       <SelectItem value="basico">Básico</SelectItem>
@@ -7680,16 +7681,16 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
         </TabsContent>
 
         <TabsContent value="products" className="mt-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {products.map((p) => (
               <Card key={p.id} className="overflow-hidden">
-                <div className="aspect-video bg-muted">
+                <div className="aspect-[4/3] sm:aspect-video bg-muted flex items-center justify-center">
                   {p.image && <img src={p.image} alt={p.name} className="w-full h-full object-cover" />}
                 </div>
                 <CardContent className="p-3">
-                  <div className="font-semibold truncate">{p.name}</div>
-                  <div className="text-xs text-muted-foreground truncate">{p.business?.name} · <PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
-                  <Button size="sm" variant="outline" onClick={() => onDeleteProduct(p.id)} className="mt-2 w-full text-destructive border-destructive/40">
+                  <div className="font-semibold text-sm sm:text-base whitespace-normal break-words">{p.name}</div>
+                  <div className="text-sm text-muted-foreground whitespace-normal break-words [overflow-wrap:anywhere]">{p.business?.name} · <PriceWithCurrencyIcon value={p.price} currency={p.currency} /></div>
+                  <Button size="sm" variant="outline" onClick={() => onDeleteProduct(p.id)} className="mt-3 min-h-11 w-full text-destructive border-destructive/40">
                     <Trash2 className="h-3 w-3 mr-1" /> Eliminar
                   </Button>
                 </CardContent>
@@ -7699,14 +7700,14 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
         </TabsContent>
 
         <TabsContent value="carriers" className="mt-4 space-y-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
               <h2 className="text-lg font-bold">Solicitudes de transportistas</h2>
               <p className="text-sm text-muted-foreground">
                 {pendingCarriers.length} pendientes · {carriers.length} registros en total
               </p>
             </div>
-            <Button size="sm" variant="outline" onClick={onRefresh}>Actualizar</Button>
+            <Button size="sm" variant="outline" className="min-h-11 w-full sm:w-auto" onClick={onRefresh}>Actualizar</Button>
           </div>
 
           {carriers.length === 0 ? (
@@ -7715,9 +7716,9 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
             </CardContent></Card>
           ) : carriers.map((c) => (
             <Card key={c.id} className="overflow-hidden">
-              <CardContent className="p-4 space-y-3">
+              <CardContent className="p-3 sm:p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="font-bold">{c.fullName || 'Sin nombre'}</div>
+                  <div className="font-bold text-base break-words">{c.fullName || 'Sin nombre'}</div>
                   <Badge variant={c.status === 'approved' ? 'default' : c.status === 'rejected' || c.status === 'suspended' ? 'destructive' : 'secondary'}>
                     {({
                       pending: 'Pendiente',
@@ -7729,7 +7730,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                   </Badge>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm [&>div]:min-w-0 [&>div]:break-words [&>div]:[overflow-wrap:anywhere]">
                   <div><span className="text-muted-foreground">Correo:</span> {c.userEmail || '—'}</div>
                   <div><span className="text-muted-foreground">Teléfono:</span> {c.phone || '—'}</div>
                   <div><span className="text-muted-foreground">Vehículo:</span> {c.vehicleType || '—'}</div>
@@ -7738,7 +7739,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                   <div><span className="text-muted-foreground">Modalidad:</span> {c.transportMode || '—'}</div>
                 </div>
 
-                <div className="text-sm">
+                <div className="text-sm break-words [overflow-wrap:anywhere]">
                   <span className="text-muted-foreground">Municipios:</span>{' '}
                   {Array.isArray(c.municipalities) ? c.municipalities.join(', ') : '—'}
                 </div>
@@ -7747,7 +7748,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                 {c.availability && <p className="text-sm"><span className="text-muted-foreground">Disponibilidad:</span> {c.availability}</p>}
                 {c.reviewNotes && <p className="text-sm text-muted-foreground">Observaciones administrativas: {c.reviewNotes}</p>}
 
-                <div className="flex flex-wrap gap-2 pt-2 border-t border-border">
+                <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 pt-3 border-t border-border">
                   {c.status === 'pending' && (
                     <>
                       <Button size="sm" onClick={() => onReviewCarrier?.(c.id, 'approved', '')}>
@@ -7785,7 +7786,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
         <TabsContent value="settings" className="mt-4">
           {settings && (
             <Card>
-              <CardContent className="p-6 space-y-3 max-w-2xl">
+              <CardContent className="p-4 sm:p-6 space-y-4 max-w-2xl">
                 <div className="rounded-md border border-border p-3 space-y-2">
                   <label className="flex items-center gap-2 text-sm font-semibold cursor-pointer">
                     <input type="checkbox" checked={settings.sellerSalesEnabled !== false} onChange={(e) => setSettings({ ...settings, sellerSalesEnabled: e.target.checked })} />
@@ -7795,14 +7796,14 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                 </div>
                 <div>
                   <Label>Wallet USDC</Label>
-                  <Input value={settings.usdcWallet || ''} onChange={(e) => setSettings({ ...settings, usdcWallet: e.target.value })} className="font-mono" />
+                  <Input value={settings.usdcWallet || ''} onChange={(e) => setSettings({ ...settings, usdcWallet: e.target.value })} className="min-h-11 font-mono" />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div><Label>Red USDC</Label><Input value={settings.usdcNetwork || ''} onChange={(e) => setSettings({ ...settings, usdcNetwork: e.target.value })} /></div>
                   <div><Label>Tasa de cambio (CUP por 1 USD)</Label><Input type="number" min="0.01" max="10000" step="0.01" value={settings.usdRate ?? 120} onChange={(e) => setSettings({ ...settings, usdRate: e.target.value === '' ? '' : Number(e.target.value) })} placeholder="Ej: 120" /><p className="text-xs text-muted-foreground">Se utiliza para calcular el equivalente en CUP de precios en USD, USDT y USDC, y los pagos locales.</p></div>
                   <div><Label>Precio Premium (USD)</Label><Input type="number" step="0.01" value={settings.premiumPriceUSD ?? 0} onChange={(e) => setSettings({ ...settings, premiumPriceUSD: Number(e.target.value) })} /></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div><Label>Precio Premium (CUP)</Label><Input type="number" step="1" value={settings.premiumPriceCUP ?? 0} onChange={(e) => setSettings({ ...settings, premiumPriceCUP: Number(e.target.value) })} placeholder="Ej: 3500" /></div>
                   <div className="flex items-end gap-2">
                     <label className="flex items-center gap-2 text-sm border border-border rounded-md p-2 w-full cursor-pointer hover:bg-muted/50">
@@ -7811,11 +7812,11 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                     </label>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div><Label>Transfermóvil - Nombre</Label><Input value={settings.transfermovilName || ''} onChange={(e) => setSettings({ ...settings, transfermovilName: e.target.value })} /></div>
                   <div><Label>Transfermóvil - Número</Label><Input value={settings.transfermovilNumber || ''} onChange={(e) => setSettings({ ...settings, transfermovilNumber: e.target.value })} /></div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div><Label>Teléfono oficial</Label><Input value={settings.contactPhone || ''} onChange={(e) => setSettings({ ...settings, contactPhone: e.target.value })} /></div>
                   <div><Label>Email oficial</Label><Input value={settings.contactEmail || ''} onChange={(e) => setSettings({ ...settings, contactEmail: e.target.value })} /></div>
                 </div>
@@ -7828,7 +7829,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
                   />
                   <p className="text-[10px] text-muted-foreground mt-1">Aparece en footer, contacto y comprobantes. Si dejas vacío, se usa el oficial por defecto.</p>
                 </div>
-                <Button onClick={onSaveSettings} disabled={savingSettings} className="brand-gradient text-white disabled:opacity-60">
+                <Button onClick={onSaveSettings} disabled={savingSettings} className="min-h-12 w-full sm:w-auto brand-gradient text-white disabled:opacity-60">
                   {savingSettings ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Guardando…</> : 'Guardar cambios'}
                 </Button>
               </CardContent>

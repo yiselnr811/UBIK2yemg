@@ -3969,47 +3969,6 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
   const [showFeaturedBusinesses, setShowFeaturedBusinesses] = React.useState(true);
   const hasFiltersOrQuery = query || category || filters.location || filters.priceMin || filters.priceMax || filters.since || filters.subcategory || filters.businessType || filters.country || filters.province || filters.municipality || filters.businessName || filters.featuredOnly;
 
-  // Smooth scroll helper
-  const scrollToExplore = () => {
-    const el = document.getElementById('explore');
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-  // Quick nav actions
-  const navActions = [
-    { id: 'cats', label: 'Categorías', icon: '🗂️', onClick: () => {
-      const el = document.getElementById('categories-section');
-      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }},
-    { id: 'stores', label: 'Tiendas', icon: '🏬', onClick: () => {
-      setCategory('');
-      setFilters({ ...filters, businessType: 'tienda', physicalOnly: false, featuredOnly: false, subcategory: '' });
-      scrollToExplore();
-    }},
-    { id: 'fav', label: 'Favoritos', icon: '❤️', onClick: () => onFavorites?.() },
-    { id: 'featured', label: 'Destacados', icon: '⭐', onClick: () => {
-      setCategory('');
-      setFilters({ ...filters, featuredOnly: true, businessType: '', subcategory: '' });
-      scrollToExplore();
-    }},
-    { id: 'services', label: 'Servicios', icon: '🛠️', onClick: () => {
-      setCategory('servicios');
-      setFilters({ ...filters, featuredOnly: false, businessType: '', subcategory: '' });
-      scrollToExplore();
-    }},
-    { id: 'offers', label: 'Novedades', icon: '🏷️', onClick: () => {
-      // Until a discount field exists, "Ofertas" muestra los más recientes con stock.
-      setCategory('');
-      setFilters({ ...filters, since: new Date(Date.now() - 7 * 86400000).toISOString(), featuredOnly: false, businessType: '', subcategory: '' });
-      scrollToExplore();
-    }},
-    { id: 'recent', label: 'Recientes', icon: '🕒', onClick: () => {
-      setCategory('');
-      setFilters({ ...filters, since: new Date(Date.now() - 30 * 86400000).toISOString(), featuredOnly: false, businessType: '', subcategory: '' });
-      scrollToExplore();
-    }},
-  ];
-
   return (
     <>
       {/* HERO - compact, mobile-app feel. Products + businesses visible in first viewport. */}
@@ -4071,23 +4030,6 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               <div className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Sin comisiones</div>
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* ACCESOS RAPIDOS PARA COMPRADORES */}
-      <section aria-label="Accesos rápidos" className="container mx-auto px-4 mt-4">
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
-          {navActions.map((action) => (
-            <button
-              key={action.id}
-              type="button"
-              onClick={action.onClick}
-              className="min-h-12 flex flex-col items-center justify-center gap-1 rounded-xl border border-border bg-card px-2 py-2 text-xs sm:text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-[#1565C0] hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1565C0] focus-visible:ring-offset-2"
-            >
-              <span aria-hidden="true" className="text-xl leading-none">{action.icon}</span>
-              <span className="text-center leading-tight">{action.label}</span>
-            </button>
-          ))}
         </div>
       </section>
 

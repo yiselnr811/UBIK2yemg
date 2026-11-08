@@ -1058,6 +1058,9 @@ function detectSlowConnection() {
 const App = () => {
   // === State ===
   const [view, setView] = useState('home');
+  const [sellerNavSection, setSellerNavSection] = useState('panel');
+  const [sellerDashboardSection, setSellerDashboardSection] = useState('summary');
+  const [buyerHomeSection, setBuyerHomeSection] = useState('home');
   const [productId, setProductId] = useState(null);
   const [businessId, setBusinessId] = useState(null);
 
@@ -1863,8 +1866,8 @@ const App = () => {
   };
 
   const addToCart = (product) => {
-    if (!product?.id || !product.stock || product.stock <= 0) {
-      return toast.error('Producto sin stock');
+    if (!product?.id || product.available === false || (product.stock != null && (!Number.isFinite(Number(product.stock)) || Number(product.stock) <= 0))) {
+      return toast.error('Producto sin stock o no disponible');
     }
     if (getProductPaymentMethods(product).length === 0) {
       return toast.error('Este producto no tiene métodos de pago configurados.');
@@ -1877,14 +1880,23 @@ const App = () => {
       }
       const existing = current.find((item) => item.product.id === product.id);
       const next = existing
-        ? current.map((item) => item.product.id === product.id ? { ...item, quantity: Math.min(Number(product.stock) || 99, item.quantity + 1) } : item)
+        ? current.map((item) => item.product.id === product.id ? { ...item, quantity: product.stock == null ? item.quantity + 1 : Math.min(Math.floor(Number(product.stock)), item.quantity + 1) } : item)
         : [...current, { product, quantity: 1 }];
       try { localStorage.setItem('ubik2_cart', JSON.stringify(next)); } catch {}
       toast.success('Producto añadido al carrito');
       return next;
     });
   };
-  const updateCartQuantity = (productId, quantity) => saveCart(cart.map((item) => item.product.id === productId ? { ...item, quantity: Math.max(1, Math.min(Number(item.product.stock) || 99, Number(quantity) || 1)) } : item));
+  const updateCartQuantity = (productId, quantity) => saveCart(cart.map((item) => {
+    if (item.product.id !== productId) return item;
+    const requested = Math.max(1, Math.floor(Number(quantity) || 1));
+    const stock = item.product.stock;
+    if (stock == null) return { ...item, quantity: requested };
+    const available = Number(stock);
+    if (!Number.isFinite(available) || available < 0) return item;
+    if (available === 0) return requested < item.quantity ? { ...item, quantity: requested } : item;
+    return { ...item, quantity: Math.min(Math.floor(available), requested) };
+  }));
   const removeFromCart = (productId) => saveCart(cart.filter((item) => item.product.id !== productId));
 
   const startCryptoCheckout = async (productOrItems, requestedMethod = 'crypto') => {
@@ -1895,13 +1907,57 @@ const App = () => {
     const checkoutItems = Array.isArray(productOrItems) ? productOrItems : [{ product: productOrItems, quantity: 1 }];
     if (!checkoutItems.length) return toast.error('El carrito está vacío');
     for (const item of checkoutItems) {
-      if (!item?.product?.id || !item.product.stock || item.product.stock < item.quantity) return toast.error(`Stock insuficiente para ${item?.product?.name || 'un producto'}`);
+      const quantity = Number(item?.quantity);
+      if (!item?.product?.id || !Number.isInteger(quantity) || quantity <= 0) {
+        return toast.error('El carrito contiene un producto o una cantidad inválida.');
+      }
     }
-    const businessIds = [...new Set(checkoutItems.map((item) => item.product.businessId).filter(Boolean))];
-    if (businessIds.length > 1) return toast.error('El carrito debe contener productos de una sola tienda.');
 
     setCheckoutSubmitting(true);
     try {
+      let verifiedCheckoutItems;
+      try {
+        verifiedCheckoutItems = await Promise.all(checkoutItems.map(async (item) => {
+          const response = await api(
+            `/products/${encodeURIComponent(item.product.id)}`,
+            { token }
+          );
+          const freshProduct = response?.product;
+          if (!freshProduct?.id || freshProduct.id !== item.product.id) {
+            throw new Error('Producto no encontrado');
+          }
+          return { ...item, product: freshProduct };
+        }));
+      } catch {
+        toast.error('No se pudieron actualizar los productos. Comprueba tu conexión e inténtalo de nuevo. Tu carrito se conserva.');
+        return;
+      }
+
+      for (const item of verifiedCheckoutItems) {
+        const stock = item.product.stock;
+        const quantity = Number(item.quantity);
+        if (
+          item.product.available === false ||
+          (stock != null && (
+            !Number.isFinite(Number(stock)) ||
+            Number(stock) <= 0 ||
+            Number(stock) < quantity
+          ))
+        ) {
+          toast.error(`Stock insuficiente o producto no disponible: ${item.product.name || 'un producto'}`);
+          return;
+        }
+      }
+
+      const businessIds = [...new Set(
+        verifiedCheckoutItems.map((item) => item.product.businessId).filter(Boolean)
+      )];
+      if (businessIds.length > 1) {
+        toast.error('El carrito debe contener productos de una sola tienda.');
+        return;
+      }
+
+
       let businessInfo = null;
       if (businessIds[0]) {
         try {
@@ -1921,6 +1977,31 @@ const App = () => {
           setCryptoConfig(config);
         } catch {
           config = null;
+        }
+      }
+
+      if (!['crypto', 'transfermovil', 'enzona'].includes(requestedMethod)) {
+        toast.error('Método de pago no válido.');
+        return;
+      }
+
+      for (const item of verifiedCheckoutItems) {
+        // El catálogo público ya incluye los métodos calculados por la API.
+        // No reconstruirlos desde businessInfo: el endpoint oculta
+        // el teléfono de verificación de Transfermóvil al comprador.
+        const productBusiness = item.product?.business;
+        const itemBusinessMethods = getAvailableBusinessPaymentMethods(
+          Array.isArray(productBusiness?.availablePaymentMethods)
+            ? productBusiness
+            : businessInfo
+        );
+        const productMethods = Array.isArray(item.product.allowedPaymentMethods)
+          ? item.product.allowedPaymentMethods
+          : itemBusinessMethods;
+
+        if (!itemBusinessMethods.includes(requestedMethod) || !productMethods.includes(requestedMethod)) {
+          toast.error(`El producto "${item.product.name || 'seleccionado'}" no permite ese método de pago.`);
+          return;
         }
       }
 
@@ -1955,7 +2036,7 @@ const App = () => {
 
       setCheckoutPaymentMethod(requestedMethod);
       setCryptoPendingCheckout({
-        items: checkoutItems,
+        items: verifiedCheckoutItems,
         clearCart: Array.isArray(productOrItems),
       });
       if (hasCrypto) {
@@ -2515,6 +2596,15 @@ const App = () => {
             onShareBusiness={() => shareBusiness(business)}
             compressLogo={compressLogo} compressImage={compressImage} onLogoChange={updateMyLogo} t={t} lang={lang}
             getOrderStatusLabel={getOrderStatusLabel}
+            activeSection={sellerDashboardSection}
+            onSectionChange={(section) => {
+              setSellerDashboardSection(section);
+              setSellerNavSection(
+                section === 'summary' ? 'panel' :
+                section === 'products' ? 'publish' :
+                section === 'orders' ? 'orders' : 'more'
+              );
+            }}
           />
         )}
         {view === 'dashboard' && user && !business && (
@@ -2580,27 +2670,28 @@ const App = () => {
             : business
               ? [
                   { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
-                  { label: 'Mi panel', icon: LayoutDashboard, active: view === 'dashboard', action: () => setView('dashboard') },
-                  { label: 'Publicar', icon: Plus, active: false, action: () => { setView('dashboard'); setTimeout(openProductCreate, 150); } },
-                  { label: 'Pedidos', icon: ShoppingBag, active: false, action: () => { setView('dashboard'); setTimeout(() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250); } },
+                  { label: 'Mi panel', icon: LayoutDashboard, active: view === 'dashboard' && sellerDashboardSection === 'summary', action: () => { setSellerNavSection('panel'); setSellerDashboardSection('summary'); setView('dashboard'); } },
+                  { label: 'Publicar', icon: Plus, active: view === 'dashboard' && sellerDashboardSection === 'products', action: () => { setSellerNavSection('publish'); setSellerDashboardSection('products'); setView('dashboard'); setTimeout(openProductCreate, 150); } },
+                  { label: 'Pedidos', icon: ShoppingBag, active: view === 'dashboard' && sellerDashboardSection === 'orders', action: () => { setSellerNavSection('orders'); setSellerDashboardSection('orders'); setView('dashboard'); } },
                   {
                     label: 'Más',
                     icon: Menu,
-                    active: view === 'dashboard' || view === 'business',
+                    active: view === 'dashboard' || view === 'business' ? sellerNavSection === 'more' : false,
                     menu: [
                       { label: 'Mi tienda', target: 'business' },
-                      { label: 'Datos del negocio y ubicación', target: 'sellerBusinessProfile' },
-                      { label: 'Inventario y productos', target: 'sellerInventory' },
-                      { label: 'Entregas a domicilio', target: 'sellerDeliverySettings' },
-                      { label: 'Transfermóvil y EnZona', target: 'sellerLocalPayments' },
-                      { label: 'Billeteras de criptomonedas', target: 'sellerCryptoWallets' },
-                      { label: 'Personalizar panel', target: 'sellerPanelPreferences' },
+                      { label: 'Datos del negocio y ubicación', section: 'business' },
+                      { label: 'Inventario y productos', section: 'products' },
+                      { label: 'Entregas a domicilio', section: 'business' },
+                      { label: 'Transfermóvil y EnZona', section: 'payments' },
+                      { label: 'Billeteras de criptomonedas', section: 'payments' },
+                      { label: 'Personalizar panel', section: 'settings' },
                     ],
                   },
                 ]
               : [
-                  { label: 'Inicio', icon: Store, active: view === 'home', action: () => setView('home') },
-                  { label: 'Buscar', icon: Search, active: false, action: () => {
+                  { label: 'Inicio', icon: Store, active: view === 'home' && buyerHomeSection === 'home', action: () => { setBuyerHomeSection('home'); setView('home'); } },
+                  { label: 'Buscar', icon: Search, active: view === 'home' && buyerHomeSection === 'search', action: () => {
+                    setBuyerHomeSection('search');
                     setView('home');
                     window.setTimeout(() => {
                       const visibleSearch = Array.from(
@@ -2636,7 +2727,7 @@ const App = () => {
                     <DropdownMenuSeparator />
                     {item.menu.map((entry) => (
                       <DropdownMenuItem
-                        key={entry.value || entry.target}
+                        key={entry.value || entry.target || entry.section}
                         onSelect={() => {
                           if (user.role === 'admin') {
                             setView('admin');
@@ -2644,22 +2735,23 @@ const App = () => {
                             return;
                           }
 
+                          setSellerNavSection('more');
                           if (entry.target === 'business') {
                             const id = business?.id;
-                            if (id) openBusiness(id);
-                            else setView('dashboard');
+                            if (id) {
+                              openBusiness(id);
+                            } else {
+                              setSellerDashboardSection('summary');
+                              setSellerNavSection('panel');
+                              setView('dashboard');
+                            }
                             return;
                           }
 
-                          setView('dashboard');
-                          window.setTimeout(() => {
-                            const targetElement = document.getElementById(entry.target) ||
-                              (entry.target === 'sellerInventory' ? document.getElementById('sellerPanelPreferences') : null);
-                            targetElement?.scrollIntoView({
-                              behavior: 'smooth',
-                              block: 'start',
-                            });
-                          }, 250);
+                          if (entry.section) {
+                            setSellerDashboardSection(entry.section);
+                            setView('dashboard');
+                          }
                         }}
                       >
                         {entry.label}
@@ -3905,7 +3997,7 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
       setFilters({ ...filters, featuredOnly: false, businessType: '', subcategory: '' });
       scrollToExplore();
     }},
-    { id: 'offers', label: 'Ofertas', icon: '🏷️', onClick: () => {
+    { id: 'offers', label: 'Novedades', icon: '🏷️', onClick: () => {
       // Until a discount field exists, "Ofertas" muestra los más recientes con stock.
       setCategory('');
       setFilters({ ...filters, since: new Date(Date.now() - 7 * 86400000).toISOString(), featuredOnly: false, businessType: '', subcategory: '' });
@@ -3979,6 +4071,23 @@ const Home = ({ t, stats, categories, category, setCategory, featured, products,
               <div className="flex items-center gap-1"><Sparkles className="h-3.5 w-3.5" /> Sin comisiones</div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* ACCESOS RAPIDOS PARA COMPRADORES */}
+      <section aria-label="Accesos rápidos" className="container mx-auto px-4 mt-4">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+          {navActions.map((action) => (
+            <button
+              key={action.id}
+              type="button"
+              onClick={action.onClick}
+              className="min-h-12 flex flex-col items-center justify-center gap-1 rounded-xl border border-border bg-card px-2 py-2 text-xs sm:text-sm font-semibold text-foreground shadow-sm transition-colors hover:border-[#1565C0] hover:bg-blue-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1565C0] focus-visible:ring-offset-2"
+            >
+              <span aria-hidden="true" className="text-xl leading-none">{action.icon}</span>
+              <span className="text-center leading-tight">{action.label}</span>
+            </button>
+          ))}
         </div>
       </section>
 
@@ -4313,6 +4422,13 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
           </div>
         )}
         <div className="text-[15px] font-semibold mt-1.5 line-clamp-2 leading-snug min-h-[2.75rem]">{p.name}</div>
+        <div
+          className={`mt-2 flex items-center gap-1.5 text-xs font-semibold ${p.stock == null ? 'text-amber-700' : Number(p.stock) > 0 ? 'text-[#008F5B]' : 'text-red-600'}`}
+          aria-label={p.stock == null ? 'Disponibilidad por confirmar' : Number(p.stock) > 0 ? 'Producto disponible' : 'Producto agotado'}
+        >
+          <span className={`h-2 w-2 rounded-full ${p.stock == null ? 'bg-amber-500' : Number(p.stock) > 0 ? 'bg-[#00A86B]' : 'bg-red-500'}`} aria-hidden="true" />
+          {p.stock == null ? 'Consultar disponibilidad' : Number(p.stock) > 0 ? 'Disponible' : 'Agotado'}
+        </div>
         {p.business?.name && (
           <div className="text-[13px] font-semibold text-[#1565C0] mt-1 truncate" title={p.business.name}>
             {p.business.name}
@@ -4330,28 +4446,28 @@ const ProductCard = ({ p, onClick, isFav, onFav, onShare, onReport, highlight, o
         {getProductPaymentMethods(p).length > 0 && (
           <button
             type="button"
-            disabled={!(Number(p.stock) > 0)}
+            disabled={p.available === false || (p.stock != null && !(Number(p.stock) > 0))}
             onClick={(e) => { e.stopPropagation(); onAddToCart?.(p); }}
             className="mt-3 w-full h-11 rounded-lg bg-[#1565C0] hover:bg-[#0d4fa3] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition"
           >
             <ShoppingBag className="h-4 w-4" />
-            {Number(p.stock) > 0 ? 'Añadir al carrito' : 'Sin stock'}
+            {p.stock == null || Number(p.stock) > 0 ? 'Añadir al carrito' : 'Sin stock'}
           </button>
         )}
         <div className="flex gap-1.5 mt-2.5" onClick={(e) => e.stopPropagation()}>
           {waLink && (
-            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-11 min-w-11 rounded-md bg-green-500 hover:bg-green-600 text-white flex items-center justify-center transition" title="WhatsApp" aria-label={`Contactar por WhatsApp sobre ${p.name}`}>
-              <MessageCircle className="h-5 w-5" />
+            <a href={waLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-12 min-w-0 rounded-md bg-green-600 hover:bg-green-700 text-white flex flex-col items-center justify-center gap-0.5 transition" title="WhatsApp" aria-label={`Contactar por WhatsApp sobre ${p.name}`}>
+              <MessageCircle className="h-4 w-4" /><span className="text-xs font-semibold">WhatsApp</span>
             </a>
           )}
           {tgLink && (
-            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-11 min-w-11 rounded-md bg-sky-500 hover:bg-sky-600 text-white flex items-center justify-center transition" title="Telegram" aria-label={`Contactar por Telegram sobre ${p.name}`}>
-              <Send className="h-5 w-5" />
+            <a href={tgLink} target="_blank" rel="noopener noreferrer" className="flex-1 h-12 min-w-0 rounded-md bg-sky-600 hover:bg-sky-700 text-white flex flex-col items-center justify-center gap-0.5 transition" title="Telegram" aria-label={`Contactar por Telegram sobre ${p.name}`}>
+              <Send className="h-4 w-4" /><span className="text-xs font-semibold">Telegram</span>
             </a>
           )}
           {smsLink && (
-            <a href={smsLink} className="flex-1 h-11 min-w-11 rounded-md bg-foreground hover:opacity-90 text-background flex items-center justify-center transition" title="SMS" aria-label={`Enviar SMS sobre ${p.name}`}>
-              <Phone className="h-5 w-5" />
+            <a href={smsLink} className="flex-1 h-12 min-w-0 rounded-md bg-foreground hover:opacity-90 text-background flex flex-col items-center justify-center gap-0.5 transition" title="SMS" aria-label={`Enviar SMS sobre ${p.name}`}>
+              <Phone className="h-4 w-4" /><span className="text-xs font-semibold">SMS</span>
             </a>
           )}
         </div>
@@ -4403,7 +4519,11 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
               <Badge className="bg-amber-500 text-black border-0"><Sparkles className="h-3 w-3 mr-1" /> {t.featured}</Badge>
             )}
             <Badge variant="outline" className="capitalize">{product.category}</Badge>
-            {product.stock > 0 ? <Badge className="bg-green-500 text-white">{t.inStock}</Badge> : <Badge variant="destructive">{t.outOfStock}</Badge>}
+            {product.available === false || (product.stock != null && !(Number(product.stock) > 0))
+              ? <Badge variant="destructive">{t.outOfStock}</Badge>
+              : product.stock == null
+                ? <Badge variant="outline">Consultar disponibilidad</Badge>
+                : <Badge className="bg-green-500 text-white">{t.inStock}</Badge>}
           </div>
           <h1 className="text-2xl sm:text-3xl md:text-4xl font-extrabold leading-tight break-words">{product.name}</h1>
           <div className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#00A86B] mt-3 leading-tight"><PriceWithCurrencyIcon value={product.price} currency={product.currency} className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#00A86B] leading-tight" /></div>
@@ -4503,13 +4623,13 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
             )}
 
             {/* Las opciones de compra no dependen de los canales de contacto. */}
-            {product.stock > 0 && getProductPaymentMethods(product).length > 0 && (
+            {product.available !== false && (product.stock == null || Number(product.stock) > 0) && getProductPaymentMethods(product).length > 0 && (
               <Button onClick={() => onAddToCart?.(product)} className="w-full h-12 rounded-xl mt-4 border border-[#00A86B] text-[#00A86B] font-bold" variant="outline">
                 <ShoppingBag className="h-5 w-5 mr-2" /> Añadir al carrito
               </Button>
             )}
 
-            {product.stock > 0 && getProductPaymentMethods(product).includes('crypto') && (
+            {product.available !== false && (product.stock == null || Number(product.stock) > 0) && getProductPaymentMethods(product).includes('crypto') && (
               <Button
                 onClick={() => startCryptoCheckout(product)}
                 disabled={checkoutSubmitting}
@@ -4521,7 +4641,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                 <span className="text-xs opacity-80 ml-1">· USDT/USDC</span>
               </Button>
             )}
-            {product.stock > 0 && getProductPaymentMethods(product).includes('transfermovil') && (
+            {product.available !== false && (product.stock == null || Number(product.stock) > 0) && getProductPaymentMethods(product).includes('transfermovil') && (
               <Button
                 onClick={() => startCryptoCheckout(product, 'transfermovil')}
                 disabled={checkoutSubmitting}
@@ -4533,7 +4653,7 @@ const ProductDetail = ({ t, product, onBack, onBusiness, favorites, toggleFav, o
                 Pagar con Transfermóvil
               </Button>
             )}
-            {product.stock > 0 && getProductPaymentMethods(product).includes('enzona') && (
+            {product.available !== false && (product.stock == null || Number(product.stock) > 0) && getProductPaymentMethods(product).includes('enzona') && (
               <Button
                 onClick={() => startCryptoCheckout(product, 'enzona')}
                 disabled={checkoutSubmitting}
@@ -4823,6 +4943,11 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
   const currencyOf = (product) => String(product?.currency || 'CUP').toUpperCase();
   const currencies = [...new Set(items.map(({ product }) => currencyOf(product)))];
   const mixedCurrencies = currencies.length > 1;
+  const hasUnavailableItems = items.some(({ product, quantity }) => {
+    const stock = product?.stock;
+    return product?.available === false ||
+      (stock != null && (!Number.isFinite(Number(stock)) || Number(stock) <= 0 || Number(stock) < quantity));
+  });
   const availableCartPaymentMethods = ['crypto', 'transfermovil', 'enzona'].filter(
     (method) => items.length > 0 &&
       items.every(({ product }) => getProductPaymentMethods(product).includes(method))
@@ -4867,11 +4992,20 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
                 <div className="flex-1 min-w-0 w-full">
                   <div className="font-bold leading-snug line-clamp-2 break-words">{product.name || t.productFallback}</div>
                   <div className="text-sm text-muted-foreground">{money(product.price)} {currency} c/u</div>
+                  {product.available === false ? (
+                    <p role="status" className="mt-2 text-sm font-medium text-red-600">Este producto no está disponible. Elimínalo para continuar.</p>
+                  ) : product.stock == null ? (
+                    <p role="status" className="mt-2 text-sm text-amber-700">Disponibilidad pendiente de confirmar con el vendedor.</p>
+                  ) : Number(product.stock) <= 0 ? (
+                    <p role="status" className="mt-2 text-sm font-medium text-red-600">Producto agotado. Puedes reducir la cantidad o eliminarlo.</p>
+                  ) : Number(product.stock) < quantity ? (
+                    <p role="status" className="mt-2 text-sm font-medium text-amber-700">Solo quedan {Number(product.stock)} unidades disponibles.</p>
+                  ) : null}
                   {cup !== null && <div className="text-xs text-muted-foreground">Equivalente: {money(cup)} CUP c/u</div>}
                   <div className="flex flex-wrap items-center gap-2 mt-3">
                     <Button size="sm" className="h-10 min-w-10" variant="outline" aria-label="Disminuir cantidad" onClick={() => quantity <= 1 ? onRemove(product.id) : onUpdateQuantity(product.id, quantity - 1)}>−</Button>
                     <span className="min-w-8 text-center font-semibold tabular-nums">{quantity}</span>
-                    <Button size="sm" className="h-10 min-w-10" variant="outline" aria-label="Aumentar cantidad" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={quantity >= (Number(product.stock) || 99)}>+</Button>
+                    <Button size="sm" className="h-10 min-w-10" variant="outline" aria-label="Aumentar cantidad" onClick={() => onUpdateQuantity(product.id, quantity + 1)} disabled={product.stock != null ? Number(product.stock) <= 0 || quantity >= Number(product.stock) : quantity >= 99}>+</Button>
                     <Button size="sm" variant="ghost" className="h-10 text-destructive" onClick={() => onRemove(product.id)}><Trash2 className="h-4 w-4 mr-1"/>{t.removeItem}</Button>
                   </div>
                 </div>
@@ -4907,19 +5041,19 @@ const CartView = ({ items, onBack, onUpdateQuantity, onRemove, onCheckout, submi
           </div>
           <div className="flex w-full flex-col gap-3">
             {availableCartPaymentMethods.includes('crypto') && (
-            <Button size="lg" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'crypto')} className="brand-gradient text-white font-bold">
+            <Button size="lg" disabled={submitting || mixedCurrencies || hasUnavailableItems} onClick={() => onCheckout(items, 'crypto')} className="brand-gradient text-white font-bold">
               {submitting ? <Loader2 className="h-4 w-4 mr-2 animate-spin"/> : <CreditCard className="h-4 w-4 mr-2"/>}
               {t.payCartCrypto}
             </Button>
             )}
             {availableCartPaymentMethods.includes('transfermovil') && (
-            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'transfermovil')} className="border-2 border-[#00A86B] text-[#008653] font-bold">
+            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies || hasUnavailableItems} onClick={() => onCheckout(items, 'transfermovil')} className="border-2 border-[#00A86B] text-[#008653] font-bold">
               <CreditCard className="h-4 w-4 mr-2"/>
               Pagar con Transfermóvil
             </Button>
             )}
             {availableCartPaymentMethods.includes('enzona') && (
-            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies} onClick={() => onCheckout(items, 'enzona')} className="border-2 border-[#2563EB] text-[#1D4ED8] font-bold">
+            <Button size="lg" variant="outline" disabled={submitting || mixedCurrencies || hasUnavailableItems} onClick={() => onCheckout(items, 'enzona')} className="border-2 border-[#2563EB] text-[#1D4ED8] font-bold">
               <CreditCard className="h-4 w-4 mr-2"/>
               Pagar con EnZona
             </Button>
@@ -5882,7 +6016,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel }) => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel, activeSection = 'summary', onSectionChange = () => {} }) => {
   const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;
@@ -6259,7 +6393,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 
   return (
     <section className="container mx-auto px-4 py-8">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+      <div id="sellerDashboardSummary" className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div className="flex items-center gap-4 min-w-0">
           {business?.logo ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -6286,14 +6420,14 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           <Button
             variant="outline"
             className="min-h-11 w-full justify-center px-3 text-sm"
-            onClick={() => document.getElementById('sellerPaymentSettings')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            onClick={() => onSectionChange('payments')}
           >
             Configurar pagos
           </Button>
           <Button
             variant="outline"
             className="min-h-11 w-full justify-center px-3 text-sm"
-            onClick={() => document.getElementById('sellerOrdersPanelPhase5')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            onClick={() => onSectionChange('orders')}
           >
             {t.sellerOrdersTitle} ({sellerOrders.length})
           </Button>
@@ -6303,12 +6437,67 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           <Button variant="outline" onClick={onPlan} className="min-h-11 w-full justify-center px-3 text-sm">
             <Crown className="h-4 w-4 mr-2 text-amber-500" /> {isPremium ? 'Premium activo' : 'Mejorar plan'}
           </Button>
-          <Button onClick={onNew} className="col-span-2 sm:col-span-1 min-h-12 w-full sm:w-auto justify-center px-4 font-semibold shadow-sm bg-[#00A86B] hover:bg-[#008F5B] text-white">
+          <Button onClick={() => { onSectionChange("products"); window.setTimeout(onNew, 150); }} className="col-span-2 sm:col-span-1 min-h-12 w-full sm:w-auto justify-center px-4 font-semibold shadow-sm bg-[#00A86B] hover:bg-[#008F5B] text-white">
             <Plus className="h-4 w-4 mr-2" /> Nuevo producto
           </Button>
         </div>
       </div>
 
+      <nav aria-label="Secciones del panel del vendedor" className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        {[
+          { label: 'Resumen', target: 'summary' },
+          { label: `Productos (${stats.total})`, target: 'products' },
+          { label: `Pedidos (${sellerOrdersLoading ? '…' : sellerOrders.length})`, target: 'orders' },
+          { label: 'Mi negocio', target: 'business' },
+          { label: 'Cobros', target: 'payments' },
+          { label: 'Configuración', target: 'settings' },
+        ].map((item) => (
+          <button
+            key={item.target}
+            type="button"
+            aria-current={activeSection === item.target ? 'page' : undefined}
+            onClick={() => onSectionChange(item.target)}
+            className={`min-h-12 rounded-xl border px-3 py-3 text-sm font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1565C0] focus-visible:ring-offset-2 ${
+              activeSection === item.target
+                ? 'border-[#1565C0] bg-blue-50 text-[#1565C0]'
+                : 'border-gray-200 bg-card text-foreground hover:border-[#1565C0]'
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+
+      {activeSection === 'summary' && (
+        <div className="mb-6 space-y-4 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+          <h2 className="text-lg font-bold">Resumen de tu negocio</h2>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg bg-muted/40 p-3">
+              <p className="text-xs text-muted-foreground">Productos</p>
+              <p className="mt-1 text-2xl font-bold">{stats.total}</p>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <p className="text-xs text-muted-foreground">Activos</p>
+              <p className="mt-1 text-2xl font-bold text-green-700">{stats.active}</p>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <p className="text-xs text-muted-foreground">Agotados</p>
+              <p className="mt-1 text-2xl font-bold">{stats.outOfStock}</p>
+            </div>
+            <div className="rounded-lg bg-muted/40 p-3">
+              <p className="text-xs text-muted-foreground">Pedidos</p>
+              <p className="mt-1 text-2xl font-bold">{sellerOrdersLoading ? '…' : sellerOrders.length}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => onSectionChange('products')} className="min-h-11 rounded-lg bg-[#1565C0] px-4 py-2 font-semibold text-white">Ver productos</button>
+            <button type="button" onClick={() => onSectionChange('orders')} className="min-h-11 rounded-lg border border-gray-300 px-4 py-2 font-semibold">Ver pedidos</button>
+            <button type="button" onClick={() => onSectionChange('payments')} className="min-h-11 rounded-lg border border-gray-300 px-4 py-2 font-semibold">Configurar cobros</button>
+          </div>
+        </div>
+      )}
+      {activeSection === 'business' && (
+        <>
       {/* === Quick logo edit (owner self-edit) === */}
       {onLogoChange && compressLogo && (
         <Card className={`mb-6 ${!business?.logo ? 'border-[#00A86B]/50 bg-[#00A86B]/5' : ''}`}>
@@ -6406,7 +6595,11 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </div>
 </div>
 
-<div id="sellerLocalPayments" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+        </>
+      )}
+            {activeSection === 'payments' && (
+        <>
+          <div id="sellerLocalPayments" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
   <h2 id="sellerPaymentSettings" className="mb-2 scroll-mt-6 text-lg font-bold tracking-tight">Configurar pagos por Transfermóvil y EnZona</h2>
   <p className="mb-4 text-sm text-gray-600">
     Introduce los datos de tu negocio que verá el comprador. Comprueba que sean correctos antes de habilitar cada método.
@@ -6551,7 +6744,11 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </div>
 </div>
 
-<div id="sellerPanelPreferences" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+        </>
+      )}
+            {activeSection === 'settings' && (
+        <>
+          <div id="sellerPanelPreferences" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
   <h2 className="mb-2 text-lg font-bold tracking-tight">Personalizar panel del vendedor</h2>
   <p className="mb-4 text-sm text-muted-foreground">Elige qué secciones quieres ver mientras administras tu negocio.</p>
   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -6585,7 +6782,9 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   </p>
 </div>
 
-{showWallets && (
+        </>
+      )}
+      {activeSection === 'payments' && showWallets && (
 <div id="sellerCryptoWallets" className="mb-6 scroll-mt-24 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
   <h2 className="mb-2 text-lg font-bold tracking-tight">Billeteras para recibir pagos</h2>
   <p className="mb-4 text-sm text-gray-600">
@@ -6629,7 +6828,23 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 </div>
 )}
 
-{showInventory && (
+{activeSection === 'payments' && !showWallets && (
+  <div role="status" className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+    <p className="mb-3 text-sm">Las billeteras están ocultas en tus preferencias. Tus direcciones guardadas se conservan.</p>
+    <button
+      type="button"
+      onClick={() => {
+        setShowWallets(true);
+        saveSectionPreferences({ showWallets: true });
+      }}
+      className="min-h-11 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2"
+    >
+      Mostrar billeteras de cobro
+    </button>
+  </div>
+)}
+
+{activeSection === 'products' && showInventory && (
 <>
 {/* Stats — 4 cards instead of 3 */}
       <div id="sellerInventory" className="mb-6 scroll-mt-24 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
@@ -6710,7 +6925,24 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 </>
 )}
 
+      {activeSection === 'products' && !showInventory && (
+        <div role="status" className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+          <p className="mb-3 text-sm">El inventario está oculto en tus preferencias. Tus productos y existencias se conservan.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setShowInventory(true);
+              saveSectionPreferences({ showInventory: true });
+            }}
+            className="min-h-11 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-700 focus-visible:ring-offset-2"
+          >
+            Mostrar inventario y productos
+          </button>
+        </div>
+      )}
+
       {/* Seguimiento de pedidos del vendedor - Fase 5 */}
+      {activeSection === 'orders' && (
       <section id="sellerOrdersPanelPhase5" className="mt-8 space-y-5 scroll-mt-4">
         <div>
           <h2 className="text-xl font-bold tracking-tight sm:text-2xl">{t.sellerOrdersTitle}</h2>
@@ -7250,6 +7482,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           })}
         </div>
       </section>
+      )}
 
     </section>
   );
@@ -8097,7 +8330,16 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
         <div className="grid grid-cols-3 gap-2">
           <div className="col-span-2">
             <Label>Precio *</Label>
-            <Input type="number" step={form.currency === 'CUP' ? '1' : '0.01'} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} required placeholder={form.currency === 'CUP' ? 'Ej: 2500' : 'Ej: 25.00'} />
+            <Input
+              type="number"
+              min={form.currency === 'CUP' ? '1' : '0.01'}
+              step={form.currency === 'CUP' ? '1' : '0.01'}
+              inputMode="decimal"
+              value={form.price}
+              onChange={(e) => setForm({ ...form, price: e.target.value })}
+              required
+              placeholder={form.currency === 'CUP' ? 'Ej: 2500' : 'Ej: 25.00'}
+            />
           </div>
           <div>
             <Label>Moneda</Label>
@@ -8113,7 +8355,22 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
             </Select>
           </div>
         </div>
-        <div><Label>Stock</Label><Input type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></div>
+        <div>
+          <Label htmlFor="product-stock">Unidades disponibles</Label>
+          <Input
+            id="product-stock"
+            type="number"
+            min="0"
+            step="1"
+            inputMode="numeric"
+            value={form.stock}
+            onChange={(e) => setForm({ ...form, stock: e.target.value })}
+            aria-describedby="product-stock-help"
+          />
+          <p id="product-stock-help" className="mt-1 text-xs text-muted-foreground">
+            Indica cuántas unidades tienes. Escribe 0 si está agotado.
+          </p>
+        </div>
         <div><Label>Categoría *</Label>
           <Select value={form.category} onValueChange={(v) => setForm({ ...form, category: v, subcategory: '' })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
@@ -8182,15 +8439,15 @@ const ProductDialog = ({ open, onOpenChange, editing, form, setForm, onSubmit, o
         </div>
         <div><Label>Ubicación</Label><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="La Habana, Cuba" /></div>
         <div>
-          <Label>Imagen del producto</Label>
+          <Label>Imagen del producto (opcional)</Label>
           <div className="space-y-2">
-            <Input type="file" accept="image/*" onChange={(e) => onImageFile(e.target.files?.[0])} className="file:bg-[#1565C0] file:text-white file:rounded-md file:border-0 file:px-3 file:py-1 cursor-pointer" />
+            <Input type="file" accept="image/*" aria-label="Seleccionar imagen del producto" onChange={(e) => onImageFile(e.target.files?.[0])} className="file:bg-[#1565C0] file:text-white file:rounded-md file:border-0 file:px-3 file:py-1 cursor-pointer" />
             <div className="flex items-center gap-2"><div className="flex-1 h-px bg-border" /><span className="text-[10px] text-muted-foreground uppercase">o URL</span><div className="flex-1 h-px bg-border" /></div>
-            <Input value={form.image?.startsWith('data:') ? '' : form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} placeholder="https://..." />
+            <Input aria-label="URL de imagen del producto" value={form.image?.startsWith('data:') ? '' : form.image} onChange={(e) => setForm({ ...form, image: e.target.value })} placeholder="https://..." />
             {form.image && (
               <div className="relative inline-block">
-                <img src={form.image} alt="" className="h-24 w-24 object-cover rounded-lg border" />
-                <button type="button" onClick={() => setForm({ ...form, image: '' })} className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-red-500 text-white text-xs flex items-center justify-center">×</button>
+                <img src={form.image} alt={form.name ? `Vista previa de ${form.name}` : "Vista previa del producto"} className="h-24 w-24 object-cover rounded-lg border" />
+                <button type="button" aria-label="Quitar imagen del producto" title="Quitar imagen" onClick={() => setForm({ ...form, image: '' })} className="absolute -top-2 -right-2 h-8 w-8 rounded-full bg-red-500 text-white text-base flex items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1565C0]">×</button>
               </div>
             )}
           </div>

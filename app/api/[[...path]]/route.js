@@ -1413,6 +1413,45 @@ async function getSettings(db) {
   return s;
 }
 
+// SMS Gateway: inicializa los índices una sola vez por proceso.
+let smsGatewayIndexesPromise = null;
+
+async function ensureSmsGatewayIndexes(db) {
+  if (!smsGatewayIndexesPromise) {
+    smsGatewayIndexesPromise = Promise.all([
+      db.collection('sms_gateway_devices').createIndex(
+        { businessId: 1 },
+        {
+          unique: true,
+          name: 'sms_gateway_one_active_device_per_business',
+          partialFilterExpression: { status: 'active' },
+        }
+      ),
+      db.collection('sms_gateway_activation_codes').createIndex(
+        { codeHash: 1 },
+        { unique: true, name: 'sms_gateway_activation_code_hash_unique' }
+      ),
+      db.collection('sms_gateway_devices').createIndex(
+        { tokenHash: 1 },
+        {
+          unique: true,
+          name: 'sms_gateway_device_token_hash_unique',
+          partialFilterExpression: { tokenHash: { $type: 'string' } },
+        }
+      ),
+      db.collection('sms_gateway_events').createIndex(
+        { deviceId: 1, eventId: 1 },
+        { unique: true, name: 'sms_gateway_device_event_unique' }
+      ),
+    ]).catch((error) => {
+      smsGatewayIndexesPromise = null;
+      throw error;
+    });
+  }
+
+  await smsGatewayIndexesPromise;
+}
+
 // ROUTER
 async function route(request, method, path) {
   // Health endpoint - does NOT touch DB so K8s probes always pass
@@ -1422,6 +1461,356 @@ async function route(request, method, path) {
 
   const db = await getDb();
   const url = new URL(request.url);
+
+  // ===== SMS GATEWAY PRIVADO: activación por negocio y recepción en revisión =====
+  if (!JWT_SECRET && path[0] === 'sms-gateway') {
+    return json({ error: 'SMS Gateway no configurado: falta JWT_SECRET.' }, 503);
+  }
+  const gatewayHash = (value) => createHmac('sha256', JWT_SECRET)
+    .update(`ubik2-sms-gateway:v1:${String(value)}`)
+    .digest('hex');
+
+  const gatewayBusinessForUser = async (user, requestedBusinessId = '') => {
+    if (user.role === 'admin') {
+      const id = String(requestedBusinessId || '').trim();
+      if (!id) return { error: json({ error: 'Falta businessId.' }, 400) };
+      const business = await db.collection('businesses').findOne({ id });
+      if (!business) return { error: json({ error: 'Negocio no encontrado.' }, 404) };
+      return { business };
+    }
+    if (user.accountType !== 'seller' || !user.businessId) {
+      return { error: json({ error: 'Se requiere una cuenta de vendedor con negocio asociado.' }, 403) };
+    }
+    const business = await db.collection('businesses').findOne({
+      id: user.businessId,
+      userId: user.id,
+    });
+    if (!business) return { error: json({ error: 'No se encontró el negocio asociado.' }, 403) };
+    return { business };
+  };
+
+  const gatewayEnabledProviders = (business) => {
+    const providers = [];
+    if (business.transfermovilEnabled === true) providers.push('transfermovil');
+    if (business.enzonaEnabled === true) providers.push('enzona');
+    return providers;
+  };
+
+  // POST /api/sms-gateway/activation-codes
+  if (path[0] === 'sms-gateway' && path[1] === 'activation-codes' &&
+      method === 'POST' && path.length === 2) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    let body;
+    try { body = await request.json(); } catch {
+      return json({ error: 'JSON inválido.' }, 400);
+    }
+    const { business, error: businessError } =
+      await gatewayBusinessForUser(user, body?.businessId);
+    if (businessError) return businessError;
+    const enabledProviders = gatewayEnabledProviders(business);
+    if (!enabledProviders.length) {
+      return json({ error: 'Habilita Transfermóvil o EnZona en la configuración del negocio.' }, 400);
+    }
+
+    await ensureSmsGatewayIndexes(db);
+
+    const devices = db.collection('sms_gateway_devices');
+    const codes = db.collection('sms_gateway_activation_codes');
+
+    const activeDevice = await devices.findOne({ businessId: business.id, status: 'active' });
+    if (activeDevice) {
+      return json({
+        error: 'Este negocio ya tiene un teléfono activo. Revoca el dispositivo anterior antes de cambiarlo.',
+        activeDevice: {
+          id: activeDevice.id,
+          deviceName: activeDevice.deviceName || null,
+          activatedAt: activeDevice.activatedAt,
+        },
+      }, 409);
+    }
+
+    const code = randomBytes(10).toString('hex').toUpperCase();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
+    await codes.updateMany(
+      { businessId: business.id, status: 'active' },
+      { $set: { status: 'revoked', revokedAt: now.toISOString() } }
+    );
+    await codes.insertOne({
+      id: uuidv4(),
+      businessId: business.id,
+      codeHash: gatewayHash(code),
+      enabledProviders,
+      status: 'active',
+      createdBy: user.id,
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    });
+    return json({
+      ok: true,
+      activationCode: code,
+      expiresAt: expiresAt.toISOString(),
+      enabledProviders,
+      message: 'Código de un solo uso. Caduca en 10 minutos.',
+    }, 201);
+  }
+
+  // POST /api/sms-gateway/activate — código de un solo uso.
+  if (path[0] === 'sms-gateway' && path[1] === 'activate' &&
+      method === 'POST' && path.length === 2) {
+    let body;
+    try { body = await request.json(); } catch {
+      return json({ error: 'JSON inválido.' }, 400);
+    }
+    const activationCode = String(body?.activationCode || '')
+      .trim().replace(/[\s-]/g, '').toUpperCase();
+    const deviceName = String(body?.deviceName || 'Teléfono Android').trim().slice(0, 80);
+    if (!/^[A-F0-9]{20}$/.test(activationCode)) {
+      return json({ error: 'Código de activación inválido.' }, 400);
+    }
+
+    const codes = db.collection('sms_gateway_activation_codes');
+    const devices = db.collection('sms_gateway_devices');
+
+    const now = new Date();
+    const codeFilter = {
+      codeHash: gatewayHash(activationCode),
+      status: 'active',
+      expiresAt: { $gt: now.toISOString() },
+    };
+
+    const pendingCode = await codes.findOne(codeFilter);
+    if (!pendingCode) {
+      return json({ error: 'Código inválido, vencido o ya utilizado.' }, 401);
+    }
+
+    await ensureSmsGatewayIndexes(db);
+
+    const business = await db.collection('businesses').findOne({
+      id: pendingCode.businessId,
+    });
+    if (!business) {
+      return json({ error: 'El negocio asociado al código ya no existe.' }, 404);
+    }
+
+    const currentlyEnabled = gatewayEnabledProviders(business);
+    const codeProviders = Array.isArray(pendingCode.enabledProviders)
+      ? pendingCode.enabledProviders
+      : [];
+    const allowedProviders = codeProviders.filter((provider) =>
+      currentlyEnabled.includes(provider)
+    );
+    if (!allowedProviders.length) {
+      return json({ error: 'El negocio ya no tiene métodos de pago habilitados.' }, 409);
+    }
+
+    const codeRecord = await codes.findOneAndUpdate(
+      codeFilter,
+      { $set: { status: 'consumed', consumedAt: now.toISOString() } },
+      { returnDocument: 'after' }
+    );
+    if (!codeRecord) {
+      return json({ error: 'Código inválido, vencido o ya utilizado.' }, 401);
+    }
+
+    const token = randomBytes(32).toString('base64url');
+    const device = {
+      id: uuidv4(),
+      businessId: business.id,
+      deviceName,
+      tokenHash: gatewayHash(token),
+      enabledProviders: allowedProviders,
+      status: 'active',
+      activatedAt: now.toISOString(),
+      lastSeenAt: now.toISOString(),
+    };
+    try {
+      await devices.insertOne(device);
+    } catch (e) {
+      if (e?.code === 11000) {
+        return json({
+          error: 'Este negocio ya tiene un teléfono activo. Revoca el anterior antes de activar otro.',
+        }, 409);
+      }
+      throw e;
+    }
+    return json({
+      ok: true,
+      deviceId: device.id,
+      token,
+      businessId: business.id,
+      enabledProviders: allowedProviders,
+      message: 'Guarda el token de forma segura. No volverá a mostrarse.',
+    }, 201);
+  }
+
+  // GET /api/sms-gateway/devices y DELETE /api/sms-gateway/devices/:id
+  if (path[0] === 'sms-gateway' && path[1] === 'devices' &&
+      ((method === 'GET' && path.length === 2) ||
+       (method === 'DELETE' && path.length === 3))) {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+    const requestedBusinessId = user.role === 'admin'
+      ? (url.searchParams.get('businessId') || '')
+      : '';
+    const { business, error: businessError } =
+      await gatewayBusinessForUser(user, requestedBusinessId);
+    if (businessError) return businessError;
+    await ensureSmsGatewayIndexes(db);
+    const devices = db.collection('sms_gateway_devices');
+    if (method === 'GET') {
+      const list = await devices.find(
+        { businessId: business.id },
+        { projection: { _id: 0, tokenHash: 0 } }
+      ).sort({ activatedAt: -1 }).toArray();
+      return json({ devices: list });
+    }
+    const device = await devices.findOne({ id: path[2], businessId: business.id });
+    if (!device) return json({ error: 'Dispositivo no encontrado.' }, 404);
+    if (device.status !== 'active') return json({ ok: true, status: device.status });
+    await devices.updateOne(
+      { id: device.id, businessId: business.id, status: 'active' },
+      {
+        $set: {
+          status: 'revoked',
+          revokedAt: new Date().toISOString(),
+          revokedBy: user.id,
+        },
+        $unset: { tokenHash: '' },
+      }
+    );
+    return json({ ok: true, status: 'revoked' });
+  }
+
+  // POST /api/sms-gateway/events — solo registra; nunca concilia ni paga pedidos.
+  if (path[0] === 'sms-gateway' && path[1] === 'events' &&
+      method === 'POST' && path.length === 2) {
+    const suppliedToken = (request.headers.get('authorization') || '')
+      .replace(/^Bearer\s+/i, '').trim();
+    if (!suppliedToken || suppliedToken.length > 256) {
+      return json({ error: 'No autorizado.' }, 401);
+    }
+    const devices = db.collection('sms_gateway_devices');
+    let device = await devices.findOne({
+      tokenHash: gatewayHash(suppliedToken),
+      status: 'active',
+    });
+    if (!device) return json({ error: 'Dispositivo no autorizado o revocado.' }, 401);
+
+    await ensureSmsGatewayIndexes(db);
+
+    device = await devices.findOne({
+      tokenHash: gatewayHash(suppliedToken),
+      status: 'active',
+    });
+    if (!device) return json({ error: 'Dispositivo no autorizado o revocado.' }, 401);
+
+    let body;
+    try { body = await request.json(); } catch {
+      return json({ error: 'JSON inválido.' }, 400);
+    }
+    const eventId = String(body?.eventId || '').trim();
+    const smsText = [body?.message, body?.text, body?.body, body?.sms]
+      .find((value) => typeof value === 'string' && value.trim());
+    if (!/^[A-Za-z0-9_-]{8,128}$/.test(eventId)) {
+      return json({ error: 'eventId inválido.' }, 400);
+    }
+    if (!smsText || smsText.length > 10000) {
+      return json({ error: 'Falta el texto del SMS o excede el límite.' }, 400);
+    }
+
+    const text = smsText.trim();
+    let parsed = null;
+    let match = text.match(
+      /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:?\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})(?:\.\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
+    );
+    if (match) {
+      let transactionDate = null;
+      if (match[5]) {
+        const [day, month, year] = match[5].split('/').map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+          return json({ error: 'Fecha de Transfermóvil inválida.' }, 422);
+        }
+        transactionDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+      parsed = {
+        provider: 'transfermovil',
+        receiverAccount: match[2],
+        amountText: match[3],
+        transactionReference: match[4],
+        senderPhone: match[1],
+        transactionDate,
+      };
+    } else {
+      match = text.match(
+        /^ENZONA\s+transferencia recibida\s+Importe:\s*([\d.,]+)\s+CUP\s+No\.:\s*([A-Z0-9_-]{4,100})$/i
+      );
+      if (match) {
+        parsed = {
+          provider: 'enzona',
+          receiverAccount: null,
+          amountText: match[1],
+          transactionReference: match[2],
+          senderPhone: null,
+          transactionDate: null,
+        };
+      }
+    }
+    if (!parsed || !device.enabledProviders?.includes(parsed.provider)) {
+      return json({ error: 'SMS no reconocido o proveedor no habilitado para este dispositivo.' }, 422);
+    }
+
+    const business = await db.collection('businesses').findOne({ id: device.businessId });
+    if (!business || !gatewayEnabledProviders(business).includes(parsed.provider)) {
+      return json({ error: 'El método de pago ya no está habilitado para este negocio.' }, 403);
+    }
+    let amountText = parsed.amountText.replace(/\s/g, '');
+    if (amountText.includes(',') && amountText.includes('.')) amountText = amountText.replace(/,/g, '');
+    else if (amountText.includes(',')) amountText = amountText.replace(',', '.');
+    const parsedAmount = Number(amountText);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount >= 1e12) {
+      return json({ error: 'Importe del SMS inválido.' }, 422);
+    }
+    const amount = Math.round(parsedAmount * 100) / 100;
+
+    const events = db.collection('sms_gateway_events');
+    const now = new Date().toISOString();
+    try {
+      await events.insertOne({
+        id: uuidv4(),
+        eventId,
+        deviceId: device.id,
+        businessId: device.businessId,
+        provider: parsed.provider,
+        amount,
+        transactionReference: parsed.transactionReference,
+        transactionDate: parsed.transactionDate,
+        senderPhone: parsed.senderPhone,
+        receiverAccount: parsed.receiverAccount,
+        rawSms: text,
+        status: 'pending_review',
+        reviewNotes: 'SMS recibido por el gateway privado; requiere revisión manual.',
+        receivedAt: now,
+        createdAt: now,
+      });
+    } catch (e) {
+      if (e?.code === 11000) return json({ ok: true, duplicate: true, status: 'pending_review' });
+      throw e;
+    }
+    await devices.updateOne(
+      { id: device.id, status: 'active' },
+      { $set: { lastSeenAt: now } }
+    );
+    return json({
+      ok: true,
+      status: 'pending_review',
+      provider: parsed.provider,
+      amount,
+      transactionReference: parsed.transactionReference,
+    }, 202);
+  }
 
   // ===== TRANSFERMOVIL SMS FORWARDER: recepción segura, nunca confirma pagos =====
   if (path[0] === 'payments' && path[1] === 'transfermovil' &&

@@ -1174,7 +1174,7 @@ const App = () => {
   });
 
   // Admin
-  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [], transfermovilEvents: [], carriers: [] });
+  const [adminData, setAdminData] = useState({ payments: [], users: [], products: [], stats: null, reports: [], orders: [], transfermovilEvents: [], carriers: [], smsGatewayDevices: [] });
   const [adminTab, setAdminTab] = useState('overview');
   const [adminSettings, setAdminSettings] = useState(null);
 
@@ -2258,7 +2258,7 @@ const App = () => {
     adminLoadingRef.current = true;
     setAdminLoading(true);
     try {
-      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes, transfermovilEventsRes, carriersRes] = await Promise.all([
+      const [pays, usrs, prods, st, settingsRes, reps, cryptoInvoices, ordersRes, transfermovilEventsRes, carriersRes, smsGatewayDevicesRes] = await Promise.all([
         api('/admin/payments', { token }),
         api('/admin/users', { token }),
         api('/admin/products?lite=true', { token }).catch(() => api('/admin/products', { token })),
@@ -2269,6 +2269,7 @@ const App = () => {
         api('/admin/orders', { token }).catch(() => ({ orders: [] })),
         api('/admin/transfermovil-events', { token }).catch(() => ({ events: [] })),
         api('/admin/carriers', { token }).catch(() => ({ carriers: [] })),
+        api('/admin/sms-gateway/devices', { token }).catch(() => ({ devices: [] })),
       ]);
       setAdminData({
         payments: pays.payments || [], users: usrs.users || [],
@@ -2277,6 +2278,7 @@ const App = () => {
         orders: ordersRes.orders || [],
         transfermovilEvents: transfermovilEventsRes.events || [],
         carriers: carriersRes.carriers || [],
+        smsGatewayDevices: smsGatewayDevicesRes.devices || [],
       });
       setAdminSettings(settingsRes.settings);
       // Keep global stats in sync with admin stats so home shows latest counters too
@@ -2309,6 +2311,21 @@ const App = () => {
       await loadAdmin();
     } catch (e) {
       toast.error(e.message);
+    }
+  };
+
+  const adminRevokeSmsGatewayDevice = async (deviceId) => {
+    if (!deviceId) return;
+    if (!window.confirm('¿Revocar este dispositivo SMS Gateway? Dejará de poder enviar SMS a UBIK2YEMG.')) return;
+    try {
+      await api(`/admin/sms-gateway/devices/${encodeURIComponent(deviceId)}`, {
+        method: 'DELETE',
+        token,
+      });
+      toast.success('Dispositivo SMS Gateway revocado');
+      await loadAdmin();
+    } catch (e) {
+      toast.error(e.message || 'No se pudo revocar el dispositivo');
     }
   };
 
@@ -2627,6 +2644,7 @@ const App = () => {
             onApprove={approvePayment} onReject={rejectPayment} onUpdateOrder={adminUpdateOrder}
             onUpdateUser={adminUpdateUser} onDeleteUser={adminDeleteUser}
             onReviewCarrier={adminReviewCarrier}
+            onRevokeSmsGatewayDevice={adminRevokeSmsGatewayDevice}
             onUpdateBusiness={adminUpdateBusiness} onDeleteBusiness={adminDeleteBusiness}
             onDeleteProduct={adminDeleteProduct}
             onResolveReport={adminResolveReport}
@@ -5993,6 +6011,12 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
   const [enzonaPhone, setEnzonaPhone] = React.useState(business?.enzonaPhone || '');
   const [paymentSettingsSaving, setPaymentSettingsSaving] = React.useState(false);
   const [paymentSettingsMessage, setPaymentSettingsMessage] = React.useState('');
+  const [smsGatewayDevices, setSmsGatewayDevices] = React.useState([]);
+  const [smsGatewayDevicesLoading, setSmsGatewayDevicesLoading] = React.useState(false);
+  const [smsGatewayMessage, setSmsGatewayMessage] = React.useState('');
+  const [smsGatewayBusy, setSmsGatewayBusy] = React.useState(false);
+  const [smsGatewayActivationCode, setSmsGatewayActivationCode] = React.useState(null);
+
 
   const [businessSaving, setBusinessSaving] = React.useState(false);
   const [businessMessage, setBusinessMessage] = React.useState('');
@@ -6142,6 +6166,75 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       setPaymentSettingsSaving(false);
     }
   };
+
+
+  const loadSmsGatewayDevices = async () => {
+    if (!token || !business?.id) return;
+    setSmsGatewayDevicesLoading(true);
+    try {
+      const result = await api('/sms-gateway/devices', {
+        token, retries: 0, timeout: 15000
+      });
+      setSmsGatewayDevices(Array.isArray(result?.devices) ? result.devices : []);
+    } catch (error) {
+      setSmsGatewayMessage(error?.message || 'No se pudo consultar el teléfono vinculado.');
+    } finally {
+      setSmsGatewayDevicesLoading(false);
+    }
+  };
+
+  const generateSmsGatewayCode = async () => {
+    if (!token || !business?.id || smsGatewayBusy) return;
+    setSmsGatewayBusy(true);
+    setSmsGatewayMessage('');
+    setSmsGatewayActivationCode(null);
+    try {
+      const result = await api('/sms-gateway/activation-codes', {
+        method: 'POST', token, body: {}, retries: 0, timeout: 20000
+      });
+      if (!result?.activationCode) {
+        throw new Error('El servidor no devolvió el código de activación.');
+      }
+      setSmsGatewayActivationCode({
+        code: result.activationCode,
+        expiresAt: result.expiresAt,
+        enabledProviders: result.enabledProviders || []
+      });
+      setSmsGatewayMessage('Código generado. Introdúcelo en la aplicación Gateway SMS del teléfono.');
+      await loadSmsGatewayDevices();
+    } catch (error) {
+      setSmsGatewayMessage(error?.message || 'No se pudo generar el código.');
+    } finally {
+      setSmsGatewayBusy(false);
+    }
+  };
+
+  const revokeSmsGatewayDevice = async (deviceId) => {
+    if (!deviceId || !token || smsGatewayBusy) return;
+    if (!window.confirm('¿Revocar el teléfono vinculado? Dejará de enviar SMS a UBIK2YEMG.')) return;
+
+    setSmsGatewayBusy(true);
+    setSmsGatewayMessage('');
+    try {
+      await api(`/sms-gateway/devices/${encodeURIComponent(deviceId)}`, {
+        method: 'DELETE', token, retries: 0, timeout: 15000
+      });
+      setSmsGatewayActivationCode(null);
+      setSmsGatewayMessage('Teléfono revocado correctamente.');
+      await loadSmsGatewayDevices();
+    } catch (error) {
+      setSmsGatewayMessage(error?.message || 'No se pudo revocar el teléfono.');
+    } finally {
+      setSmsGatewayBusy(false);
+    }
+  };
+
+  React.useEffect(() => {
+    setSmsGatewayDevices([]);
+    setSmsGatewayActivationCode(null);
+    setSmsGatewayMessage('');
+    if (business?.id && token) loadSmsGatewayDevices();
+  }, [business?.id, token]);
 
   const saveDeliveryFee = async () => {
     if (!business?.id || businessSaving) return;
@@ -6684,6 +6777,103 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       {paymentSettingsMessage}
     </span>
   </div>
+  <section className="mt-6 rounded-xl border border-gray-200 bg-card p-4 shadow-sm sm:p-5">
+    <h3 className="text-lg font-bold">Gateway SMS del negocio</h3>
+    <p className="mt-2 text-sm text-gray-600">
+      Vincula un único teléfono Android para recibir los SMS de Transfermóvil y EnZona.
+      Los mensajes recibidos quedan pendientes de revisión; no se aprueban pagos automáticamente.
+    </p>
+    <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+      Guarda primero la configuración de pagos. Si habilitas ambos proveedores, deben utilizar
+      el mismo número de teléfono físico. El móvil de contacto del comprador no sustituye al
+      móvil que recibe los SMS.
+    </div>
+
+    <div className="mt-4 flex flex-wrap gap-2">
+      <button
+        type="button"
+        onClick={loadSmsGatewayDevices}
+        disabled={smsGatewayDevicesLoading || smsGatewayBusy}
+        className="min-h-11 rounded-lg border border-gray-300 bg-background px-4 py-2 text-sm font-semibold disabled:opacity-50"
+      >
+        {smsGatewayDevicesLoading ? 'Consultando…' : 'Actualizar estado'}
+      </button>
+      <button
+        type="button"
+        onClick={generateSmsGatewayCode}
+        disabled={smsGatewayBusy || smsGatewayDevices.some((device) => device.status === 'active')}
+        className="min-h-11 rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+      >
+        {smsGatewayBusy ? 'Procesando…' : 'Generar código para el teléfono'}
+      </button>
+    </div>
+
+    {smsGatewayActivationCode && (
+      <div className="mt-4 rounded-lg border border-green-300 bg-green-50 p-4">
+        <p className="text-sm font-semibold text-green-900">Código temporal de activación</p>
+        <p className="my-3 break-all font-mono text-2xl font-bold tracking-widest text-green-950">
+          {smsGatewayActivationCode.code}
+        </p>
+        <p className="text-sm text-green-900">
+          Caduca: {smsGatewayActivationCode.expiresAt
+            ? new Date(smsGatewayActivationCode.expiresAt).toLocaleString('es-ES')
+            : 'en 10 minutos'}
+        </p>
+        <p className="mt-2 text-xs text-green-900">
+          Introdúcelo en la APK Gateway SMS. Es de un solo uso. No compartas este código.
+        </p>
+      </div>
+    )}
+
+    <div className="mt-4">
+      <h4 className="font-semibold">Teléfono vinculado</h4>
+      {smsGatewayDevicesLoading ? (
+        <p className="mt-2 text-sm text-gray-500">Consultando dispositivos…</p>
+      ) : smsGatewayDevices.length === 0 ? (
+        <p className="mt-2 text-sm text-gray-500">No hay teléfonos vinculados a este negocio.</p>
+      ) : (
+        <div className="mt-2 space-y-3">
+          {smsGatewayDevices.map((device) => (
+            <div key={device.id} className="rounded-lg border border-gray-200 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold">{device.deviceName || 'Teléfono Android'}</span>
+                <span className="text-xs font-semibold">
+                  {device.status === 'active' ? 'Activo' : 'Revocado'}
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-gray-600">
+                Proveedores: {(device.enabledProviders || []).join(', ') || 'No especificados'}
+              </p>
+              <p className="mt-1 text-xs text-gray-600">
+                Activado: {device.activatedAt
+                  ? new Date(device.activatedAt).toLocaleString('es-ES')
+                  : 'No disponible'}
+              </p>
+              <p className="mt-1 text-xs text-gray-600">
+                Última conexión: {device.lastSeenAt
+                  ? new Date(device.lastSeenAt).toLocaleString('es-ES')
+                  : 'Sin conexión registrada'}
+              </p>
+              {device.status === 'active' && (
+                <button
+                  type="button"
+                  onClick={() => revokeSmsGatewayDevice(device.id)}
+                  disabled={smsGatewayBusy}
+                  className="mt-3 min-h-10 rounded-lg border border-red-300 px-3 py-2 text-sm font-semibold text-red-700 disabled:opacity-50"
+                >
+                  Revocar teléfono
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+    <p role="status" aria-live="polite" className="mt-3 text-sm text-gray-700">
+      {smsGatewayMessage}
+    </p>
+  </section>
+
 </div>
 
         </>
@@ -7431,7 +7621,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
 };
 
 // ============ ADMIN ============
-const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel, onReviewCarrier }) => {
+const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, onUpdateOrder, onUpdateUser, onDeleteUser, onUpdateBusiness, onDeleteBusiness, onDeleteProduct, onResolveReport, onSaveSettings, savingSettings, tab, setTab, onRefresh, compressLogo, businessTypes, onApproveCryptoInvoice, onRejectCryptoInvoice, rejectCryptoInvoiceId, setRejectCryptoInvoiceId, rejectCryptoReason, setRejectCryptoReason, getOrderStatusLabel, onReviewCarrier, onRevokeSmsGatewayDevice }) => {
   const [editBiz, setEditBiz] = useState(null);
   const [showBusinessEditControls, setShowBusinessEditControls] = useState(false);
   const payments = Array.isArray(data?.payments) ? data.payments.filter(Boolean) : [];
@@ -7445,6 +7635,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
   const cryptoInvoices = Array.isArray(data?.cryptoInvoices) ? data.cryptoInvoices.filter(Boolean) : [];
   const transfermovilEvents = Array.isArray(data?.transfermovilEvents) ? data.transfermovilEvents.filter(Boolean) : [];
   const carriers = Array.isArray(data?.carriers) ? data.carriers.filter(Boolean) : [];
+  const smsGatewayDevices = Array.isArray(data?.smsGatewayDevices) ? data.smsGatewayDevices.filter(Boolean) : [];
   const pendingCarriers = carriers.filter((c) => c.status === 'pending');
   const transfermovilPending = transfermovilEvents.filter((event) =>
     ['pending_review', 'matching_reference', 'paid_reconciliation_error'].includes(event?.status)
@@ -7491,6 +7682,7 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
           <TabsTrigger value="users">Usuarios</TabsTrigger>
           <TabsTrigger value="products">Productos</TabsTrigger>
           <TabsTrigger value="settings">Configuración</TabsTrigger>
+          <TabsTrigger value="sms-gateway">Gateway SMS ({smsGatewayDevices.length})</TabsTrigger>
           <TabsTrigger value="carriers">Transportistas {pendingCarriers.length > 0 && <Badge className="ml-2 bg-amber-500 text-black border-0">{pendingCarriers.length}</Badge>}</TabsTrigger>
         </TabsList>
 
@@ -7872,6 +8064,61 @@ const AdminDashboard = ({ t, data, settings, setSettings, onApprove, onReject, o
               </Card>
             ))}
           </div>
+        </TabsContent>
+
+        <TabsContent value="sms-gateway" className="mt-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold">Dispositivos SMS Gateway</h2>
+              <p className="text-sm text-muted-foreground">
+                Móviles vinculados a los negocios para recibir SMS de Transfermóvil y EnZona.
+              </p>
+            </div>
+            <Button size="sm" variant="outline" className="min-h-11 w-full sm:w-auto" onClick={onRefresh}>
+              Actualizar dispositivos
+            </Button>
+          </div>
+
+          {smsGatewayDevices.length === 0 ? (
+            <Card>
+              <CardContent className="p-6 text-center text-muted-foreground">
+                No hay dispositivos SMS Gateway registrados.
+              </CardContent>
+            </Card>
+          ) : smsGatewayDevices.map((device) => (
+            <Card key={device.id} className="overflow-hidden">
+              <CardContent className="p-3 sm:p-4 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-semibold break-words">
+                    {device.deviceName || 'Móvil sin nombre'}
+                  </div>
+                  <Badge variant={device.status === 'active' ? 'default' : 'secondary'}>
+                    {device.status === 'active' ? 'Activo' : device.status === 'revoked' ? 'Revocado' : device.status || 'Sin estado'}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm [&>div]:min-w-0 [&>div]:break-words [&>div]:[overflow-wrap:anywhere]">
+                  <div><span className="text-muted-foreground">Negocio:</span> {device.business?.name || device.businessId || '—'}</div>
+                  <div><span className="text-muted-foreground">Correo:</span> {device.owner?.email || '—'}</div>
+                  <div><span className="text-muted-foreground">Proveedores:</span> {Array.isArray(device.enabledProviders) && device.enabledProviders.length ? device.enabledProviders.join(', ') : '—'}</div>
+                  <div><span className="text-muted-foreground">Activado:</span> {device.activatedAt ? new Date(device.activatedAt).toLocaleString() : '—'}</div>
+                  <div><span className="text-muted-foreground">Última conexión:</span> {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : 'Nunca'}</div>
+                  {device.revokedAt && <div><span className="text-muted-foreground">Revocado:</span> {new Date(device.revokedAt).toLocaleString()}</div>}
+                </div>
+                {device.status === 'active' && (
+                  <div className="border-t border-border pt-3">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="min-h-11 w-full sm:w-auto text-destructive border-destructive/40"
+                      onClick={() => onRevokeSmsGatewayDevice?.(device.id)}
+                    >
+                      Revocar dispositivo
+                    </Button>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
         </TabsContent>
 
         <TabsContent value="carriers" className="mt-4 space-y-3">

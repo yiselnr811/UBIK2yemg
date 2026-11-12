@@ -1496,6 +1496,47 @@ async function route(request, method, path) {
     return providers;
   };
 
+  const gatewayPaymentSnapshot = (business) => {
+    const providers = gatewayEnabledProviders(business);
+    const digits = (value) => String(value || '').replace(/\D/g, '');
+    const transferPhone = business.transfermovilEnabled === true
+      ? digits(business.transfermovilVerificationPhone)
+      : '';
+    const enzonaPhone = business.enzonaEnabled === true
+      ? digits(business.enzonaPhone)
+      : '';
+
+    if (providers.includes('transfermovil') && !transferPhone) {
+      return { error: 'Falta el móvil receptor de Transfermóvil. Configura la línea que recibe los SMS.' };
+    }
+    if (providers.includes('enzona') && !enzonaPhone) {
+      return { error: 'Falta el móvil receptor de EnZona.' };
+    }
+    if (providers.length === 2 && transferPhone !== enzonaPhone) {
+      return { error: 'Transfermóvil y EnZona deben usar el mismo móvil físico para una sola APK.' };
+    }
+
+    const snapshot = {
+      providers,
+      transfermovil: providers.includes('transfermovil') ? {
+        phone: transferPhone,
+        number: String(business.transfermovilNumber || '').trim(),
+        account: String(business.transfermovilAccount || '').trim(),
+        name: String(business.transfermovilName || '').trim(),
+      } : null,
+      enzona: providers.includes('enzona') ? {
+        phone: enzonaPhone,
+        cardNumber: String(business.enzonaCardNumber || '').trim(),
+        recipient: String(business.enzonaRecipient || '').trim(),
+      } : null,
+    };
+
+    return {
+      snapshot,
+      fingerprint: gatewayHash(JSON.stringify(snapshot)),
+    };
+  };
+
   // POST /api/sms-gateway/activation-codes
   if (path[0] === 'sms-gateway' && path[1] === 'activation-codes' &&
       method === 'POST' && path.length === 2) {
@@ -1512,6 +1553,9 @@ async function route(request, method, path) {
     if (!enabledProviders.length) {
       return json({ error: 'Habilita Transfermóvil o EnZona en la configuración del negocio.' }, 400);
     }
+
+    const paymentSnapshot = gatewayPaymentSnapshot(business);
+    if (paymentSnapshot.error) return json({ error: paymentSnapshot.error }, 400);
 
     await ensureSmsGatewayIndexes(db);
 
@@ -1542,6 +1586,7 @@ async function route(request, method, path) {
       businessId: business.id,
       codeHash: gatewayHash(code),
       enabledProviders,
+      paymentFingerprint: paymentSnapshot.fingerprint,
       status: 'active',
       createdBy: user.id,
       createdAt: now.toISOString(),
@@ -1594,16 +1639,24 @@ async function route(request, method, path) {
       return json({ error: 'El negocio asociado al código ya no existe.' }, 404);
     }
 
+    const currentSnapshot = gatewayPaymentSnapshot(business);
+    if (currentSnapshot.error) return json({ error: currentSnapshot.error }, 409);
+
     const currentlyEnabled = gatewayEnabledProviders(business);
     const codeProviders = Array.isArray(pendingCode.enabledProviders)
       ? pendingCode.enabledProviders
       : [];
-    const allowedProviders = codeProviders.filter((provider) =>
-      currentlyEnabled.includes(provider)
-    );
-    if (!allowedProviders.length) {
-      return json({ error: 'El negocio ya no tiene métodos de pago habilitados.' }, 409);
+    const sameProviders = codeProviders.length === currentlyEnabled.length &&
+      codeProviders.every((provider, index) => provider === currentlyEnabled[index]);
+
+    if (!sameProviders || !pendingCode.paymentFingerprint ||
+        pendingCode.paymentFingerprint !== currentSnapshot.fingerprint) {
+      return json({
+        error: 'La configuración de pagos cambió después de generar el código. Genera uno nuevo.',
+      }, 409);
     }
+
+    const allowedProviders = currentlyEnabled;
 
     const codeRecord = await codes.findOneAndUpdate(
       codeFilter,
@@ -1621,6 +1674,7 @@ async function route(request, method, path) {
       deviceName,
       tokenHash: gatewayHash(token),
       enabledProviders: allowedProviders,
+      paymentFingerprint: currentSnapshot.fingerprint,
       status: 'active',
       activatedAt: now.toISOString(),
       lastSeenAt: now.toISOString(),
@@ -1683,7 +1737,7 @@ async function route(request, method, path) {
     return json({ ok: true, status: 'revoked' });
   }
 
-  // POST /api/sms-gateway/events — solo registra; nunca concilia ni paga pedidos.
+  // POST /api/sms-gateway/events — registra SMS y concilia coincidencias seguras.
   if (path[0] === 'sms-gateway' && path[1] === 'events' &&
       method === 'POST' && path.length === 2) {
     const suppliedToken = (request.headers.get('authorization') || '')
@@ -1725,6 +1779,32 @@ async function route(request, method, path) {
     let match = text.match(
       /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:?\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})(?:\.\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
     );
+    // Formato bancario alternativo: Beneficiario, Ordenante, Monto y Nro. Transacción.
+    if (!match) {
+      const bankMatch = text.match(
+        /\bFecha\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})[\s\S]*?\bBeneficiario\s*:\s*([\dXx*]+)[\s\S]*?\bOrdenante\s*:\s*([\dXx*]+)[\s\S]*?\bMonto\s*:\s*([\d.,]+)\s*CUP[\s\S]*?\bNro\.?\s*Transacci[oó]n\s*:\s*([A-Z0-9_-]{4,100})/i
+      );
+      if (bankMatch) {
+        const [day, month, year] = bankMatch[1].split('/').map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        if (
+          date.getUTCFullYear() !== year ||
+          date.getUTCMonth() !== month - 1 ||
+          date.getUTCDate() !== day
+        ) {
+          return json({ error: 'Fecha de Transfermóvil inválida.' }, 422);
+        }
+        parsed = {
+          provider: 'transfermovil',
+          receiverAccount: bankMatch[2],
+          senderAccount: bankMatch[3],
+          amountText: bankMatch[4],
+          transactionReference: bankMatch[5],
+          senderPhone: null,
+          transactionDate: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        };
+      }
+    }
     if (match) {
       let transactionDate = null;
       if (match[5]) {
@@ -1763,7 +1843,19 @@ async function route(request, method, path) {
     }
 
     const business = await db.collection('businesses').findOne({ id: device.businessId });
-    if (!business || !gatewayEnabledProviders(business).includes(parsed.provider)) {
+    if (!business) {
+      return json({ error: 'El negocio asociado al dispositivo ya no existe.' }, 403);
+    }
+
+    const currentSnapshot = gatewayPaymentSnapshot(business);
+    if (currentSnapshot.error || !device.paymentFingerprint ||
+        device.paymentFingerprint !== currentSnapshot.fingerprint) {
+      return json({
+        error: 'La configuración o la línea receptora cambió. Revoca y reactiva el teléfono desde el negocio.',
+      }, 409);
+    }
+
+    if (!gatewayEnabledProviders(business).includes(parsed.provider)) {
       return json({ error: 'El método de pago ya no está habilitado para este negocio.' }, 403);
     }
     let amountText = parsed.amountText.replace(/\s/g, '');
@@ -1777,6 +1869,42 @@ async function route(request, method, path) {
 
     const events = db.collection('sms_gateway_events');
     const now = new Date().toISOString();
+    const canonicalEventId = `gateway-${device.id}-${eventId}`;
+    let canonicalCreated = false;
+
+    try {
+      await db.collection('transfer_payment_events').insertOne({
+        _id: canonicalEventId,
+        provider: parsed.provider,
+        transactionReference: parsed.transactionReference,
+        amount,
+        currency: 'CUP',
+        receiverAccount: parsed.receiverAccount || null,
+        senderAccount: parsed.senderAccount || null,
+        senderPhone: parsed.senderPhone || null,
+        transactionDate: parsed.transactionDate || null,
+        smsText: text,
+        sender: 'sms-gateway',
+        deviceReceivedAt: typeof body.receivedAt === 'string'
+          ? body.receivedAt.slice(0, 100) : null,
+        receivedAt: now,
+        status: 'pending_review',
+        matchedOrderId: null,
+        reviewedBy: null,
+        reviewedAt: null,
+        reviewNotes: 'SMS recibido por Gateway; pendiente de conciliación.',
+        source: 'sms-gateway',
+        gatewayDeviceId: device.id,
+        gatewayEventId: eventId,
+      });
+      canonicalCreated = true;
+    } catch (e) {
+      if (e?.code !== 11000) {
+        console.error('[SMS Gateway] No se pudo registrar el evento canónico:', e?.message || e);
+        return json({ error: 'No se pudo registrar el evento de pago.' }, 500);
+      }
+    }
+
     try {
       await events.insertOne({
         id: uuidv4(),
@@ -1788,28 +1916,267 @@ async function route(request, method, path) {
         transactionReference: parsed.transactionReference,
         transactionDate: parsed.transactionDate,
         senderPhone: parsed.senderPhone,
+        senderAccount: parsed.senderAccount || null,
         receiverAccount: parsed.receiverAccount,
         rawSms: text,
         status: 'pending_review',
-        reviewNotes: 'SMS recibido por el gateway privado; requiere revisión manual.',
+        reviewNotes: 'SMS recibido por el gateway privado.',
         receivedAt: now,
         createdAt: now,
       });
     } catch (e) {
-      if (e?.code === 11000) return json({ ok: true, duplicate: true, status: 'pending_review' });
+      if (e?.code === 11000) {
+        return json({ ok: true, duplicate: true, status: 'pending_review' });
+      }
       throw e;
     }
+
+    let finalStatus = 'pending_review';
+    let matchedOrderId = null;
+    let reviewNotes = 'No existe una coincidencia inequívoca; requiere revisión manual.';
+
+    if (canonicalCreated) {
+      try {
+        const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+        const businessId = business.id;
+        const lastFourDigits = (value) =>
+          String(value || '').replace(/\D/g, '').slice(-4);
+
+        const receiverMatches = parsed.provider !== 'transfermovil' || (
+          lastFourDigits(parsed.receiverAccount) &&
+          lastFourDigits(parsed.receiverAccount) ===
+            lastFourDigits(business.transfermovilNumber)
+        );
+
+        if (!receiverMatches) {
+          reviewNotes = 'La cuenta receptora del SMS no coincide con la configurada para este negocio.';
+        } else {
+          const candidates = await db.collection('orders').find({
+            businessId,
+            paymentMethod: parsed.provider,
+            paymentStatus: 'pending_payment',
+            $or: [
+              { currency: 'CUP', total: amount },
+              { localPaymentAmountCUP: amount },
+            ],
+            buyerTransactionReference: parsed.transactionReference,
+            createdAt: { $gte: cutoff, $lte: now },
+          }).limit(2).toArray();
+
+          if (candidates.length === 1) {
+            const candidate = candidates[0];
+            const confirmedAt = new Date().toISOString();
+
+            const claimResult = await db.collection('transfer_payment_events').updateOne(
+              { _id: canonicalEventId, status: 'pending_review' },
+              {
+                $set: {
+                  status: 'matching_reference',
+                  matchingOrderId: candidate.id,
+                },
+              }
+            );
+
+            if (claimResult.modifiedCount !== 1) {
+              reviewNotes = 'El evento ya está siendo procesado o revisado; no se confirmó otro pedido.';
+            } else {
+              const updateResult = await db.collection('orders').updateOne(
+                {
+                  id: candidate.id,
+                  businessId,
+                  paymentMethod: parsed.provider,
+                  paymentStatus: 'pending_payment',
+                  $or: [
+                    { currency: 'CUP', total: amount },
+                    { localPaymentAmountCUP: amount },
+                  ],
+                  buyerTransactionReference: parsed.transactionReference,
+                  createdAt: { $gte: cutoff, $lte: now },
+                },
+                {
+                  $set: {
+                    paymentStatus: 'paid',
+                    status: 'paid',
+                    paymentRef: {
+                      provider: parsed.provider,
+                      transactionReference: parsed.transactionReference,
+                      amount,
+                      currency: 'CUP',
+                      receiverAccount: parsed.receiverAccount || null,
+                      senderAccount: parsed.senderAccount || null,
+                      senderPhone: parsed.senderPhone || null,
+                      transactionDate: parsed.transactionDate || null,
+                      receivedAt: now,
+                      confirmedAt,
+                      verificationMethod: 'auto-sms-verification',
+                    },
+                    updatedAt: confirmedAt,
+                  },
+                  $push: {
+                    statusHistory: {
+                      status: 'paid',
+                      at: confirmedAt,
+                      by: 'auto-sms-verification',
+                      notes: `Referencia ${parsed.transactionReference} recibida por SMS (${parsed.provider}) mediante Gateway.`,
+                    },
+                  },
+                }
+              );
+
+              if (updateResult.modifiedCount === 1) {
+                matchedOrderId = candidate.id;
+                reviewNotes = 'Pedido confirmado automáticamente por coincidencia exacta. La recepción del SMS no constituye verificación bancaria criptográfica.';
+
+                const finalizeResult = await db.collection('transfer_payment_events').updateOne(
+                  {
+                    _id: canonicalEventId,
+                    status: 'matching_reference',
+                    matchingOrderId: candidate.id,
+                  },
+                  {
+                    $set: {
+                      status: 'auto_approved',
+                      matchedOrderId: candidate.id,
+                      reviewedAt: confirmedAt,
+                      reviewNotes,
+                    },
+                    $unset: { matchingOrderId: '' },
+                  }
+                );
+
+                if (finalizeResult.modifiedCount === 1) {
+                  finalStatus = 'auto_approved';
+
+                  if (typeof candidate.buyerEmail === 'string' && candidate.buyerEmail.trim()) {
+                    sendPaymentConfirmedEmail(
+                      candidate.buyerEmail,
+                      candidate.shipping?.name || '',
+                      { ...candidate, paymentStatus: 'paid', status: 'paid' },
+                      null
+                    ).catch((e) => {
+                      console.error('[Email] Error enviando confirmación Gateway:', e?.message || e);
+                    });
+                  }
+                } else {
+                  finalStatus = 'paid_reconciliation_error';
+                  reviewNotes = 'El pedido quedó pagado, pero el evento no se finalizó. Requiere revisión administrativa.';
+                  await db.collection('transfer_payment_events').updateOne(
+                    {
+                      _id: canonicalEventId,
+                      status: 'matching_reference',
+                      matchingOrderId: candidate.id,
+                    },
+                    {
+                      $set: {
+                        status: 'paid_reconciliation_error',
+                        matchedOrderId: candidate.id,
+                        reviewedAt: confirmedAt,
+                        reviewNotes,
+                      },
+                    }
+                  );
+                }
+              } else {
+                reviewNotes = 'El pedido dejó de estar pendiente antes de actualizarse; requiere revisión manual.';
+                await db.collection('transfer_payment_events').updateOne(
+                  {
+                    _id: canonicalEventId,
+                    status: 'matching_reference',
+                    matchingOrderId: candidate.id,
+                  },
+                  {
+                    $set: {
+                      status: 'pending_review',
+                      matchedOrderId: null,
+                      reviewNotes,
+                    },
+                    $unset: { matchingOrderId: '' },
+                  }
+                );
+              }
+            }
+          } else if (candidates.length > 1) {
+            reviewNotes = 'Hay varios pedidos pendientes con la misma referencia e importe; no se confirmó ninguno.';
+          } else {
+            reviewNotes = 'No se encontró un pedido pendiente compatible dentro de las últimas 48 horas.';
+          }
+        }
+      } catch (e) {
+        console.error('[SMS Gateway] Error durante la conciliación automática:', e?.message || e);
+        reviewNotes = 'Error al comprobar coincidencias; requiere revisión manual.';
+
+        try {
+          const claimedEvent = await db.collection('transfer_payment_events').findOne({
+            _id: canonicalEventId,
+            status: 'matching_reference',
+          });
+
+          if (claimedEvent?.matchingOrderId) {
+            const claimedOrder = await db.collection('orders').findOne({
+              id: claimedEvent.matchingOrderId,
+            });
+
+            if (
+              claimedOrder &&
+              claimedOrder.paymentStatus === 'pending_payment' &&
+              claimedOrder.buyerTransactionReference === parsed.transactionReference
+            ) {
+              await db.collection('transfer_payment_events').updateOne(
+                {
+                  _id: canonicalEventId,
+                  status: 'matching_reference',
+                  matchingOrderId: claimedEvent.matchingOrderId,
+                },
+                {
+                  $set: {
+                    status: 'pending_review',
+                    matchedOrderId: null,
+                    reviewNotes: 'La conciliación falló antes de confirmar el pedido; requiere revisión manual.',
+                  },
+                  $unset: { matchingOrderId: '' },
+                }
+              );
+            } else {
+              await db.collection('transfer_payment_events').updateOne(
+                { _id: canonicalEventId, status: 'matching_reference' },
+                {
+                  $set: {
+                    reviewNotes: 'La conciliación falló y el estado del pedido no permite una recuperación automática segura; requiere revisión manual.',
+                  },
+                }
+              );
+            }
+          }
+        } catch (recoveryError) {
+          console.error('[SMS Gateway] Falló la recuperación segura:', recoveryError?.message || recoveryError);
+        }
+      }
+
+      if (finalStatus !== 'auto_approved' && finalStatus !== 'paid_reconciliation_error') {
+        await db.collection('transfer_payment_events').updateOne(
+          { _id: canonicalEventId, status: 'pending_review' },
+          {
+            $set: {
+              status: 'pending_review',
+              matchedOrderId: null,
+              reviewNotes,
+            },
+          }
+        );
+      }
+    }
+
     await devices.updateOne(
       { id: device.id, status: 'active' },
       { $set: { lastSeenAt: now } }
     );
     return json({
       ok: true,
-      status: 'pending_review',
+      status: finalStatus,
       provider: parsed.provider,
       amount,
       transactionReference: parsed.transactionReference,
-    }, 202);
+    }, finalStatus === 'auto_approved' ? 200 : 202);
   }
 
   // ===== TRANSFERMOVIL SMS FORWARDER: recepción segura, nunca confirma pagos =====
@@ -1862,6 +2229,32 @@ async function route(request, method, path) {
     let match = text.match(
       /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:?\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})(?:\.\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
     );
+    // Formato bancario alternativo: Beneficiario, Ordenante, Monto y Nro. Transacción.
+    if (!match) {
+      const bankMatch = text.match(
+        /\bFecha\s*:\s*(\d{1,2}\/\d{1,2}\/\d{4})[\s\S]*?\bBeneficiario\s*:\s*([\dXx*]+)[\s\S]*?\bOrdenante\s*:\s*([\dXx*]+)[\s\S]*?\bMonto\s*:\s*([\d.,]+)\s*CUP[\s\S]*?\bNro\.?\s*Transacci[oó]n\s*:\s*([A-Z0-9_-]{4,100})/i
+      );
+      if (bankMatch) {
+        const [day, month, year] = bankMatch[1].split('/').map(Number);
+        const date = new Date(Date.UTC(year, month - 1, day));
+        if (
+          date.getUTCFullYear() !== year ||
+          date.getUTCMonth() !== month - 1 ||
+          date.getUTCDate() !== day
+        ) {
+          return json({ error: 'Fecha de Transfermóvil inválida.' }, 422);
+        }
+        parsed = {
+          provider: 'transfermovil',
+          receiverAccount: bankMatch[2],
+          senderAccount: bankMatch[3],
+          amountText: bankMatch[4],
+          transactionReference: bankMatch[5],
+          senderPhone: null,
+          transactionDate: `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+        };
+      }
+    }
 
     if (match) {
       let transactionDate = null;
@@ -1941,6 +2334,7 @@ async function route(request, method, path) {
         amount,
         currency: parsed ? 'CUP' : null,
         receiverAccount: parsed?.receiverAccount || null,
+        senderAccount: parsed?.senderAccount || null,
         senderPhone: parsed?.senderPhone || null,
         transactionDate: parsed?.transactionDate || null,
         smsText: text,
@@ -1983,7 +2377,20 @@ async function route(request, method, path) {
 
         // La conciliación automática exige referencia e importe exactos.
         // No exige coincidencia adicional de la cuenta receptora.
-        const eligibleBusinesses = businesses;
+        const lastFourDigits = (value) =>
+          String(value || '').replace(/\D/g, '').slice(-4);
+
+        const eligibleBusinesses = parsed.provider === 'transfermovil'
+          ? businesses.filter((business) => {
+              const smsLastFour = lastFourDigits(parsed.receiverAccount);
+              const businessLastFour = lastFourDigits(business.transfermovilNumber);
+              return Boolean(
+                smsLastFour &&
+                businessLastFour &&
+                smsLastFour === businessLastFour
+              );
+            })
+          : businesses;
 
         const businessIds = [
           ...new Set(
@@ -2004,7 +2411,7 @@ async function route(request, method, path) {
               { localPaymentAmountCUP: amount },
             ],
             buyerTransactionReference: parsed.transactionReference,
-            createdAt: { $gte: cutoff },
+            createdAt: { $gte: cutoff, $lte: receivedAt },
           }).limit(2).toArray();
 
           if (candidates.length === 1) {
@@ -2036,7 +2443,7 @@ async function route(request, method, path) {
                     { localPaymentAmountCUP: amount },
                   ],
                   buyerTransactionReference: parsed.transactionReference,
-                  createdAt: { $gte: cutoff },
+                  createdAt: { $gte: cutoff, $lte: receivedAt },
                 },
                 {
                   $set: {
@@ -2049,6 +2456,7 @@ async function route(request, method, path) {
                       currency: 'CUP',
                       receiverAccount: parsed.receiverAccount,
                       senderPhone: parsed.senderPhone,
+        senderAccount: parsed.senderAccount || null,
                       transactionDate: parsed.transactionDate,
                       receivedAt,
                       confirmedAt,
@@ -3259,13 +3667,22 @@ async function route(request, method, path) {
       if (mergedPayment.transfermovilEnabled === true) {
         const verificationPhone = String(
           mergedPayment.transfermovilVerificationPhone || ''
-        ).trim() || String(mergedPayment.transfermovilContactPhone || '').trim();
+        ).trim();
         if (!verificationPhone) {
-          return json({ error: 'Introduce el móvil de contacto o el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+          return json({ error: 'Introduce el móvil receptor que recibirá los SMS de Transfermóvil antes de habilitarlo.' }, 400);
         }
         update.transfermovilVerificationPhone = verificationPhone;
         mergedPayment.transfermovilVerificationPhone = verificationPhone;
       }
+
+      if (mergedPayment.transfermovilEnabled === true && mergedPayment.enzonaEnabled === true) {
+        const transferPhone = String(mergedPayment.transfermovilVerificationPhone || '').replace(/\D/g, '');
+        const enzonaPhone = String(mergedPayment.enzonaPhone || '').replace(/\D/g, '');
+        if (!transferPhone || !enzonaPhone || transferPhone !== enzonaPhone) {
+          return json({ error: 'Transfermóvil y EnZona deben usar el mismo móvil físico para la APK.' }, 400);
+        }
+      }
+
       if (mergedPayment.enzonaEnabled === true) {
         if (!String(mergedPayment.enzonaRecipient || '').trim()) {
           return json({ error: 'Introduce el destinatario antes de habilitar EnZona.' }, 400);
@@ -5802,6 +6219,41 @@ function sanitizeBuyerOrder(order) {
       });
     }
 
+    const paymentBusiness = await db.collection('businesses').findOne({
+      id: order.businessId,
+    });
+
+    const businessMethodEnabled = order.paymentMethod === 'transfermovil'
+      ? paymentBusiness?.transfermovilEnabled === true
+      : paymentBusiness?.enzonaEnabled === true;
+
+    if (!paymentBusiness || !businessMethodEnabled) {
+      return json({
+        ok: true,
+        status: 'pending_review',
+        message: 'El método de pago no está habilitado actualmente en el negocio. Requiere revisión manual.',
+      });
+    }
+
+    if (order.paymentMethod === 'transfermovil') {
+      const smsLastFour = String(event.receiverAccount || '')
+        .replace(/\D/g, '').slice(-4);
+      const businessLastFour = String(paymentBusiness.transfermovilNumber || '')
+        .replace(/\D/g, '').slice(-4);
+
+      if (
+        !smsLastFour ||
+        !businessLastFour ||
+        smsLastFour !== businessLastFour
+      ) {
+        return json({
+          ok: true,
+          status: 'pending_review',
+          message: 'El destinatario del SMS no coincide con la tarjeta receptora del negocio. No se confirmó el pedido.',
+        });
+      }
+    }
+
     const expectedLocalAmount = Number(order.localPaymentAmountCUP ?? order.total);
     const sameAmount =
       Number.isFinite(expectedLocalAmount) &&
@@ -6839,6 +7291,99 @@ function sanitizeBuyerOrder(order) {
     const { user, error } = await requireAdmin(request);
     if (error) return error;
 
+    // GET /api/admin/sms-gateway/devices
+    if (path[1] === 'sms-gateway' && path[2] === 'devices' &&
+        method === 'GET' && path.length === 3) {
+      await ensureSmsGatewayIndexes(db);
+
+      const rows = await db.collection('sms_gateway_devices')
+        .find({}, {
+          projection: {
+            _id: 0,
+            id: 1,
+            businessId: 1,
+            deviceName: 1,
+            enabledProviders: 1,
+            status: 1,
+            activatedAt: 1,
+            lastSeenAt: 1,
+            revokedAt: 1,
+          },
+        })
+        .sort({ activatedAt: -1 })
+        .limit(500)
+        .toArray();
+
+      const businessIds = [...new Set(rows.map((item) => item.businessId).filter(Boolean))];
+      const businesses = await db.collection('businesses')
+        .find(
+          { id: { $in: businessIds } },
+          { projection: { _id: 0, id: 1, name: 1, userId: 1 } }
+        )
+        .toArray();
+
+      const businessMap = Object.fromEntries(
+        businesses.map((item) => [item.id, {
+          id: item.id,
+          name: item.name || 'Negocio sin nombre',
+          ownerId: item.userId || null,
+        }])
+      );
+
+      const ownerIds = [...new Set(businesses.map((item) => item.userId).filter(Boolean))];
+      const owners = await db.collection('users')
+        .find(
+          { id: { $in: ownerIds } },
+          { projection: { _id: 0, id: 1, email: 1 } }
+        )
+        .toArray();
+
+      const ownerMap = Object.fromEntries(
+        owners.map((item) => [item.id, { id: item.id, email: item.email || null }])
+      );
+
+      return json({
+        devices: rows.map((item) => ({
+          ...item,
+          business: businessMap[item.businessId] || null,
+          owner: ownerMap[businessMap[item.businessId]?.ownerId] || null,
+        })),
+      });
+    }
+
+    // DELETE /api/admin/sms-gateway/devices/:id
+    if (path[1] === 'sms-gateway' && path[2] === 'devices' &&
+        path[3] && method === 'DELETE' && path.length === 4) {
+      await ensureSmsGatewayIndexes(db);
+
+      const devices = db.collection('sms_gateway_devices');
+      const device = await devices.findOne({ id: path[3] });
+      if (!device) return json({ error: 'Dispositivo no encontrado.' }, 404);
+
+      const now = new Date().toISOString();
+
+      if (device.status === 'active') {
+        await devices.updateOne(
+          { id: device.id, status: 'active' },
+          {
+            $set: {
+              status: 'revoked',
+              revokedAt: now,
+              revokedBy: user.id,
+            },
+            $unset: { tokenHash: '' },
+          }
+        );
+      }
+
+      await db.collection('sms_gateway_activation_codes').updateMany(
+        { businessId: device.businessId, status: 'active' },
+        { $set: { status: 'revoked', revokedAt: now } }
+      );
+
+      return json({ ok: true, status: 'revoked' });
+    }
+
     if (path[1] === 'privy' && path[2] === 'status' && method === 'GET') {
       try {
         const result = await checkPrivyConnection();
@@ -7098,13 +7643,21 @@ function sanitizeBuyerOrder(order) {
       if (update.transfermovilEnabled === true) {
         const verificationPhone = String(
           update.transfermovilVerificationPhone ?? existing.transfermovilVerificationPhone ?? ''
-        ).trim() || String(
-          update.transfermovilContactPhone ?? existing.transfermovilContactPhone ?? ''
         ).trim();
         if (!verificationPhone) {
-          return json({ error: 'Introduce el móvil de contacto o el móvil para verificar los SMS antes de habilitar Transfermóvil.' }, 400);
+          return json({ error: 'Introduce el móvil receptor que recibirá los SMS de Transfermóvil antes de habilitarlo.' }, 400);
         }
         update.transfermovilVerificationPhone = verificationPhone;
+      }
+
+      const mergedAdminPayment = { ...existing, ...update };
+      if (mergedAdminPayment.transfermovilEnabled === true &&
+          mergedAdminPayment.enzonaEnabled === true) {
+        const transferPhone = String(mergedAdminPayment.transfermovilVerificationPhone || '').replace(/\D/g, '');
+        const enzonaPhone = String(mergedAdminPayment.enzonaPhone || '').replace(/\D/g, '');
+        if (!transferPhone || !enzonaPhone || transferPhone !== enzonaPhone) {
+          return json({ error: 'Transfermóvil y EnZona deben usar el mismo móvil físico para la APK.' }, 400);
+        }
       }
 
       if (update.enzonaEnabled === true) {

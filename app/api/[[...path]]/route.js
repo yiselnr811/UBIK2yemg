@@ -1779,6 +1779,24 @@ async function route(request, method, path) {
     let match = text.match(
       /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:?\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})(?:\.\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
     );
+    // Formato corto de Transfermóvil: "Se ha realizado una transferencia..."
+    if (!match) {
+      const shortFormat = text.match(
+        /^Se ha realizado una transferencia a la cuenta\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})\.?(?:\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
+      );
+
+      if (shortFormat) {
+        match = [
+          shortFormat[0],
+          null,
+          shortFormat[1],
+          shortFormat[2],
+          shortFormat[3],
+          shortFormat[4] || undefined
+        ];
+      }
+    }
+
     // Formato bancario alternativo: Beneficiario, Ordenante, Monto y Nro. Transacción.
     if (!match) {
       const bankMatch = text.match(
@@ -1820,7 +1838,7 @@ async function route(request, method, path) {
         receiverAccount: match[2],
         amountText: match[3],
         transactionReference: match[4],
-        senderPhone: match[1],
+        senderPhone: match[1] || null,
         transactionDate,
       };
     } else {
@@ -2229,6 +2247,24 @@ async function route(request, method, path) {
     let match = text.match(
       /^El titular del tel[eé]fono\s+(\d+)\s+le ha realizado una transferencia a la cuenta:?\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.\s*Nro\.\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})(?:\.\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
     );
+    // Formato corto de Transfermóvil: "Se ha realizado una transferencia..."
+    if (!match) {
+      const shortFormat = text.match(
+        /^Se ha realizado una transferencia a la cuenta\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})\.?(?:\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
+      );
+
+      if (shortFormat) {
+        match = [
+          shortFormat[0],
+          null,
+          shortFormat[1],
+          shortFormat[2],
+          shortFormat[3],
+          shortFormat[4] || undefined
+        ];
+      }
+    }
+
     // Formato bancario alternativo: Beneficiario, Ordenante, Monto y Nro. Transacción.
     if (!match) {
       const bankMatch = text.match(
@@ -2280,7 +2316,7 @@ async function route(request, method, path) {
           receiverAccount: match[2],
           amountText: match[3],
           transactionReference: match[4],
-          senderPhone: match[1],
+          senderPhone: match[1] || null,
           transactionDate,
         };
       }

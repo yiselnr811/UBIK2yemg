@@ -1784,7 +1784,7 @@ async function route(request, method, path) {
     // "Se ha realizado una transferencia a la cuenta..."
     if (!match) {
       const shortFormat = text.match(
-        /^Se ha realizado una transferencia a la cuenta\\s*([\\dXx*]+)\\s+de\\s+([\\d.,]+)\\s+CUP\\.?\\s*Nro\\.?\\s*Transacci[oó]n\\s+([A-Z0-9_-]{4,100})\\.?(?:\\s*Fecha:\\s*(\\d{1,2}\\/\\d{1,2}\\/\\d{4}))?\\.?$/i
+        /^Se ha realizado una transferencia a la cuenta\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})\.?(?:\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
       );
 
       if (shortFormat) {
@@ -2254,7 +2254,7 @@ async function route(request, method, path) {
     // "Se ha realizado una transferencia a la cuenta..."
     if (!match) {
       const shortFormat = text.match(
-        /^Se ha realizado una transferencia a la cuenta\\s*([\\dXx*]+)\\s+de\\s+([\\d.,]+)\\s+CUP\\.?\\s*Nro\\.?\\s*Transacci[oó]n\\s+([A-Z0-9_-]{4,100})\\.?(?:\\s*Fecha:\\s*(\\d{1,2}\\/\\d{1,2}\\/\\d{4}))?\\.?$/i
+        /^Se ha realizado una transferencia a la cuenta\s*([\dXx*]+)\s+de\s+([\d.,]+)\s+CUP\.?\s*Nro\.?\s*Transacci[oó]n\s+([A-Z0-9_-]{4,100})\.?(?:\s*Fecha:\s*(\d{1,2}\/\d{1,2}\/\d{4}))?\.?$/i
       );
 
       if (shortFormat) {

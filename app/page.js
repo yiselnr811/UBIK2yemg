@@ -5193,9 +5193,33 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
       document.body.appendChild(link);
       link.click();
       link.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
     } catch (error) {
       toast.error(error?.message || t.invoiceLoadError);
+    }
+  };
+
+  const downloadSellerOrdersReport = async () => {
+    try {
+      const response = await fetch(`${API}/seller/orders/export.pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'No se pudo generar el informe de pedidos.');
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'pedidos-ultimas-24-horas.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    } catch (error) {
+      toast.error(error?.message || 'Error descargando el informe de pedidos.');
     }
   };
 
@@ -7081,6 +7105,16 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
           <p className="text-sm text-muted-foreground">
             {t.sellerOrdersDesc}
           </p>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 w-full sm:w-auto"
+              onClick={downloadSellerOrdersReport}
+            >
+              Descargar pedidos de las últimas 24 horas (PDF)
+            </Button>
+          </div>
         </div>
 
         {sellerOrdersLoading && (

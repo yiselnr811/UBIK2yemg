@@ -5979,17 +5979,34 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 // ============ DASHBOARD (Seller) ============
 const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel, activeSection = 'summary', onSectionChange = () => {} }) => {
 
+  const readPdfBlob = async (response, fallbackMessage) => {
+    const blob = await response.blob();
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    const signature = await blob.slice(0, 5).text();
+
+    if (!response.ok || !contentType.includes('application/pdf') || signature !== '%PDF-') {
+      let message = fallbackMessage;
+      const body = await blob.text();
+      try {
+        const data = JSON.parse(body);
+        if (data.error) message = data.error;
+      } catch {}
+      throw new Error(message);
+    }
+
+    return blob;
+  };
+
   const downloadSellerOrdersReport = async () => {
     try {
       const response = await fetch(`${API}/seller/orders/export.pdf`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: 'no-store',
       });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'No se pudo generar el informe de pedidos.');
-      }
-      const blob = await response.blob();
+      const blob = await readPdfBlob(
+        response,
+        'No se pudo generar el informe de pedidos.'
+      );
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = objectUrl;
@@ -6002,6 +6019,34 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
       toast.error(error?.message || 'Error descargando el informe de pedidos.');
     }
   };
+  const downloadOrderInvoice = async (order) => {
+    try {
+      const response = await fetch(
+        `${API}/orders/${encodeURIComponent(order.id)}/invoice/pdf`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        }
+      );
+
+      const blob = await readPdfBlob(
+        response,
+        'No se pudo descargar la factura.'
+      );
+
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `factura-${String(order.id || 'pedido').slice(0, 8)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    } catch (error) {
+      toast.error(error?.message || 'Error descargando la factura.');
+    }
+  };
+
   const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;

@@ -6609,6 +6609,192 @@ function sanitizeBuyerOrder(order) {
   }
 
 
+
+  // PDF consolidado de pedidos del vendedor: últimas 24 horas.
+  // El negocio se obtiene de la sesión; nunca se acepta un businessId del cliente.
+  if (path[0] === 'seller' && path[1] === 'orders' &&
+      path[2] === 'export.pdf' && path.length === 3 && method === 'GET') {
+    const { user, error } = await requireUser(request);
+    if (error) return error;
+
+    const businesses = db.collection('businesses');
+    let business = user.businessId
+      ? await businesses.findOne({ id: user.businessId, userId: user.id })
+      : null;
+
+    if (!business) {
+      business = await businesses.findOne({ userId: user.id });
+    }
+
+    if (!business) {
+      return json({ error: 'No se encontró un comercio asociado a tu cuenta.' }, 403);
+    }
+
+    const reportNow = new Date();
+    const reportStart = new Date(reportNow.getTime() - 24 * 60 * 60 * 1000);
+    const orders = await db.collection('orders')
+      .find({
+        businessId: business.id,
+        $or: [
+          {
+            createdAt: {
+              $gte: reportStart.toISOString(),
+              $lte: reportNow.toISOString(),
+            },
+          },
+          {
+            createdAt: {
+              $gte: reportStart,
+              $lte: reportNow,
+            },
+          },
+        ],
+      })
+      .sort({ createdAt: 1 })
+      .toArray();
+
+    const report = await PDFDocument.create();
+    report.setTitle('Pedidos de las últimas 24 horas - UBIK2YEMG');
+    report.setSubject('Informe privado de pedidos del comercio');
+    report.setCreator('UBIK2YEMG');
+
+    const regularFont = await report.embedFont(StandardFonts.Helvetica);
+    const boldFont = await report.embedFont(StandardFonts.HelveticaBold);
+    const pageSize = [595.28, 841.89];
+    let page = report.addPage(pageSize);
+    let y = 790;
+
+    const clean = (value) => String(value ?? '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\x20-\x7E]/g, '?');
+
+    const line = (value, options = {}) => {
+      const size = options.size || 9;
+      const maxChars = options.maxChars || 92;
+      const text = clean(value);
+      const chunks = [];
+      for (let i = 0; i < Math.max(1, text.length); i += maxChars) {
+        chunks.push(text.slice(i, i + maxChars));
+      }
+      for (const chunk of chunks) {
+        if (y < 55) {
+          page = report.addPage(pageSize);
+          y = 790;
+        }
+        page.drawText(chunk, {
+          x: options.x || 48,
+          y,
+          size,
+          font: options.bold ? boldFont : regularFont,
+          color: rgb(0.12, 0.16, 0.22),
+          maxWidth: 495,
+        });
+        y -= options.gap || 15;
+      }
+    };
+
+    const money = (value, currency) => {
+      const amount = Number(value);
+      return (Number.isFinite(amount) ? amount : 0).toFixed(2) + ' ' + clean(currency || 'CUP');
+    };
+
+    const paymentLabels = {
+      paid: 'PAGO CONFIRMADO',
+      confirmed: 'PAGO CONFIRMADO',
+      pending_payment: 'PENDIENTE DE PAGO',
+      pending: 'PENDIENTE',
+      failed: 'PAGO FALLIDO',
+      cancelled: 'CANCELADO',
+      refunded: 'REEMBOLSADO',
+    };
+
+    const shippingLabels = {
+      pending: 'PENDIENTE',
+      processing: 'EN PREPARACION',
+      shipped: 'ENVIADO',
+      delivered: 'ENTREGADO',
+    };
+
+    line('UBIK2YEMG - INFORME DE PEDIDOS', { size: 17, bold: true, gap: 23 });
+    line('Comercio: ' + (business.name || business.id), { bold: true });
+    line('Periodo: ' + reportStart.toISOString() + ' hasta ' + reportNow.toISOString());
+    line('Pedidos encontrados: ' + orders.length, { bold: true, gap: 22 });
+
+    if (!orders.length) {
+      line('No hay pedidos registrados para este comercio en las ultimas 24 horas.');
+    }
+
+    for (let index = 0; index < orders.length; index++) {
+      const order = orders[index];
+      if (y < 190) {
+        page = report.addPage(pageSize);
+        y = 790;
+      } else {
+        y -= 10;
+      }
+
+      const currency = order.currency || 'CUP';
+      const paymentStatus = String(order.paymentStatus || order.status || 'unknown');
+      const shippingStates = ['processing', 'shipped', 'delivered'];
+      const shippingStatus = shippingStates.includes(order.shippingStatus)
+        ? order.shippingStatus
+        : (shippingStates.includes(order.status) ? order.status : 'pending');
+      const deliveryMethod = order.deliveryMethod || order.shipping?.deliveryMethod || 'No indicado';
+
+      line('PEDIDO ' + (index + 1) + ' - ' + (order.ubikCode || order.id), {
+        size: 12, bold: true, gap: 18,
+      });
+      line('Fecha: ' + (order.createdAt || 'No indicada'));
+      line('ID: ' + order.id);
+      line('Comprador (ID): ' + (order.buyerId || 'No indicado'));
+      line('Correo del comprador: ' + (order.buyerEmail || 'No indicado'));
+      line('ID del comprador: ' + (order.buyerId || 'No indicado'));
+      line('Telefono: ' + (order.shipping?.phone || order.buyerPhone || 'No indicado'));
+      line('Destinatario: ' + (order.shipping?.name || 'No indicado'));
+      line('Carnet/ID destinatario: ' + (order.shipping?.recipientId || 'No indicado'));
+      line('Direccion: ' + (order.shipping?.address || 'No indicada'));
+      line('Metodo de entrega: ' + deliveryMethod);
+      line('Metodo de pago: ' + (order.paymentMethod || 'No indicado'));
+      line('Estado del pago: ' + (paymentLabels[paymentStatus] || paymentStatus));
+      line('Estado de entrega: ' + (shippingLabels[shippingStatus] || shippingStatus));
+      line('PRODUCTOS:', { bold: true, gap: 14 });
+
+      const items = Array.isArray(order.items) ? order.items : [];
+      for (const item of items) {
+        const name = item.name || item.productName || item.title || 'Producto';
+        const quantity = Number(item.quantity || item.qty || 1) || 1;
+        const price = Number(item.price ?? item.unitPrice ?? 0) || 0;
+        const total = Number(item.total ?? item.subtotal ?? item.lineTotal ?? price * quantity) || 0;
+        line('- ' + name, { bold: true, gap: 13 });
+        line('  Cantidad: ' + quantity + ' | Unitario: ' + money(price, currency) +
+          ' | Importe: ' + money(total, currency), { size: 8, gap: 13 });
+      }
+
+      line('Subtotal: ' + money(order.subtotal ?? order.total, currency));
+      if (Number(order.deliveryFee || 0) > 0) {
+        line('Tarifa de entrega: ' + money(order.deliveryFee, currency));
+      }
+      if (Number(order.localPaymentAmountCUP || 0) > 0) {
+        line('Importe a transferir: ' + money(order.localPaymentAmountCUP, 'CUP'));
+      }
+      line('TOTAL: ' + money(order.total ?? order.subtotal, currency), {
+        size: 12, bold: true, gap: 20,
+      });
+      line('------------------------------------------------------------', { size: 8, gap: 12 });
+    }
+
+    const bytes = await report.save();
+    return new NextResponse(Buffer.from(bytes), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="pedidos-ultimas-24-horas.pdf"',
+        'Cache-Control': 'private, no-store, max-age=0',
+      },
+    });
+  }
+
   // PDF de factura: requiere autenticación y pertenencia al pedido.
   if (path[0] === 'orders' && path[1] && path[2] === 'invoice' &&
       path[3] === 'pdf' && path.length === 4 && method === 'GET') {
@@ -6762,6 +6948,13 @@ function sanitizeBuyerOrder(order) {
       refunded: 'REEMBOLSADO'
     };
     drawLine('Estado real del pago: ' + (statusLabels[paymentStatus] || paymentStatus));
+    drawLine('Método de pago: ' + String(order.paymentMethod || 'No indicado'));
+    const shippingStates = ['processing', 'shipped', 'delivered'];
+    const shippingStatus = shippingStates.includes(order.shippingStatus)
+      ? order.shippingStatus
+      : (shippingStates.includes(order.status) ? order.status : 'pending');
+    const shippingLabels = { pending: 'PENDIENTE', processing: 'EN PREPARACIÓN', shipped: 'ENVIADO', delivered: 'ENTREGADO' };
+    drawLine('Estado de entrega: ' + (shippingLabels[shippingStatus] || shippingStatus));
     drawLine('La validez de esta factura no demuestra por sí sola que el pago esté confirmado.', {
       size: 9, gap: 16
     });

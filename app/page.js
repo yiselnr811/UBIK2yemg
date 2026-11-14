@@ -5199,29 +5199,6 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
     }
   };
 
-  const downloadSellerOrdersReport = async () => {
-    try {
-      const response = await fetch(`${API}/seller/orders/export.pdf`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: 'no-store',
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || 'No se pudo generar el informe de pedidos.');
-      }
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = objectUrl;
-      link.download = 'pedidos-ultimas-24-horas.pdf';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
-    } catch (error) {
-      toast.error(error?.message || 'Error descargando el informe de pedidos.');
-    }
-  };
 
   const downloadInvoiceQR = async (order) => {
     if (!order?.publicInvoiceId) {
@@ -6000,7 +5977,31 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel, activeSection = 'summary', onSectionChange = () => {} }) => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel, activeSection = 'summary', onSectionChange = () => {
+
+  const downloadSellerOrdersReport = async () => {
+    try {
+      const response = await fetch(`${API}/seller/orders/export.pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'No se pudo generar el informe de pedidos.');
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'pedidos-ultimas-24-horas.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    } catch (error) {
+      toast.error(error?.message || 'Error descargando el informe de pedidos.');
+    }
+  };} }) => {
   const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;

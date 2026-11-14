@@ -5977,7 +5977,7 @@ const BuyerDashboard = ({ user, token, showBecomeSeller = false, onBecomeSeller,
 };
 
 // ============ DASHBOARD (Seller) ============
-const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel, activeSection = 'summary', onSectionChange = () => {
+const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDelete, onPlan, onShareBusiness, compressLogo, compressImage, onLogoChange, token, t, lang = 'es', getOrderStatusLabel, activeSection = 'summary', onSectionChange = () => {} }) => {
 
   const downloadSellerOrdersReport = async () => {
     try {
@@ -6001,7 +6001,7 @@ const Dashboard = ({ user, business, products: rawProducts, onNew, onEdit, onDel
     } catch (error) {
       toast.error(error?.message || 'Error descargando el informe de pedidos.');
     }
-  };} }) => {
+  };
   const products = Array.isArray(rawProducts) ? rawProducts.filter((product) => product && typeof product === 'object') : [];
   const isPremium = user.plan === 'premium';
   const limit = isPremium ? '∞' : `${products.length}/10`;

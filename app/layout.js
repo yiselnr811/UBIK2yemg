@@ -1,5 +1,6 @@
 import './globals.css';
 import { Toaster } from '@/components/ui/sonner';
+import { headers } from 'next/headers';
 
 export const metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_BASE_URL || 'https://ubik2yemg.qzz.io'),
@@ -59,6 +60,7 @@ export const viewport = {
 };
 
 export default function RootLayout({ children }) {
+  const nonce = headers().get('x-nonce') || undefined;
   return (
     <html lang="es" suppressHydrationWarning>
       <body className="min-h-screen bg-background text-foreground antialiased">
@@ -66,6 +68,7 @@ export default function RootLayout({ children }) {
         <Toaster richColors position="top-center" />
         {/* Service Worker registration — minimal PWA for Cuban offline-friendly UX. */}
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: `if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(function(e){console.warn('SW reg failed',e&&e.message)})})}`,
           }}

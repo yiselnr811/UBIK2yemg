@@ -1,10 +1,12 @@
 import { NextResponse } from 'next/server';
 
-// Fase inicial: observar violaciones CSP sin bloquear recursos.
-export function middleware() {
+export function middleware(request) {
+  const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+
   const csp = [
     "default-src 'self'",
-    "script-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    "script-src-attr 'none'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     "font-src 'self' data: https:",
@@ -18,8 +20,20 @@ export function middleware() {
     "manifest-src 'self'",
   ].join('; ');
 
-  const response = NextResponse.next();
-  response.headers.set('Content-Security-Policy-Report-Only', csp);
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-nonce', nonce);
+  requestHeaders.set('Content-Security-Policy', csp);
+
+  const response = NextResponse.next({
+    request: { headers: requestHeaders },
+  });
+
+  response.headers.set('Content-Security-Policy', csp);
+  response.headers.set(
+    'Cache-Control',
+    'private, no-store, max-age=0, must-revalidate'
+  );
+
   return response;
 }
 

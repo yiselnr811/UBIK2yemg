@@ -9,9 +9,8 @@
  *
  * Designed to be tiny and friendly to Cuban networks (intermittent, 2G/3G).
  */
-const VERSION = 'v4';
+const VERSION = 'v5';
 const STATIC_CACHE = `ubik2-static-${VERSION}`;
-const RUNTIME_CACHE = `ubik2-runtime-${VERSION}`;
 const IMG_CACHE = `ubik2-images-${VERSION}`;
 const API_CACHE = `ubik2-api-${VERSION}`;
 const MAX_API_AGE_MS = 5 * 60 * 1000;     // serve cached API for 5 minutes when offline
@@ -20,7 +19,7 @@ const MAX_IMG_ENTRIES = 200;               // cap image cache
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) =>
-      cache.addAll(['/manifest.webmanifest', '/favicon.svg', '/favicon.png', '/logo.png', '/icon-192.png?v=20261024', '/icon-512.png?v=20261024']).catch(() => null)
+      cache.addAll(['/manifest.webmanifest', '/favicon.svg', '/favicon.png', '/logo.png', '/icon-192.png?v=20261024', '/icon-512.png?v=20261024', '/offline.html']).catch(() => null)
     ).then(() => self.skipWaiting())
   );
 });
@@ -181,18 +180,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // === Navigation / HTML pages (product detail, home): network-first with cache fallback ===
+  // === Navigation: nunca almacenar ni reutilizar HTML con nonces CSP ===
   if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
     event.respondWith(
-      fetch(req).then((resp) => {
-        if (resp && resp.status === 200) {
-          const clone = resp.clone();
-          caches.open(RUNTIME_CACHE).then((c) => c.put(req, clone));
-        }
-        return resp;
-      }).catch(async () => {
-        const cached = await caches.match(req);
-        return cached || caches.match('/');
+      fetch(req).catch(async () => {
+        const offline = await caches.match('/offline.html');
+        return offline || new Response(
+          '<!doctype html><html lang="es"><meta charset="utf-8"><title>Sin conexión</title><body><h1>Sin conexión</h1><p>Conéctate para volver a cargar UBIK2 YEMG.</p></body></html>',
+          { headers: { 'Content-Type': 'text/html; charset=utf-8' } }
+        );
       })
     );
   }

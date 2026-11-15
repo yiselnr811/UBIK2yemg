@@ -1,3 +1,5 @@
+import { headers } from 'next/headers';
+
 // Server-rendered public BUSINESS page used for SHARED LINKS.
 // Provides OpenGraph metadata so WhatsApp/Facebook/Twitter generate rich previews
 // with the business logo, name and description.
@@ -63,6 +65,7 @@ export async function generateMetadata({ params }) {
 }
 
 export default async function SharedBusinessPage({ params }) {
+  const nonce = headers().get('x-nonce') || undefined;
   const business = await fetchBusiness(params.id);
   const safeId = encodeURIComponent(params.id);
   const targetUrl = `/?business=${safeId}`;
@@ -70,6 +73,7 @@ export default async function SharedBusinessPage({ params }) {
     <>
       {/* eslint-disable-next-line @next/next/no-sync-scripts */}
       <script
+        nonce={nonce}
         dangerouslySetInnerHTML={{
           __html: `try{window.location.replace(${JSON.stringify(targetUrl)})}catch(e){}`,
         }}

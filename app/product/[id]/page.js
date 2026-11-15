@@ -1,3 +1,5 @@
+import { headers } from 'next/headers';
+
 // Server-rendered product page used for SHARED LINKS.
 // Provides OpenGraph metadata for WhatsApp/Facebook/Twitter previews.
 // Renders proper HTML (NOT a 307 redirect) so crawlers can read the OG tags.
@@ -95,6 +97,7 @@ export async function generateMetadata({ params }) {
 }
 
 export default async function SharedProductPage({ params }) {
+  const nonce = headers().get('x-nonce') || undefined;
   const product = await fetchProduct(params.id);
   // Important: do NOT use redirect() here. We render a full HTML page so social media
   // crawlers (which do NOT execute JS and often do NOT follow redirects) can read
@@ -124,6 +127,7 @@ export default async function SharedProductPage({ params }) {
     <>
       {/* eslint-disable-next-line @next/next/no-sync-scripts */}
       <script
+        nonce={nonce}
         dangerouslySetInnerHTML={{
           __html: `try{window.location.replace(${JSON.stringify(targetUrl)})}catch(e){}`,
         }}

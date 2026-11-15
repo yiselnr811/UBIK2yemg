@@ -178,28 +178,42 @@ function getClientIP(request) {
 
 // ===== ZOD SCHEMAS =====
 const registerSchema = z.object({
-  email: z.string().email('Email inválido').toLowerCase(),
+  email: z.string().trim().email('Email inválido').toLowerCase(),
   password: z.string().min(8, 'Mínimo 8 caracteres').max(128),
   accountType: z.enum(['buyer', 'seller']).default('buyer'),
-  name: z.string().min(1).max(100).optional(),
-  businessName: z.string().min(1).max(100).optional(),
-  whatsapp: z.string().min(8).max(20).optional(),
+  name: z.string().max(100).optional(),
+  businessName: z.string().max(100).optional(),
+  whatsapp: z.string().max(20).optional(),
+  telegram: z.string().max(50).optional(),
+  sms: z.string().max(50).optional(),
   location: z.string().max(200).optional(),
   description: z.string().max(1000).optional(),
-  logo: z.string().url().or(z.string().startsWith('data:')).optional(),
+  logo: z.union([z.string().url(), z.string().startsWith('data:'), z.literal('')]).optional(),
   instagram: z.string().max(100).optional(),
   facebook: z.string().max(100).optional(),
   businessType: z.string().max(50).optional(),
   country: z.string().max(50).optional(),
+  province: z.string().max(100).optional(),
+  municipality: z.string().max(100).optional(),
+  address: z.string().max(200).optional(),
+}).superRefine((data, ctx) => {
+  if (data.accountType === 'seller') {
+    if (!data.businessName?.trim()) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['businessName'], message: 'Nombre del negocio requerido' });
+    }
+    if (!data.whatsapp?.trim() || data.whatsapp.trim().length < 8) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['whatsapp'], message: 'WhatsApp inválido o incompleto' });
+    }
+  }
 });
 
 const loginSchema = z.object({
-  email: z.string().email('Email inválido').toLowerCase(),
+  email: z.string().trim().email('Email inválido').toLowerCase(),
   password: z.string().min(1).max(128),
 });
 
 const forgotSchema = z.object({
-  email: z.string().email('Email inválido').toLowerCase(),
+  email: z.string().trim().email('Email inválido').toLowerCase(),
 });
 
 const resetSchema = z.object({
@@ -3382,13 +3396,19 @@ async function route(request, method, path) {
   // ===== AUTH =====
   if (path[0] === 'auth') {
     if (path[1] === 'register' && method === 'POST') {
+      const ip = getClientIP(request);
+      const limit = rateLimit(ip, 'register', 5, 10 * 60 * 1000);
+      if (!limit.allowed) return json({ error: 'Demasiados intentos. Intenta más tarde.', retryAfter: limit.retryAfter }, 429);
       const body = await request.json();
-      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook, businessType, country, province, municipality, address } = body || {};
-      const type = accountType === 'buyer' ? 'buyer' : 'seller';
-      if (!email || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
-      if (type === 'seller' && (!businessName || !whatsapp)) {
-        return json({ error: 'Para vender necesitas nombre del negocio y WhatsApp' }, 400);
+      const parsedRegister = registerSchema.safeParse(body || {});
+      if (!parsedRegister.success) {
+        return json({
+          error: 'Datos de registro inválidos',
+          details: parsedRegister.error.flatten().fieldErrors,
+        }, 400);
       }
+      const { email, password, accountType, name, businessName, whatsapp, location, description, logo, instagram, facebook, businessType, country, province, municipality, address } = parsedRegister.data;
+      const type = accountType;
       const existing = await db.collection('users').findOne({ email: email.toLowerCase() });
       if (existing) return json({ error: 'El email ya está registrado' }, 400);
 
@@ -3448,10 +3468,19 @@ async function route(request, method, path) {
     }
 
     if (path[1] === 'login' && method === 'POST') {
+      const ip = getClientIP(request);
+      const limit = rateLimit(ip, 'login', 10, 60000);
+      if (!limit.allowed) return json({ error: 'Demasiados intentos. Intenta más tarde.', retryAfter: limit.retryAfter }, 429);
       const body = await request.json();
-      const { email, password } = body || {};
-      if (typeof email !== 'string' || !email.trim() || typeof password !== 'string' || !password) return json({ error: 'Email y contraseña requeridos' }, 400);
-      const normalizedEmail = email.trim().toLowerCase();
+      const parsedLogin = loginSchema.safeParse(body || {});
+      if (!parsedLogin.success) {
+        return json({
+          error: 'Email o contraseña inválidos',
+          details: parsedLogin.error.flatten().fieldErrors,
+        }, 400);
+      }
+      const { email, password } = parsedLogin.data;
+      const normalizedEmail = email;
       const user = await db.collection('users').findOne({ email: normalizedEmail });
       if (!user || typeof user.password !== 'string' || !user.password) return json({ error: 'Credenciales inválidas' }, 401);
       const ok = await bcrypt.compare(password, user.password);
@@ -3511,27 +3540,31 @@ async function route(request, method, path) {
     }
 
     if (path[1] === 'forgot' && method === 'POST') {
+      const ip = getClientIP(request);
+      const limit = rateLimit(ip, 'forgot', 5, 60000);
+      if (!limit.allowed) return json({ error: 'Demasiadas solicitudes. Intenta más tarde.', retryAfter: limit.retryAfter }, 429);
+
       const body = await request.json();
-      const { email } = body || {};
-      if (!email) return json({ error: 'Email requerido' }, 400);
-
-      const genericMessage = 'Si el correo está registrado, te enviamos un mensaje con instrucciones para restablecer tu contraseña.';
-      const u = await db.collection('users').findOne({ email: String(email).toLowerCase() });
-
-      // Anti-enumeration: respond the same way whether the user exists or not
-      if (!u) {
-        return json({ message: genericMessage });
+      const parsed = forgotSchema.safeParse(body || {});
+      if (!parsed.success) {
+        return json({ error: 'Email inválido', details: parsed.error.flatten().fieldErrors }, 400);
       }
 
-      const resetToken = uuidv4().replace(/-/g, '').slice(0, 24);
-      const resetExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      await db.collection('users').updateOne({ id: u.id }, { $set: { resetToken, resetExpires } });
+      const genericMessage = 'Si el correo está registrado, te enviamos un mensaje con instrucciones para restablecer tu contraseña.';
+      const u = await db.collection('users').findOne({ email: parsed.data.email });
 
-      // Send via Resend (real email). Do not leak whether the email exists.
-      const emailResult = await sendPasswordResetEmail(u.email, u.name || '', resetToken);
-      const emailDelivered = !!(emailResult && emailResult.data);
+      if (u) {
+        const resetToken = uuidv4().replace(/-/g, '').slice(0, 24);
+        const resetExpires = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+        await db.collection('users').updateOne({ id: u.id }, { $set: { resetToken, resetExpires } });
+        try {
+          await sendPasswordResetEmail(u.email, u.name || '', resetToken);
+        } catch (emailError) {
+          console.error('[Password Reset] Email delivery failed:', emailError?.message || emailError);
+        }
+      }
 
-      return json({ message: genericMessage, emailDelivered });
+      return json({ message: genericMessage });
     }
 
     if (path[1] === 'reset' && method === 'POST') {
@@ -8769,7 +8802,7 @@ async function handler(request, { params }) {
     return await route(request, method, path);
   } catch (e) {
     console.error('API error:', e);
-    return json({ error: e.message || 'Error interno' }, 500);
+    return json({ error: 'Error interno del servidor' }, 500);
   }
 }
 
